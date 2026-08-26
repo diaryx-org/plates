@@ -1,0 +1,46 @@
+[package]
+name = "plates-cli"
+description = "Command-line static site generator over a prov archive: build, watch, serve and clean."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+readme = "../README.md"
+keywords = ["static-site-gen", "prov", "cli", "publishing", "website"]
+categories = ["command-line-utilities", "web-programming"]
+
+# The crate is `plates-cli`; the installed command is `plates`.
+[[bin]]
+name = "plates"
+path = "src/main.rs"
+
+# The application layer, and the only one in this workspace that is allowed to
+# have opinions a library must not: where a build lands, what a site declaration
+# is *spelled* like, and how a preview is served. `plates` deliberately does not
+# read a config vocabulary — see its `spec` module — so the `sites:` block this
+# binary reads is defined here, in `config.rs`, and nowhere else.
+
+[features]
+default = ["yaml"]
+yaml = ["plates/yaml", "plates-render/yaml"]
+json = ["plates/json", "plates-render/json"]
+toml = ["plates/toml", "plates-render/toml"]
+fig-lang = ["plates/fig-lang", "plates-render/fig-lang"]
+
+[dependencies]
+plates = { workspace = true }
+# With `templating`, unlike `plates` itself: running the render pipeline is the
+# caller's job, and this is the caller. Without it a body's handlebars would be
+# published as literal text.
+plates-render = { workspace = true, features = ["templating"] }
+# prov is deliberately *not* a dependency of its own here. Workspace discovery,
+# the config document and the id registry are all reached through
+# `plates::prov`, which `plates` re-exports for exactly this reason: one prov in
+# the tree, and no way for this crate to resolve a different version of the
+# `Workspace` it hands to `collect_site`.
+clap = { version = "4.5", features = ["derive", "env"] }
+
+[dev-dependencies]
+tempfile = "3"

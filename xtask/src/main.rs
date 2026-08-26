@@ -114,7 +114,8 @@ const JOBS: &[Job] = &[
         // `plates-render` promises to run in an edge worker. Nothing but a
         // compiler keeps that promise true, so this is the one job whose
         // failure means an API has changed shape rather than misbehaved.
-        // `plates` is absent deliberately: it reads a workspace off a disk.
+        // `plates` and `plates-cli` are absent deliberately: one reads a
+        // workspace off a disk, and the other opens a socket.
         steps: &[Step {
             program: "cargo",
             args: &[

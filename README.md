@@ -19,12 +19,13 @@ you take impressions from. An archive is the plate; a site is the impression.
   documents  ──▶  what ships with it  ──▶  like
 ```
 
-## The two crates
+## The three crates
 
 | Crate | What it answers |
 |---|---|
 | [`plates`](plates) | Which documents a site holds, where each one lands, and what ships alongside it. Reads a `prov::Workspace`. |
 | [`plates-render`](plates-render) | What HTML a document becomes. Reads nothing, resolves nothing, and compiles for `wasm32-unknown-unknown`. |
+| [`plates-cli`](plates-cli) | The `plates` command: `build`, `watch`, `serve`, `clean`. Where a build lands, how a declaration is spelled, and when to build. |
 
 The split is the point. `plates-render` is handed text and a description of the
 site that text belongs to, and gives back HTML — so one rendering can run in a
@@ -35,6 +36,11 @@ the half that has a disk.
 `plates` depends on `prov`, `plates-render` and `thiserror`, and that is the
 whole list. A site is planned and collected from a `prov::Workspace` and nothing
 else, which is what keeps it usable by any application over any vault dialect.
+
+Everything a library must *not* decide lives in `plates-cli` instead: the
+`sites:` vocabulary, the destination directory, and the socket. Another
+application over the same archive format replaces that crate and keeps the
+other two.
 
 ## What it does
 
@@ -67,7 +73,60 @@ else, which is what keeps it usable by any application over any vault dialect.
 - **HTML attachments as islands**: an authored HTML file embedded in a page
   ships verbatim in a sandboxed `<iframe>` that reports its own height.
 
-## Using it
+## The command
+
+```
+cargo install plates-cli
+```
+
+installs `plates`, which finds the archive by walking up from the current
+directory the same way `prov` does.
+
+| | |
+|---|---|
+| `plates build` | Render every site into `_site` (`--out` to move it, `--site NAME` to write one site at the destination root). |
+| `plates watch` | The same, then again on every change. |
+| `plates serve` | A dev server on `http://127.0.0.1:4321`, each site under its own name, reloading when the archive moves. `--site NAME` serves that one at `/`. |
+| `plates clean` | Remove what a build wrote. |
+
+`--base-url https://example.org` is what canonical links, the sitemap,
+`robots.txt` and the feeds are written against. Without one they are skipped,
+which is the right default for a preview whose address is `localhost`.
+
+A build records every path it wrote in `.plates-build` at the destination root.
+That record is what lets the next build take back a page whose document was
+deleted, and what lets `clean` be exact: **nothing removes a file no build of
+ours wrote**, so a destination with no record is refused rather than emptied,
+and `--out` typed one character wrong is not a way to delete somebody's work.
+
+### Declaring a site
+
+`plates` takes a `SiteSpec` already built and never reads a config vocabulary —
+that is a vault dialect, not a site's shape. The spelling below is
+`plates-cli`'s, and lives in that crate alone. It goes in the archive's config
+document, beside prov's own `views:` and `exports:`, or in the root document's
+frontmatter beside its `prov:` block:
+
+```yaml
+sites:
+  blog:
+    label: Field notes           # what a reader sees; defaults to the name, humanized
+    audience: public             # the gate — the only required key
+    view: daily                  # a prov view, for the arrangement; default is containment
+    index: '[Home](id:7f3a91c)'  # the front page, as a link that survives a rename
+    shell: .config/sites/blog/shell.html
+    stylesheet: .config/sites/blog/style.css
+    lang: en
+```
+
+An archive with no `sites:` block gets one site per prov `exports:` entry gated
+on `audience` — same name, same label, same view. That is not a guess: an export
+already *is* a named, closed set of documents that may leave the archive, and
+what it lacks is only a shell, which has a default. An export gated on some
+other field is skipped and said out loud rather than published under a rule
+nothing showed anyone.
+
+## Using it as a library
 
 ```rust
 use std::collections::HashMap;
@@ -121,7 +180,7 @@ the wrong design is how a broken theme survives a release.
 
 ## Features
 
-Both crates default to `yaml` and forward their metadata-format features to
+All three crates default to `yaml` and forward their metadata-format features to
 `prov`, which forwards them to `fig`. With a format off, its parser is left out
 of the build and `prov` stops recognizing it, so at least one must be on.
 
