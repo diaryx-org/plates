@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+# `xtask` is this repo's CI, as a program: `cargo xtask <job>` runs one job and
+# the workflow runs nothing else. It is a member so `cargo test --workspace`
+# checks it, and `publish = false` keeps it off crates.io.
+members = ["plates-render", "plates", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Minimum supported Rust version, enforced by the `msrv` CI job, which reads
+# this very value.
+rust-version = "1.88"
+repository = "https://github.com/diaryx-org/plates"
+homepage = "https://github.com/diaryx-org/plates"
+readme = "README.md"
+license = "MIT OR Apache-2.0"
+authors = ["Adam Harris"]
+
+[workspace.dependencies]
+# The archive engine. Everything this workspace knows about *which* documents
+# exist, what relates them and who may see them comes from here; nothing is
+# re-derived. `default-features = false` so the format features below decide
+# which parsers are compiled rather than prov's default doing it for us.
+prov = { version = "0.9", default-features = false }
+# Only the derive macros, for the appearance types a caller deserializes out of
+# its own configuration. No parser backend is requested here — the format
+# features forward to prov, which forwards to the same fig.
+fig = { version = "3.1", default-features = false, features = ["derive"] }
+serde_json = "1.0"
+indexmap = { version = "2.0", features = ["serde"] }
+thiserror = "2.0"
+
+# Internal crate.
+plates-render = { path = "plates-render", version = "0.1.0", default-features = false }

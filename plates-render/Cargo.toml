@@ -1,0 +1,41 @@
+[package]
+name = "plates-render"
+description = "The document-to-HTML half of plates: what a published page looks like."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+readme = "../README.md"
+keywords = ["static-site-generator", "markdown", "djot", "html", "prov"]
+categories = ["web-programming", "text-processing"]
+
+# Portable by contract, not by luck: this crate must keep compiling for
+# `wasm32-unknown-unknown`, so it holds no filesystem, no host functions, no
+# entropy and no clock. A caller that has those reads the files and passes the
+# bytes in. The `wasm` CI job is what enforces it.
+
+[features]
+default = ["yaml"]
+
+# Metadata formats, forwarded to prov, which forwards to fig. With a format off,
+# its parser is left out of the build *and* prov stops recognizing it — so at
+# least one has to be on.
+yaml = ["prov/yaml"]
+json = ["prov/json"]
+toml = ["prov/toml"]
+fig-lang = ["prov/fig-lang"]
+
+# Render-time body templating (Handlebars + visibility directives). Off by
+# default so a consumer that only needs markdown/HTML/nav does not compile a
+# template engine it will not call.
+templating = ["dep:handlebars", "dep:serde_json", "dep:indexmap"]
+
+[dependencies]
+prov = { workspace = true }
+fig = { workspace = true }
+base64 = "0.22"
+handlebars = { version = "6", optional = true }
+serde_json = { workspace = true, optional = true }
+indexmap = { workspace = true, optional = true }

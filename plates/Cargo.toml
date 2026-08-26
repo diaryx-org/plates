@@ -1,0 +1,37 @@
+[package]
+name = "plates"
+description = "A static site generator over a prov archive: which documents a site holds, where each one lands, and what ships alongside them."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+license.workspace = true
+readme = "../README.md"
+keywords = ["static-site-generator", "prov", "archive", "publishing", "website"]
+categories = ["web-programming", "command-line-utilities"]
+
+# The content-to-site layer: prov says which documents a site holds,
+# `plates-render` says what HTML a document becomes, and this says where
+# everything lands and what ships alongside it.
+#
+# Its dependency list is the point. A site is planned and collected from a
+# `prov::Workspace` and nothing else, which is what keeps this usable by any
+# application over any vault dialect. Adding a dependency here is a decision,
+# not a convenience.
+
+[features]
+default = ["yaml"]
+yaml = ["prov/yaml", "plates-render/yaml"]
+json = ["prov/json", "plates-render/json"]
+toml = ["prov/toml", "plates-render/toml"]
+fig-lang = ["prov/fig-lang", "plates-render/fig-lang"]
+
+[dependencies]
+prov = { workspace = true }
+# Deliberately without `templating`, so no template engine reaches this crate.
+# What is needed here is the visibility filter, `Arrangement` and
+# `serve_at_dest`, all of which are ungated — running the render pipeline is the
+# caller's job.
+plates-render = { workspace = true }
+thiserror = { workspace = true }
