@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 readme = "../README.md"
-keywords = ["static-site-generator", "markdown", "djot", "html", "prov"]
+keywords = ["static-site-gen", "markdown", "djot", "html", "prov"]
 categories = ["web-programming", "text-processing"]
 
 # Portable by contract, not by luck: this crate must keep compiling for

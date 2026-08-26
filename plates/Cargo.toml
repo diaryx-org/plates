@@ -8,7 +8,7 @@ repository.workspace = true
 homepage.workspace = true
 license.workspace = true
 readme = "../README.md"
-keywords = ["static-site-generator", "prov", "archive", "publishing", "website"]
+keywords = ["static-site-gen", "prov", "archive", "publishing", "website"]
 categories = ["web-programming", "command-line-utilities"]
 
 # The content-to-site layer: prov says which documents a site holds,
