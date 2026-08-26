@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 use prov::{IdIndex, Storage, Workspace};
 
-use plates_render::visibility::filter_body_for_audience;
+use plates_render::visibility::{Audience, filter_body};
 
 use crate::digest::{self, DigestMemo};
 use crate::error::{Error, Result};
@@ -315,7 +315,22 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             continue;
         }
 
-        let filtered_body = filter_body_for_audience(&parsed.body, opts.audience);
+        // Which *parts* of this document leave. The plan already decided that
+        // the document does; this reads the same audience name against the
+        // regions inside it, in the document's own grammar.
+        //
+        // A failure here is fatal to the collection rather than skipped: the
+        // filter refuses only when it could not account for a region, and the
+        // body it could not account for is the one carrying somebody's private
+        // paragraph. Publishing the rest of the site without it would be the
+        // one outcome worse than not publishing.
+        let format =
+            prov::ContentFormat::from_extension(path).unwrap_or(prov::ContentFormat::Markdown);
+        let filtered_body = filter_body(&parsed.body, format, Audience::Only(&[opts.audience]))
+            .map_err(|reason| Error::Visibility {
+                path: path.clone(),
+                reason: reason.to_string(),
+            })?;
 
         // The registry id when present, else the document's own frontmatter
         // `id` (authoritative under `id_storage: both`/`frontmatter`, or when an

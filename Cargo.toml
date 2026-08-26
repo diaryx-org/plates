@@ -22,7 +22,12 @@ authors = ["Adam Harris"]
 # exist, what relates them and who may see them comes from here; nothing is
 # re-derived. `default-features = false` so the format features below decide
 # which parsers are compiled rather than prov's default doing it for us.
-prov = { version = "0.9", default-features = false }
+# 0.9.1 is a floor, not a preference: it is where prov re-exported `twig`
+# (`prov::twig`). The visibility filter and the template expander address the
+# body's AST rather than scanning its text, and reaching twig any other way
+# means pinning it a second time and resolving to a different `Document` than
+# the one prov parses bodies with.
+prov = { version = "0.9.1", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.

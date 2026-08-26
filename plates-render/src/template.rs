@@ -127,6 +127,16 @@ pub fn build_context(
     JsonValue::Object(map)
 }
 
+/// The grammar a body is written in, read off its own path.
+///
+/// The same rule [`crate::body`] renders by and [`crate::visibility`] filters
+/// by — a body's format is a property of the document, not of the vault, and an
+/// unrecognized extension is Markdown because that is what every document
+/// written before there was a choice is.
+fn format_of(file_path: &Path) -> prov::ContentFormat {
+    prov::ContentFormat::from_extension(file_path).unwrap_or(prov::ContentFormat::Markdown)
+}
+
 /// One-shot render: build context and render body in one call.
 pub fn render(
     body: &str,
@@ -134,7 +144,9 @@ pub fn render(
     file_path: &Path,
     workspace_root: Option<&Path>,
 ) -> Result<String, String> {
-    let preprocessed = visibility::strip_visibility_directives(body);
+    let preprocessed =
+        visibility::filter_body(body, format_of(file_path), visibility::Audience::All)
+            .map_err(|e| e.to_string())?;
     let renderer = BodyTemplateRenderer::new();
     let context = build_context(frontmatter, file_path, workspace_root, &[]);
     if has_handlebars_templates(&preprocessed) {
@@ -172,7 +184,12 @@ pub fn render_for_audiences(
     workspace_root: Option<&Path>,
     viewer_audiences: &[&str],
 ) -> Result<String, String> {
-    let filtered = visibility::filter_body_for_audiences(body, viewer_audiences);
+    let filtered = visibility::filter_body(
+        body,
+        format_of(file_path),
+        visibility::Audience::Only(viewer_audiences),
+    )
+    .map_err(|e| e.to_string())?;
     let renderer = BodyTemplateRenderer::new();
     let context = build_context(frontmatter, file_path, workspace_root, viewer_audiences);
 
@@ -274,7 +291,7 @@ links:
 title: Hello
 "#,
         );
-        let body = "Before :vis[{{ title }}]{public} after";
+        let body = "Before :vis[{{ title }}]{.public} after";
         let result = render_for_audience(body, &fm, Path::new("test.md"), None, "public").unwrap();
         assert_eq!(result, "Before Hello after");
     }
@@ -282,7 +299,7 @@ title: Hello
     #[test]
     fn test_inline_visibility_directive_no_match() {
         let fm = make_frontmatter("title: Hello");
-        let body = "Before :vis[{{ title }}]{public} after";
+        let body = "Before :vis[{{ title }}]{.public} after";
         let result = render_for_audience(body, &fm, Path::new("test.md"), None, "friends").unwrap();
         assert_eq!(result, "Before  after");
     }
@@ -290,7 +307,7 @@ title: Hello
     #[test]
     fn test_block_visibility_directive_match() {
         let fm = make_frontmatter("title: Hello");
-        let body = "Intro\n:::vis{public}\n{{ title }}\n:::\nOutro";
+        let body = "Intro\n:::vis{.public}\n{{ title }}\n:::\nOutro";
         let result = render_for_audience(body, &fm, Path::new("test.md"), None, "public").unwrap();
         assert_eq!(result, "Intro\nHello\nOutro");
     }
@@ -298,23 +315,31 @@ title: Hello
     #[test]
     fn test_block_visibility_directive_no_match() {
         let fm = make_frontmatter("title: Hello");
-        let body = "Intro\n:::vis{public}\n{{ title }}\n:::\nOutro";
+        let body = "Intro\n:::vis{.public}\n{{ title }}\n:::\nOutro";
         let result = render_for_audience(body, &fm, Path::new("test.md"), None, "friends").unwrap();
-        assert_eq!(result, "Intro\nOutro");
+        // Two paragraphs, as the source had them. The text scanner this
+        // replaced spliced them into one — `Intro\nOutro` is a single paragraph
+        // with a soft break, which is not what removing a block between them
+        // means.
+        assert_eq!(result, "Intro\n\nOutro");
     }
 
+    /// twig does not nest inline directives, so the outer half of this parses
+    /// as a bare `:vis` with nothing attached and the words it scoped stay
+    /// outside it. Filtering refuses rather than stripping the marker and
+    /// publishing them. Nested *block* regions are unaffected.
     #[test]
-    fn test_nested_visibility_directives() {
+    fn test_nested_inline_visibility_directives_are_refused() {
         let fm = make_frontmatter("title: Hello");
-        let body = "A :vis[outer :vis[inner]{public} end]{public}";
-        let result = render_for_audience(body, &fm, Path::new("test.md"), None, "public").unwrap();
-        assert_eq!(result, "A outer inner end");
+        let body = "A :vis[outer :vis[inner]{.public} end]{.public}";
+        let err = render_for_audience(body, &fm, Path::new("test.md"), None, "public").unwrap_err();
+        assert!(err.contains("nested inside another inline region"), "{err}");
     }
 
     #[test]
     fn test_visibility_directives_are_stripped_without_audience_filter() {
         let fm = make_frontmatter("title: Hello");
-        let body = "Before :vis[{{ title }}]{public} after";
+        let body = "Before :vis[{{ title }}]{.public} after";
         let result = render(body, &fm, Path::new("test.md"), None).unwrap();
         assert_eq!(result, "Before Hello after");
     }
@@ -352,8 +377,8 @@ title: Hello
     #[test]
     fn test_has_templates() {
         assert!(has_templates("Hello {{ title }}"));
-        assert!(has_templates(":vis[Hello]{public}"));
-        assert!(has_templates(":::vis{public}\nHello\n:::\n"));
+        assert!(has_templates(":vis[Hello]{.public}"));
+        assert!(has_templates(":::vis{.public}\nHello\n:::\n"));
         assert!(!has_templates("Hello World"));
         assert!(!has_templates("No templates here"));
     }
@@ -446,7 +471,7 @@ map_val:
     #[test]
     fn test_multi_audience_visibility_filter() {
         let fm = make_frontmatter("title: Hi");
-        let body = ":vis[family-only]{family} :vis[friends-only]{friends}";
+        let body = ":vis[family-only]{.family} :vis[friends-only]{.friends}";
         let result = render_for_audiences(
             body,
             &fm,
@@ -474,7 +499,7 @@ links:
 - {{this}}
 {{/each}}
 
- :vis[Hello public!]{public}"#;
+ :vis[Hello public!]{.public}"#;
 
         let result = render_for_audience(body, &fm, Path::new("hello.md"), None, "public").unwrap();
         assert!(result.contains("# Hello World"));

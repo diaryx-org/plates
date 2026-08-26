@@ -331,9 +331,9 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
 name = "fs-transaction"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5aac916b209ffd5208ff9df604bb3ee469fb995766966ad1b2726c4942928d50"
+checksum = "9c5f24beb16fadfb4a4f47a9b1938bed0ddaed9ecfb4b834b8eeaf39fec85916"
 
 [[package]]
 name = "getrandom"
@@ -554,9 +554,9 @@ dependencies = [
 
 [[package]]
 name = "prov"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "31b924f5edbe62f2fdd8e570ae3462ccc0a928bffae2c31f5133770d2a5df413"
+checksum = "5c306591b4e459e25ef1f377edbff041b9d0d212ec1ccc5c7e04f07bbbf370fc"
 dependencies = [
  "fig",
  "fig-schema",
@@ -573,9 +573,9 @@ dependencies = [
 
 [[package]]
 name = "prov-config"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc6554c64d993a102cd69fb45a2e24655771f9e67d40843a4281ec5bb04a7a98"
+checksum = "3759bb426b5cc272e25e41eb1b54bf685503d0f79abe5e2b34a49ed9e4c4d723"
 dependencies = [
  "fig",
  "fig-schema",
@@ -588,9 +588,9 @@ dependencies = [
 
 [[package]]
 name = "prov-exports"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b1df33ad40232eb6ce55050a4b8b956aefa2815d5139f98e32bdb151cfb0328"
+checksum = "94a167debd52ef0b5130d6811d2078b2887350ac41647e91a535140a83029084"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -598,9 +598,9 @@ dependencies = [
 
 [[package]]
 name = "prov-graph"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "50efff90efdfc26cc08210656991e74341da099ab0165349181afab72ee7b0a9"
+checksum = "3e49dfa5a40b53d3f43b3c4f0da0b378e9e479e6d06b09def980cb4ef1fc7977"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -613,9 +613,9 @@ dependencies = [
 
 [[package]]
 name = "prov-store"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e9f44a3335fe424dd8e67ba394e3ada9a224064cb25b53f7cd4a421ceec4d10f"
+checksum = "25e0456f5528787dd0e06d9cdde9df37fcfaca7a4a5b70aea38d4f334916d0d3"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -624,9 +624,9 @@ dependencies = [
 
 [[package]]
 name = "prov-views"
-version = "0.9.0"
+version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f6ebddb7307d849a1cee4f74c5765962375ae3350193fde0fa185d4c7424799c"
+checksum = "53782cb4e84b61ce9d686ae37f8538966bf06b65e2a44a685436c870116a78c5"
 dependencies = [
  "prov-graph",
 ]

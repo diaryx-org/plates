@@ -12,6 +12,21 @@ use std::path::PathBuf;
 /// A site-shaped failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// A document's audience regions could not all be resolved, so the
+    /// collection refused it.
+    ///
+    /// Fatal rather than skipped, and fatal rather than published: the filter
+    /// answers only "yes, filtered" or "I could not account for a region", and
+    /// the region it could not account for is the one somebody marked private.
+    /// A site that published everything except the document it could not scope
+    /// would be the failure this error exists to prevent, arriving quietly.
+    #[error("{path}: {reason}")]
+    Visibility {
+        /// The document, workspace-relative.
+        path: std::path::PathBuf,
+        /// What the filter could not do, in its own words.
+        reason: String,
+    },
     /// A site names a `view:` the workspace does not declare. Reported rather
     /// than ignored, because falling back to the unscoped arrangement would
     /// publish every document in the gate's set under a site built to narrow it.
