@@ -7,6 +7,7 @@ contents:
 - '[plates](/plates/README.md)'
 - '[plates-render](/plates-render/README.md)'
 - '[plates-cli](/plates-cli/README.md)'
+- '[Kitchen sink](/docs/kitchen-sink.md)'
 - '[Proposal: the plates template format](/docs/proposals/templating.md)'
 audience: public
 ---
