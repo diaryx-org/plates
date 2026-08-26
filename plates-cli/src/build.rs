@@ -267,6 +267,11 @@ fn assemble(
                 .map(|(k, v)| (k.clone(), v.clone()))
                 .collect(),
             lang: theme.lang.clone(),
+            syntaxes: theme
+                .syntaxes
+                .iter()
+                .map(|(path, text)| (path.clone(), text.clone()))
+                .collect(),
         },
     );
 
@@ -280,6 +285,11 @@ fn assemble(
     // A page's own shell, on the same terms — reported per shell rather than
     // per page, and never fatal.
     for error in &rendered.page_shell_errors {
+        warnings.push(format!("site {name:?}: {error}"));
+    }
+    // And a grammar that will not parse, which costs the languages it covered
+    // their colour and nothing else.
+    for error in &rendered.syntax_errors {
         warnings.push(format!("site {name:?}: {error}"));
     }
 

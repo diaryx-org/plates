@@ -55,6 +55,21 @@
     /* An underline that reads as one without competing with the text over it. */
     --_faint-underline: color-mix(in oklab, currentColor 35%, transparent);
 
+    /* Syntax highlighting. Literals rather than mixes of `--accent`: a palette
+       derived from one hue is a palette whose colours are hard to tell apart,
+       which is the one thing highlighting exists to do. Chosen against
+       `--code-bg` rather than `--bg`, since that is what they are read on, and
+       kept above 4.5:1 on it so a comment is still text and not decoration.
+       File-local like every other `--_` name, and overridable by a caller's
+       sheet on the same terms. */
+    --_syn-comment: #6a7580;
+    --_syn-string: #0a7040;
+    --_syn-keyword: #9526a0;
+    --_syn-entity: #2b62d9;
+    --_syn-constant: #98590a;
+    --_syn-support: #016a99;
+    --_syn-invalid: #c02617;
+
     /* Let the user agent paint scrollbars, checkboxes and text fields to match
        the mode. Without it a dark page keeps light scrollbars and a light
        task-list checkbox, which is what the two palettes here are for.
@@ -79,6 +94,14 @@
         --surface-border: rgba(255, 255, 255, 0.1);
         --surface-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 12px 32px rgba(0, 0, 0, 0.4);
         --divider-color: rgba(255, 255, 255, 0.1);
+
+        --_syn-comment: #7f8b99;
+        --_syn-string: #9ece6a;
+        --_syn-keyword: #c678dd;
+        --_syn-entity: #7aa2f7;
+        --_syn-constant: #e0af68;
+        --_syn-support: #56b6c2;
+        --_syn-invalid: #f7768e;
     }
 }
 
@@ -230,6 +253,42 @@ a:hover {
     padding: 0;
     font-size: inherit;
 }
+
+/* ── Syntax highlighting ──
+ *
+ * `plates_render::syntax` emits a class per atom of the Sublime scope it
+ * matched, each prefixed `plates-`: `keyword.control.rust` arrives as
+ * `plates-keyword plates-control plates-rust`. So these select the *first*
+ * atom, which is the one that names what a token is.
+ *
+ * Two things decide the order of the rules below, and both are load-bearing:
+ *
+ * 1. Every selector here is one class, so they all have the same specificity
+ *    and the last matching rule wins. A scope's atoms overlap — the `"` opening
+ *    a string is `punctuation.definition.string.begin`, carrying *both*
+ *    `plates-punctuation` and `plates-string` — so the rule that should win
+ *    goes later. Punctuation is therefore first: a quote inside a string reads
+ *    as string, a `//` inside a comment reads as comment, and neither is left
+ *    a different colour from the token it belongs to.
+ *
+ * 2. `plates-meta` is deliberately absent. `meta.function` wraps a whole
+ *    function, signature and body together, so colouring it would flood
+ *    everything nested inside with one colour and undo the rest of this block.
+ *
+ * Scoped to `.plates-highlighted` — the class the pass adds only to blocks it
+ * actually coloured — so a fence in a language no grammar covers keeps the
+ * plain `<pre>` treatment above rather than half of this one.
+ */
+.content pre code.plates-highlighted .plates-punctuation { color: var(--_syn-comment); }
+.content pre code.plates-highlighted .plates-keyword,
+.content pre code.plates-highlighted .plates-storage { color: var(--_syn-keyword); }
+.content pre code.plates-highlighted .plates-entity,
+.content pre code.plates-highlighted .plates-variable { color: var(--_syn-entity); }
+.content pre code.plates-highlighted .plates-support { color: var(--_syn-support); }
+.content pre code.plates-highlighted .plates-constant { color: var(--_syn-constant); }
+.content pre code.plates-highlighted .plates-string { color: var(--_syn-string); }
+.content pre code.plates-highlighted .plates-comment { color: var(--_syn-comment); font-style: italic; }
+.content pre code.plates-highlighted .plates-invalid { color: var(--_syn-invalid); }
 
 .content kbd {
     font-family: var(--font-mono);

@@ -70,6 +70,7 @@ pub const SITE_KEYS: &[&str] = &[
     "shell",
     "stylesheet",
     "lang",
+    "syntaxes",
 ];
 
 /// Every site the archive declares, plus what could not be read.
@@ -207,6 +208,7 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             shell: text(entry, "shell"),
             stylesheet: text(entry, "stylesheet"),
             lang: text(entry, "lang"),
+            syntaxes: text_list(entry, "syntaxes"),
         });
     }
     specs
@@ -233,6 +235,7 @@ fn specs_from_exports(exports: &[ExportSpec], warnings: &mut Vec<String>) -> Vec
             shell: None,
             stylesheet: None,
             lang: None,
+            syntaxes: Vec::new(),
         });
     }
     specs
@@ -248,6 +251,30 @@ fn text(entry: &Mapping, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+/// A list-of-paths setting: a sequence, or a bare scalar for the one-item case.
+///
+/// Both spellings because `syntaxes: .config/sites/blog/wat.sublime-syntax` is
+/// what someone with one grammar writes, and making them punctuate it as a
+/// list to be understood is a paper cut with no purpose. Entries that are
+/// empty, blank or not strings are dropped on the same reasoning as [`text`]:
+/// a key left in place with nothing under it is a declaration remembering
+/// something used to be there.
+fn text_list(entry: &Mapping, key: &str) -> Vec<String> {
+    let Some(value) = entry.get(key) else {
+        return Vec::new();
+    };
+    match value.as_sequence() {
+        Some(items) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect(),
+        None => text(entry, key).into_iter().collect(),
+    }
 }
 
 #[cfg(test)]
@@ -293,6 +320,10 @@ mod tests {
                 ("shell", s(".config/sites/blog/shell.html")),
                 ("stylesheet", s(".config/sites/blog/style.css")),
                 ("lang", s("fr")),
+                (
+                    "syntaxes",
+                    Value::Sequence(vec![s(".config/sites/blog/wat.sublime-syntax")]),
+                ),
             ])),
         )]);
 
@@ -310,8 +341,28 @@ mod tests {
                 shell: Some(".config/sites/blog/shell.html".into()),
                 stylesheet: Some(".config/sites/blog/style.css".into()),
                 lang: Some("fr".into()),
+                syntaxes: vec![".config/sites/blog/wat.sublime-syntax".into()],
             }]
         );
+    }
+
+    /// One grammar needs no list punctuation around it.
+    #[test]
+    fn a_lone_syntax_may_be_written_as_a_scalar() {
+        let entry = mapping(&[("syntaxes", s(" a.sublime-syntax "))]);
+        assert_eq!(text_list(&entry, "syntaxes"), vec!["a.sublime-syntax"]);
+    }
+
+    /// The same rule `text` applies, applied per entry: a key left in place
+    /// with nothing under it declares nothing.
+    #[test]
+    fn blank_syntax_entries_are_dropped() {
+        let entry = mapping(&[(
+            "syntaxes",
+            Value::Sequence(vec![s("  "), s("real.sublime-syntax"), Value::Null]),
+        )]);
+        assert_eq!(text_list(&entry, "syntaxes"), vec!["real.sublime-syntax"]);
+        assert!(text_list(&mapping(&[]), "syntaxes").is_empty());
     }
 
     /// A gate is not a setting with a default. A site missing one is dropped

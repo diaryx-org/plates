@@ -1,10 +1,15 @@
 //! Body prose → HTML, in whichever grammar the document is written in.
 //!
-//! Two stages run in order:
+//! Three stages run in order:
 //! 1. [`preprocess_custom_syntax`] rewrites Diaryx-specific syntax (highlights,
 //!    spoilers, HTML embeds) into raw HTML, skipping fenced/inline code.
 //! 2. [`render_body`] parses the result as the document's [`ContentFormat`] and
 //!    renders it, via `twig` (through [`prov::render_html`]).
+//! 3. With the `syntax-highlighting` feature, [`crate::syntax`] colours the
+//!    fenced code blocks in that HTML. Third rather than woven into stage two
+//!    because `prov::render_html` is one string-to-string call with no node
+//!    hook — and being a pass over the output is what lets it cover all three
+//!    grammars, hand-written HTML bodies included, with one implementation.
 //!
 //! ## Why twig rather than a Markdown-only parser
 //!
@@ -38,6 +43,32 @@ use prov::ContentFormat;
 /// infallible signature — was only infallible because it silently accepted
 /// anything as Markdown.
 pub fn render_body(body: &str, format: ContentFormat) -> String {
+    let html = render_markup(body, format);
+    // The built-in grammars. A caller with its own reaches for
+    // [`render_body_with`]; this spelling stays the one that needs no setup.
+    #[cfg(feature = "syntax-highlighting")]
+    let html = crate::syntax::highlight_code_blocks(&html, crate::syntax::Syntaxes::bundled());
+    html
+}
+
+/// Render a document body to HTML, highlighting its code with `syntaxes`.
+///
+/// What [`render_body`] does, against a grammar set the caller assembled —
+/// which is how a site publishes code in a language the built-in set has no
+/// grammar for. Building that set is the expensive half, so build it once and
+/// pass it to every page rather than once per page. See [`crate::syntax`].
+#[cfg(feature = "syntax-highlighting")]
+pub fn render_body_with(
+    body: &str,
+    format: ContentFormat,
+    syntaxes: &crate::syntax::Syntaxes,
+) -> String {
+    crate::syntax::highlight_code_blocks(&render_markup(body, format), syntaxes)
+}
+
+/// Stages one and two: the document's own grammar, through twig, with no
+/// colour applied yet.
+fn render_markup(body: &str, format: ContentFormat) -> String {
     let mut preprocessed = preprocess_custom_syntax(body, format);
     // twig drops the *content* of a Djot raw inline span (`` `…`{=html} ``) when
     // the source does not end in a newline — `a `x`{=html} b` renders as
@@ -521,6 +552,59 @@ mod tests {
             "autolinks"
         );
         assert!(html.contains("language-rust"), "fenced code language");
+    }
+
+    /// Stage three, end to end and in all three grammars: the pre-processor
+    /// keeps its hands off fenced code, twig tags it with the language, and the
+    /// highlighter colours it — none of the three knowing about the others.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn fenced_code_is_highlighted_in_every_grammar() {
+        for (format, src) in [
+            (ContentFormat::Markdown, "```rust\nlet x = 1;\n```\n"),
+            (ContentFormat::Djot, "```rust\nlet x = 1;\n```\n"),
+            (
+                ContentFormat::Html,
+                "<pre><code class=\"language-rust\">let x = 1;\n</code></pre>\n",
+            ),
+        ] {
+            let html = render_body(src, format);
+            assert!(
+                html.contains(crate::syntax::HIGHLIGHTED_CLASS),
+                "{format:?} left it uncoloured: {html}"
+            );
+            assert!(html.contains("plates-storage"), "{format:?}: {html}");
+        }
+    }
+
+    /// The escaping twig applied has to survive the round trip, or a code block
+    /// starts publishing tags instead of showing them.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn highlighting_does_not_unescape_the_page() {
+        let html = render_body(
+            "```rust\nlet s = \"<b>&amp;</b>\";\n```\n",
+            ContentFormat::Markdown,
+        );
+        assert!(!html.contains("<b>"), "a tag reached the page: {html}");
+        assert!(html.contains("&lt;b&gt;"), "still escaped: {html}");
+    }
+
+    /// A grammar the site supplied itself, reaching the page through the one
+    /// call that takes one.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn a_site_grammar_reaches_a_rendered_body() {
+        let syntaxes = crate::syntax::Syntaxes::with_custom([(
+            "wat.sublime-syntax",
+            "name: Wat\nfile_extensions: [wat]\nscope: source.wat\ncontexts:\n  main:\n    - match: ';;.*$'\n      scope: comment.line.wat\n",
+        )]);
+        let html = render_body_with(
+            "```wat\n;; a note\n```\n",
+            ContentFormat::Markdown,
+            &syntaxes,
+        );
+        assert!(html.contains("plates-comment"), "{html}");
     }
 
     #[test]

@@ -32,6 +32,12 @@ fig-lang = ["prov/fig-lang"]
 # template engine it will not call.
 templating = ["dep:handlebars", "dep:serde_json", "dep:indexmap"]
 
+# Syntax highlighting for fenced code blocks, via syntect. Off by default for
+# the same reason `templating` is, and more so: the grammars travel as an
+# embedded binary dump of about a megabyte, which a consumer that only needs
+# markdown/HTML/nav should not carry.
+syntax-highlighting = ["dep:syntect", "dep:two-face"]
+
 [dependencies]
 prov = { workspace = true }
 fig = { workspace = true }
@@ -39,3 +45,32 @@ base64 = "0.22"
 handlebars = { version = "6", optional = true }
 serde_json = { workspace = true, optional = true }
 indexmap = { workspace = true, optional = true }
+# `regex-fancy`, never the default `regex-onig`: oniguruma is a C library, and
+# this crate has to keep compiling for `wasm32-unknown-unknown` — the `wasm` CI
+# job passes `--all-features`, so the default would take that job down the day
+# this feature landed.
+#
+# `default-syntaxes` is off because `two-face` below supersedes it, and
+# `default-themes` because the output is classed rather than styled inline: the
+# colours come from `html_format_css.css`, so syntect's own themes are never
+# consulted. `plist-load` stays off with them — it reads Sublime themes, which
+# for the same reason nothing here loads.
+#
+# `yaml-load` is the exception, and it is deliberate: it is what parses a
+# `.sublime-syntax` from a **string**, which is how a site adds a grammar this
+# dump does not carry without this crate ever opening a file.
+syntect = { version = "5.3", default-features = false, features = [
+    "parsing",
+    "html",
+    "regex-fancy",
+    "yaml-load",
+], optional = true }
+# The grammars themselves, as bat packages them. syntect's own bundle is 75
+# syntaxes and has no Zig, Swift, TOML or TypeScript — the first two being what
+# half this organisation is written in, and the third what every manifest in
+# this workspace is. two-face carries 213, including all four, as the same kind
+# of embedded dump for about 580 KB more. `syntect-fancy` rather than any
+# `-onig` spelling, for the reason above.
+two-face = { version = "0.5", default-features = false, features = [
+    "syntect-fancy",
+], optional = true }

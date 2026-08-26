@@ -53,6 +53,37 @@ is not rewritten by it. The same syntax works in Markdown and Djot, deliberately
 someone who switches a vault's `content_format` should not find that
 `==highlight==` stopped working. HTML bodies are returned untouched.
 
+## Highlighting
+
+With the `syntax-highlighting` feature, a third stage runs after twig: fenced
+blocks tagged with a language are coloured, in Markdown, Djot and hand-written
+HTML bodies alike. It is a pass over the *rendered HTML* rather than over an
+AST, which is what lets one implementation cover all three.
+
+The grammars are `two-face`'s, which are bat's: 213 of them, against the 75
+`syntect` bundles on its own. The difference is not academic — the smaller set
+has no Zig, Swift, TOML or TypeScript.
+
+Two properties are worth knowing before you style anything:
+
+- **The output is classed, not styled.** syntect can write `style="color:#…"`
+  on every span; this does not, because the colour would then be decided at
+  render time for a stylesheet that has both a light and a dark palette. What
+  it writes is a class per scope atom — `keyword.control.rust` becomes
+  `plates-keyword plates-control plates-rust` — and the colours live in the
+  stylesheet beside the site's own. Recolouring a language never means
+  recompiling anything.
+- **An unknown language is not an error.** A fence tagged with something no
+  grammar answers to is returned byte for byte, still carrying the
+  `language-…` class twig wrote. Only blocks that were actually coloured gain
+  `plates-highlighted`, which is what the built-in sheet scopes its palette to.
+
+A site with a language none of the 213 cover supplies its own grammar, as the
+*text* of a `.sublime-syntax` file — this crate opens no files, so a caller with
+one on disk reads it and passes the bytes in, exactly as it already does for a
+shell template. `SiteOptions::syntaxes` is where they go; one that will not
+parse is reported on `SiteRender::syntax_errors` and skipped, never fatal.
+
 ## `:vis[…]` regions
 
 The gate decides which documents leave. This decides which *parts* of one does,
@@ -187,6 +218,7 @@ than copied into every island.
 | `yaml` *(default)* | `---` frontmatter, `registry.yaml` |
 | `json`, `toml`, `fig-lang` | the other metadata dialects |
 | `templating` | Handlebars in bodies, resolved at render time, plus the whole-site entry point (`site::render_site`) |
+| `syntax-highlighting` | Colour for fenced code blocks, via `syntect` and 213 Sublime grammars |
 
 Metadata-format features forward to `prov`, which forwards them to `fig`. With a
 format off, its parser is left out of the build and `prov` stops recognizing it,
@@ -197,6 +229,10 @@ nav does not compile a template engine it will not call. With it on, body
 variables come from frontmatter and raw `{{ }}` syntax is preserved in the file
 and resolved on every view and publish — and when a target audience is supplied,
 `:vis[…]` filtering runs *before* interpolation.
+
+`syntax-highlighting` is off for the same reason and more of it: the grammars
+travel as an embedded dump of about a megabyte. See [Highlighting](#highlighting)
+for what it does with them.
 
 ## Using it
 

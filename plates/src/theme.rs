@@ -1,6 +1,7 @@
 //! A site's *render-facing* declaration: the shell it is wrapped in, the
-//! stylesheet it wears, the language it is written in, and how it is arranged —
-//! resolved from the vault, and carried to whoever does the rendering.
+//! stylesheet it wears, the grammars it highlights code with, the language it
+//! is written in, and how it is arranged — resolved from the vault, and carried
+//! to whoever does the rendering.
 //!
 //! # Why this is a separate pass
 //!
@@ -50,6 +51,16 @@ pub struct SiteTheme {
     pub shells: BTreeMap<String, String>,
     /// BCP 47 language tag for `<html lang="…">`.
     pub lang: String,
+    /// The **texts** of the `.sublime-syntax` files named by
+    /// [`SiteSpec::syntaxes`], paired with the path each was named by — the
+    /// texts, for the reason [`template`](Self::template) is a text.
+    ///
+    /// A `Vec` rather than a map, and in declaration order: where two grammars
+    /// claim one file extension the later one wins, so the order a site wrote
+    /// them in is a decision it made and not an artifact of the walk.
+    /// Unreadable ones are reported into [`warnings`](Self::warnings) and
+    /// dropped, exactly as a missing shell is.
+    pub syntaxes: Vec<(String, String)>,
     /// How the site is arranged, from the view it declares.
     pub arrangement: Arrangement,
     /// Files the declaration named that could not be read, as messages for
@@ -77,6 +88,7 @@ impl Default for SiteTheme {
             template: None,
             custom_css: None,
             shells: BTreeMap::new(),
+            syntaxes: Vec::new(),
             lang: DEFAULT_LANG.to_string(),
             arrangement: Arrangement::default(),
             warnings: Vec::new(),
@@ -84,8 +96,9 @@ impl Default for SiteTheme {
     }
 }
 
-/// Resolve one declared site's theme from the vault: read its shell and
-/// stylesheet off disk, and resolve its view into an arrangement.
+/// Resolve one declared site's theme from the vault: read its shell, its
+/// stylesheet and any grammars it declares off disk, and resolve its view into
+/// an arrangement.
 ///
 /// Reads are best-effort by design — see [`SiteTheme::warnings`].
 pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
@@ -104,6 +117,13 @@ pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
     )
     .await;
 
+    let mut syntaxes = Vec::new();
+    for rel in &spec.syntaxes {
+        if let Some(text) = read_asset(ws, spec, "syntax", Some(rel), &mut warnings).await {
+            syntaxes.push((rel.clone(), text));
+        }
+    }
+
     SiteTheme {
         title: spec.display_label(),
         template,
@@ -111,6 +131,7 @@ pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
         // Named by the site's documents rather than by its declaration, so it
         // is [`read_page_shells`]'s to fill once they have been collected.
         shells: BTreeMap::new(),
+        syntaxes,
         lang: spec
             .lang
             .as_deref()

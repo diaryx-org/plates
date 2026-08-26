@@ -147,6 +147,24 @@ pub struct SiteOptions {
     /// page nobody rendered should. An authored landing page carries its own
     /// `<title>` and meta tags; that is what fronting a site with one is for.
     pub front_page_supplied: bool,
+    /// Grammars for highlighting code beyond the built-in set, keyed by the
+    /// path the declaration named them by — the **text** of each
+    /// `.sublime-syntax` file, for the reason [`template`](Self::template) is
+    /// text.
+    ///
+    /// The built-in set is `two-face`'s 213 grammars, which is already most
+    /// languages anyone fences a block in. This is for the rest: an in-house
+    /// language, a config dialect, a notation a vault invented. A key here
+    /// whose grammar declares `file_extensions: [wat]` is what makes
+    /// ```` ```wat ```` colour.
+    ///
+    /// Assembled once for the whole site. A grammar that will not parse is
+    /// reported on [`SiteRender::syntax_errors`] and skipped, never fatal —
+    /// the bargain a broken shell template gets, for the same reason.
+    ///
+    /// Ignored entirely without the `syntax-highlighting` feature, where no
+    /// block is coloured and there is nothing for a grammar to do.
+    pub syntaxes: IndexMap<String, String>,
 }
 
 impl Default for SiteOptions {
@@ -163,8 +181,49 @@ impl Default for SiteOptions {
             templates: IndexMap::new(),
             lang: DEFAULT_LANG.to_string(),
             front_page_supplied: false,
+            syntaxes: IndexMap::new(),
         }
     }
+}
+
+/// The grammar set one render uses, and whether it had to be built.
+///
+/// The overwhelmingly common case is a site with no grammars of its own, which
+/// should cost nothing: that arm borrows the process-wide bundle rather than
+/// unpacking a second copy of a megabyte of dumps.
+#[cfg(feature = "syntax-highlighting")]
+enum ResolvedSyntaxes {
+    Bundled,
+    Custom(crate::syntax::Syntaxes),
+}
+
+#[cfg(feature = "syntax-highlighting")]
+impl ResolvedSyntaxes {
+    fn get(&self) -> &crate::syntax::Syntaxes {
+        match self {
+            Self::Bundled => crate::syntax::Syntaxes::bundled(),
+            Self::Custom(set) => set,
+        }
+    }
+
+    fn warnings(&self) -> &[String] {
+        self.get().warnings()
+    }
+}
+
+/// Assemble the grammars for one render — **once**, because unpacking the
+/// dumps costs far more than using them and a site that did it per page would
+/// pay that for every document it publishes.
+#[cfg(feature = "syntax-highlighting")]
+fn resolve_syntaxes(opts: &SiteOptions) -> ResolvedSyntaxes {
+    if opts.syntaxes.is_empty() {
+        return ResolvedSyntaxes::Bundled;
+    }
+    ResolvedSyntaxes::Custom(crate::syntax::Syntaxes::with_custom(
+        opts.syntaxes
+            .iter()
+            .map(|(path, text)| (path.as_str(), text.as_str())),
+    ))
 }
 
 /// The language a site is assumed to be in when its caller does not say.
@@ -193,6 +252,14 @@ pub struct SiteRender {
     /// cannot compile. Both fall back to a shell that works, and both are the
     /// caller's to report.
     pub page_shell_errors: Vec<String>,
+    /// Why a grammar in [`SiteOptions::syntaxes`] was ignored, once per
+    /// grammar.
+    ///
+    /// A `.sublime-syntax` that will not parse costs the languages it covered
+    /// their colour and nothing else — every other block still highlights, and
+    /// the site still publishes. Empty without the `syntax-highlighting`
+    /// feature, where no grammar is consulted in the first place.
+    pub syntax_errors: Vec<String>,
 }
 
 /// Reconstruct [`PublishedPage`]s from stored sources, fully rendering each
@@ -202,6 +269,26 @@ pub struct SiteRender {
 /// [`synthesize_index`]'s job, applied by [`render_site`] when no source claims
 /// `is_root`.
 pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPage> {
+    #[cfg(feature = "syntax-highlighting")]
+    let syntaxes = resolve_syntaxes(opts);
+    pages_from(
+        sources,
+        opts,
+        #[cfg(feature = "syntax-highlighting")]
+        syntaxes.get(),
+    )
+}
+
+/// [`build_pages`], against a grammar set the caller has already assembled.
+///
+/// Split out so that [`render_site`] — which needs the set's warnings for
+/// [`SiteRender::syntax_errors`] — can assemble it once and read both, rather
+/// than unpacking the dumps a second time to ask what went wrong the first.
+fn pages_from(
+    sources: &[SourceDoc],
+    opts: &SiteOptions,
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+) -> Vec<PublishedPage> {
     // Map sanitized canonical `.md` path → output `.html` filename (root →
     // index.html, a `serve_at:` claim to what it claims). Sources are keyed by
     // their workspace-relative path; we sanitize keys so that frontmatter links
@@ -226,7 +313,16 @@ pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPa
 
     sources
         .iter()
-        .map(|s| build_page(s, opts, &path_to_filename, &title_map))
+        .map(|s| {
+            build_page(
+                s,
+                opts,
+                &path_to_filename,
+                &title_map,
+                #[cfg(feature = "syntax-highlighting")]
+                syntaxes,
+            )
+        })
         .collect()
 }
 
@@ -239,7 +335,14 @@ pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPa
 /// first made the site's front page — and, through the publish layer, its ARK —
 /// depend on traversal order.
 pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
-    let mut pages = build_pages(sources, opts);
+    #[cfg(feature = "syntax-highlighting")]
+    let syntaxes = resolve_syntaxes(opts);
+    let mut pages = pages_from(
+        sources,
+        opts,
+        #[cfg(feature = "syntax-highlighting")]
+        syntaxes.get(),
+    );
 
     // Read the site's name off an **authored** root, before synthesis can add
     // one. A synthesized front page is named *after* the site, so asking it
@@ -390,6 +493,10 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
         assets,
         template_error,
         page_shell_errors,
+        #[cfg(feature = "syntax-highlighting")]
+        syntax_errors: syntaxes.warnings().to_vec(),
+        #[cfg(not(feature = "syntax-highlighting"))]
+        syntax_errors: Vec::new(),
     }
 }
 
@@ -400,6 +507,7 @@ fn build_page(
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
     title_map: &HashMap<PathBuf, String>,
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
 ) -> PublishedPage {
     let audience = opts.audience.as_deref();
     let parsed = frontmatter::parse_or_empty(&s.markdown).unwrap_or(frontmatter::ParsedFile {
@@ -476,6 +584,12 @@ fn build_page(
         rendered_body.clone()
     } else {
         let format = ContentFormat::from_extension(file_path).unwrap_or(ContentFormat::Markdown);
+        // The site's grammars, not the built-in set that plain `render_body`
+        // reaches for: a site that declared one of its own declared it to be
+        // used here.
+        #[cfg(feature = "syntax-highlighting")]
+        let converted = body::render_body_with(&rendered_body, format, syntaxes);
+        #[cfg(not(feature = "syntax-highlighting"))]
         let converted = body::render_body(&rendered_body, format);
         links::transform_links(
             &converted,
@@ -1124,6 +1238,56 @@ mod tests {
 
     fn entry(title: &str, date: &str) -> String {
         format!("---\ntitle: {title}\ndate_of_document: {date}\n---\nBody of {title}.\n")
+    }
+
+    /// A grammar the site declared reaches the pages it publishes — the whole
+    /// point of [`SiteOptions::syntaxes`], and the one step that is neither
+    /// `syntax`'s nor `body`'s to test.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn a_declared_grammar_colours_the_sites_code() {
+        let note = "---\ntitle: Note\n---\n```wat\n;; a note\n```\n";
+        let mut opts = SiteOptions::default();
+        opts.syntaxes.insert(
+            ".config/sites/blog/wat.sublime-syntax".to_string(),
+            "name: Wat\nfile_extensions: [wat]\nscope: source.wat\ncontexts:\n  main:\n    \
+             - match: ';;.*$'\n      scope: comment.line.wat\n"
+                .to_string(),
+        );
+
+        let out = render_site(&[src("index.md", note, true)], &opts);
+        assert!(out.syntax_errors.is_empty(), "{:?}", out.syntax_errors);
+        assert!(
+            out.pages[0].html.contains("plates-comment"),
+            "the site's own grammar did not reach the page: {}",
+            out.pages[0].html
+        );
+    }
+
+    /// And one that will not parse costs the site some colour rather than its
+    /// publication — the bargain a broken shell template gets.
+    #[cfg(feature = "syntax-highlighting")]
+    #[test]
+    fn a_broken_declared_grammar_is_reported_not_fatal() {
+        let note = "---\ntitle: Note\n---\n```rust\nlet x = 1;\n```\n";
+        let mut opts = SiteOptions::default();
+        opts.syntaxes.insert(
+            ".config/sites/blog/broken.sublime-syntax".to_string(),
+            "this: is: not: a grammar".to_string(),
+        );
+
+        let out = render_site(&[src("index.md", note, true)], &opts);
+        assert_eq!(out.syntax_errors.len(), 1, "{:?}", out.syntax_errors);
+        assert!(
+            out.syntax_errors[0].contains("broken.sublime-syntax"),
+            "names the file: {:?}",
+            out.syntax_errors
+        );
+        assert!(
+            out.pages[0].html.contains("plates-storage"),
+            "rust still highlights: {}",
+            out.pages[0].html
+        );
     }
 
     /// The case per-file audiences create: three entries tagged for a site,

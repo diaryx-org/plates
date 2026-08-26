@@ -107,6 +107,20 @@ pub struct SiteSpec {
     /// BCP 47 language tag for every page's `<html lang="…">`. `None` is
     /// `"en"`, which is what the render layer assumes when nobody says.
     pub lang: Option<String>,
+    /// Extra grammars for highlighting code, as **vault-relative paths** to
+    /// `.sublime-syntax` files.
+    ///
+    /// The render layer already carries 213 of them, so this is for a language
+    /// no public grammar covers: an in-house DSL, a config dialect, a notation
+    /// the vault invented. The grammar's own `file_extensions:` decides which
+    /// fence tags it answers to — a definition listing `wat` is what makes
+    /// ```` ```wat ```` colour.
+    ///
+    /// Paths rather than the texts, for the reason [`shell`](Self::shell) is a
+    /// path: a grammar is a file someone edits. In declaration order, so that
+    /// where two grammars claim one extension the later wins.
+    /// [`SITE_ASSETS_DIR`] is the recommended home, not a rule.
+    pub syntaxes: Vec<String>,
 }
 
 impl SiteSpec {
@@ -122,8 +136,8 @@ impl SiteSpec {
 /// The recommended home for a site's shell and stylesheet:
 /// `.config/sites/<name>/`.
 ///
-/// A *convention*, not a rule — [`SiteSpec::shell`] and
-/// [`SiteSpec::stylesheet`] take any vault-relative path, and nothing here
+/// A *convention*, not a rule — [`SiteSpec::shell`], [`SiteSpec::stylesheet`]
+/// and [`SiteSpec::syntaxes`] take any vault-relative path, and nothing here
 /// hardcodes this one. It is dot-prefixed so no publish path picks the files up
 /// as documents or attachments of their own: a shell is the frame a site is
 /// rendered in, not a page in it.
@@ -386,6 +400,7 @@ mod tests {
             shell: None,
             stylesheet: None,
             lang: None,
+            syntaxes: Vec::new(),
         }
     }
 

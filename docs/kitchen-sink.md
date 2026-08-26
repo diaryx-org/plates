@@ -102,7 +102,8 @@ page. This one does — drag it sideways:
 
 ## Code
 
-A fenced block, tagged with its language:
+A fenced block, tagged with its language, is coloured by the grammar that tag
+names:
 
 ```rust
 pub fn render_page(&self, page: &PublishedPage, site_title: &str) -> String {
@@ -110,6 +111,44 @@ pub fn render_page(&self, page: &PublishedPage, site_title: &str) -> String {
     let breadcrumb = render_breadcrumb(page, single_file);
     format!("<!DOCTYPE html>\n<html lang=\"en\">\n{prefix}{breadcrumb}")
 }
+```
+
+213 grammars ship with the renderer, which is most of what anyone fences a
+block in — the languages the rest of this organisation is written in included:
+
+```zig
+pub fn parse(allocator: Allocator, source: []const u8) !Document {
+    var doc = Document.init(allocator);
+    errdefer doc.deinit();
+    return doc; // the caller owns it now
+}
+```
+
+```swift
+struct EntryView: View {
+    @State private var entry: Entry
+    var body: some View {
+        Text(entry.title).font(.headline)  // and its date below
+    }
+}
+```
+
+```toml
+[workspace.package]
+edition = "2024"
+rust-version = "1.88"   # the floor the `msrv` job enforces
+```
+
+Nothing is *styled* twice over, though: the colours come from the stylesheet
+rather than from the markup, so a site that replaces the sheet replaces the
+palette with it, and both the light and the dark reading of this page are the
+same HTML.
+
+A tag no grammar answers to is not a failure. The block publishes exactly as it
+would have before any of this existed:
+
+```not-a-language
+{ this is tagged, but with nothing anyone has a grammar for }
 ```
 
 And one whose lines are longer than the measure, which scrolls horizontally

@@ -82,6 +82,8 @@ sites:
     shell: .config/sites/blog/shell.html
     stylesheet: .config/sites/blog/style.css
     lang: en
+    syntaxes:                    # grammars for languages the built-in 213 miss
+      - .config/sites/blog/wat.sublime-syntax
 ```
 
 | Key | |
@@ -93,6 +95,7 @@ sites:
 | `shell` | An HTML file with named slots, as an archive-relative path. `.config/sites/<name>/` is the recommended home, not a requirement. |
 | `stylesheet` | A CSS file that *replaces* the built-in sheet rather than layering over it. |
 | `lang` | BCP 47, for every page's `<html lang="…">`. Defaults to `en`. |
+| `syntaxes` | `.sublime-syntax` files for languages the built-in grammars do not cover, as archive-relative paths. A list, or a bare path for the one-item case. |
 
 Everything but `audience` has a defensible default, and the defaults are
 `plates::SiteSpec`'s. A misspelled key costs a site one setting and is reported;

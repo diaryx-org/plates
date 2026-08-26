@@ -31,10 +31,16 @@ fig-lang = ["plates/fig-lang", "plates-render/fig-lang"]
 
 [dependencies]
 plates = { workspace = true }
-# With `templating`, unlike `plates` itself: running the render pipeline is the
-# caller's job, and this is the caller. Without it a body's handlebars would be
-# published as literal text.
-plates-render = { workspace = true, features = ["templating"] }
+# With `templating` and `syntax-highlighting`, unlike `plates` itself: running
+# the render pipeline is the caller's job, and this is the caller. Without the
+# first a body's handlebars would be published as literal text; without the
+# second every fenced block would publish uncoloured. Both are the weight a
+# static site generator is *for* — it is the library crates that have to stay
+# able to decline it.
+plates-render = { workspace = true, features = [
+    "templating",
+    "syntax-highlighting",
+] }
 # prov is deliberately *not* a dependency of its own here. Workspace discovery,
 # the config document and the id registry are all reached through
 # `plates::prov`, which `plates` re-exports for exactly this reason: one prov in
