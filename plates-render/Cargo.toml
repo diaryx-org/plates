@@ -7,7 +7,7 @@ rust-version.workspace = true
 repository.workspace = true
 homepage.workspace = true
 license.workspace = true
-readme = "../README.md"
+readme = "README.md"
 keywords = ["static-site-gen", "markdown", "djot", "html", "prov"]
 categories = ["web-programming", "text-processing"]
 

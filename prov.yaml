@@ -1,0 +1,24 @@
+title: prov config
+spec: 1
+content_format: markdown
+metadata:
+  format: yaml
+  embed: delimited
+references:
+  notation: markdown
+  path_style: root
+  target: path
+  label: false
+id_storage: both
+updated: ''
+identity: lazy
+fixity: attachments
+recycle_bin: true
+history: off
+about: structure
+workspace_id: plates
+sites:
+  docs:
+    label: plates
+    audience: public
+    index: '[plates](/README.md)'
