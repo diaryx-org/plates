@@ -40,6 +40,12 @@
     --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
     --line-height-tight: 1.25;
     --sidebar-width: 16rem;
+    /* How far down anything under the fixed nav toggle has to start. The button
+       is 0.75rem from the top and a little over 2.3rem tall, so this clears it
+       with room to spare. The drawer and the page both read it, because the
+       button floats over both and a change to its size must move both. Only
+       consulted below the nav breakpoint, where the button is shown. */
+    --nav-toggle-clear: 4.5rem;
     --page-pad-x: 1.5rem;
     --radius: 0.5rem;
     --radius-sm: 0.3rem;
@@ -508,7 +514,11 @@ body.has-site-nav {
         display: block;
     }
 
+    /* The drawer slides out *underneath* the toggle, so its own first item
+       needs the same clearance the page gets: at the desktop padding the root
+       entry sat behind the button. */
     .site-nav {
+        padding-top: var(--nav-toggle-clear);
         transform: translateX(-100%);
         transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
         box-shadow: none;
@@ -523,7 +533,7 @@ body.has-site-nav {
        first heading. */
     body.has-site-nav {
         padding-left: var(--page-pad-x);
-        padding-top: 4.5rem;
+        padding-top: var(--nav-toggle-clear);
     }
 }
 
