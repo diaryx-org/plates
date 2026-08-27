@@ -52,6 +52,7 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 - **cli** — a plates command with build, watch, serve and clean ([`b247b51`](https://github.com/diaryx-org/plates/commit/b247b51aa58040e6fa31ab1a6856555afd5a91e7))
 - **plates** — let a site name the field its gate is judged on ([`b7df574`](https://github.com/diaryx-org/plates/commit/b7df5744d1db88b6c8995620e94b800f9a6eeba3))
+- **release** — cut releases with the shared tooling ([`0c13314`](https://github.com/diaryx-org/plates/commit/0c13314b69e46ac425e7a946df0d79daa274afc2))
 
 ### Fixed
 
