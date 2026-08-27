@@ -95,11 +95,27 @@ pub struct CollectOptions<'a> {
     /// It is the *vault's* map, deliberately — narrowing it to what a site may
     /// name is this module's job, because only the plan knows which set that
     /// is, and doing it here is what keeps a withheld document out of
-    /// [`SourceFile::backlinks`].
+    /// [`SourceFile::inbound`].
     ///
     /// An empty map is a legitimate answer, and means no page learns who links
     /// to it.
     pub backlinks: &'a BTreeMap<PathBuf, Vec<prov::Backlink>>,
+    /// The archive's links *uninverted* — [`prov::Workspace::census`]'s, and the
+    /// same one [`crate::plan_site`] is given, for the same reason: one walk per
+    /// run rather than one per site.
+    ///
+    /// [`backlinks`](Self::backlinks) answers "who links here"; this answers
+    /// "what does this document link to", which no inversion can give back —
+    /// and which is what puts a page's own typed relations
+    /// ([`SourceFile::outbound`]) in reach of a template.
+    ///
+    /// Only the frontmatter half is read. A link written in prose has no
+    /// relation to be filed under and already reaches a reader through the
+    /// inbound map, so it is passed over here rather than gathered under an
+    /// invented name.
+    ///
+    /// `&[]` is a legitimate answer, and means no page learns what it links to.
+    pub census: &'a [prov::CensusEntry],
     /// The document the site's **spanning outline** is walked from — the vault's
     /// root document, the same one the plan was walked from.
     ///
@@ -315,6 +331,10 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
     // What this site publishes as *pages*, so an explicitly listed attachment
     // that is also one of them is not shipped a second time as opaque bytes.
     let page_paths: HashSet<&Path> = docs.iter().map(|(path, _)| path.as_path()).collect();
+    // What each document links out to, gathered once for the whole site rather
+    // than by re-scanning the archive's census per page — see
+    // [`site_relations`].
+    let mut relations = site_relations(opts.census, &page_paths, anchor);
 
     for (path, is_root) in docs {
         let is_root = *is_root;
@@ -461,11 +481,12 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             dest_path,
             id,
             is_index: is_root,
-            backlinks: site_backlinks(
+            inbound: site_inbound(
                 opts.backlinks.get(path).map_or(&[][..], Vec::as_slice),
                 &page_paths,
                 anchor,
             ),
+            outbound: relations.remove(path.as_path()).unwrap_or_default(),
         });
     }
 
@@ -506,7 +527,8 @@ fn collected_source_path(path: &Path, anchor: &Path) -> String {
 }
 
 /// The inbound links one document may publish: the archive's, narrowed to the
-/// documents this site admits, in this site's coordinates.
+/// documents this site admits, in this site's coordinates, each carrying the
+/// relation it is written in.
 ///
 /// **`admitted` is the disclosure control.** The map handed in is the vault's
 /// whole inverted census, so a private note linking to a public one is in it,
@@ -515,23 +537,85 @@ fn collected_source_path(path: &Path, anchor: &Path) -> String {
 /// plan's own set is what stops it, and it is done here rather than downstream
 /// because this is the last layer that knows which documents the gate refused.
 ///
-/// prov counts *link sites* — a document that names this one in `related:` and
-/// again in a sentence appears twice — and a reader wants the document once, so
-/// the result is deduplicated. Sorted, because a rendered page is a build
-/// artifact and two builds of one archive have to agree.
-fn site_backlinks(
+/// The relation's *name* travels with the edge and is never interpreted: a vault
+/// declares its own vocabulary, so `sequel` and `translation-of` reach a
+/// template on exactly the terms `contents` does.
+///
+/// prov counts *link sites* — a document that names this one in a relation and
+/// again in a sentence appears twice — and a reader wants each of those once, so
+/// the result is deduplicated per relation. Sorted, because a rendered page is a
+/// build artifact and two builds of one archive have to agree.
+fn site_inbound(
     inbound: &[prov::Backlink],
     admitted: &HashSet<&Path>,
     anchor: &Path,
-) -> Vec<String> {
-    let mut out: Vec<String> = inbound
+) -> Vec<plates_render::LinkEdge> {
+    let mut out: Vec<plates_render::LinkEdge> = inbound
         .iter()
         .filter(|link| admitted.contains(link.source.as_path()))
-        .map(|link| collected_source_path(&link.source, anchor))
+        .map(|link| plates_render::LinkEdge {
+            relation: relation_name(&link.site),
+            path: collected_source_path(&link.source, anchor),
+        })
         .collect();
     out.sort();
     out.dedup();
     out
+}
+
+/// What each document links *out* to through a relation, keyed by the document
+/// that writes it — the census read forwards, where [`site_inbound`] reads its
+/// inversion.
+///
+/// Built once per collection rather than per page: the census is the whole
+/// archive's, so scanning it inside the document loop would cost one pass over
+/// every link in the vault per published page.
+///
+/// **Both ends are checked against `admitted`**, and the target end is the one
+/// that is new. An edge whose source is withheld never reaches a page anyway;
+/// an edge whose *target* is withheld would publish the private document's path,
+/// and its title, on the public page that names it — which is the same
+/// disclosure as an unfiltered backlink, arriving from the other direction.
+///
+/// A link written in prose is passed over: it carries no relation to file it
+/// under, and gathering those under a reserved name would take a name a vault is
+/// entitled to declare.
+fn site_relations<'a>(
+    census: &'a [prov::CensusEntry],
+    admitted: &HashSet<&Path>,
+    anchor: &Path,
+) -> HashMap<&'a Path, Vec<plates_render::LinkEdge>> {
+    let mut out: HashMap<&Path, Vec<plates_render::LinkEdge>> = HashMap::new();
+    for entry in census {
+        let Some(relation) = relation_name(&entry.site) else {
+            continue;
+        };
+        let Some(target) = entry.resolution.resolved_path() else {
+            continue;
+        };
+        if !admitted.contains(entry.source.as_path()) || !admitted.contains(target.as_path()) {
+            continue;
+        }
+        out.entry(entry.source.as_path())
+            .or_default()
+            .push(plates_render::LinkEdge {
+                relation: Some(relation),
+                path: collected_source_path(target, anchor),
+            });
+    }
+    for edges in out.values_mut() {
+        edges.sort();
+        edges.dedup();
+    }
+    out
+}
+
+/// The relation a link site names, or `None` for a link written in prose.
+fn relation_name(site: &prov::LinkSite) -> Option<String> {
+    match site {
+        prov::LinkSite::Relation(name) => Some(name.clone()),
+        prov::LinkSite::Body(_) => None,
+    }
 }
 
 /// The archive's spanning outline from `root`, in the coordinates the collected
@@ -1128,10 +1212,14 @@ mod tests {
         Workspace::builder(fs).root("/vault").build()
     }
 
-    fn collected_backlinks(
+    /// Collect `admitted` out of `ws` with the archive's own census behind it,
+    /// forwards and inverted — the shape a real build hands in — keyed by the
+    /// name each source is collected under.
+    fn collected(
         ws: &Workspace<prov::InMemoryFs>,
         admitted: &[&str],
-    ) -> HashMap<String, Vec<String>> {
+    ) -> HashMap<String, SourceFile> {
+        let census = prov::block_on(ws.census("index.md")).unwrap();
         let backlinks = prov::block_on(ws.backlinks("index.md")).unwrap();
         let docs: Vec<(PathBuf, bool)> = admitted
             .iter()
@@ -1147,6 +1235,7 @@ mod tests {
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
                 backlinks: &backlinks,
+                census: &census,
                 spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
@@ -1155,8 +1244,49 @@ mod tests {
         .unwrap();
         site.sources
             .into_iter()
-            .map(|s| (s.source_rel_path, s.backlinks))
+            .map(|s| (s.source_rel_path.clone(), s))
             .collect()
+    }
+
+    /// The flat union a template reads as `backlinks`: each linking document
+    /// once, however many sites it links from. The renderer derives it the same
+    /// way, from the same field.
+    fn collected_backlinks(
+        ws: &Workspace<prov::InMemoryFs>,
+        admitted: &[&str],
+    ) -> HashMap<String, Vec<String>> {
+        collected(ws, admitted)
+            .into_iter()
+            .map(|(key, source)| {
+                let mut paths: Vec<String> =
+                    source.inbound.iter().map(|e| e.path.clone()).collect();
+                paths.sort();
+                paths.dedup();
+                (key, paths)
+            })
+            .collect()
+    }
+
+    /// A vault that declares a relation of its own, spanning through
+    /// `contents:` so everything is reachable. `sequel`/`prequel` is not a
+    /// vocabulary this crate knows — which is the point of the tests below.
+    fn sequels(docs: &[(&str, &str)]) -> Workspace<prov::InMemoryFs> {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in docs {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        Workspace::builder(fs)
+            .root("/vault")
+            .relations(
+                prov::RelationSet::new()
+                    .with(prov::Relation::many("contents").inverse("part_of"))
+                    .with(prov::Relation::one("part_of").inverse("contents"))
+                    .with(prov::Relation::one("sequel").inverse("prequel"))
+                    .with(prov::Relation::one("prequel").inverse("sequel"))
+                    .spanning("contents"),
+            )
+            .build()
     }
 
     /// Both halves of prov's census reach the collected source: a frontmatter
@@ -1216,6 +1346,161 @@ mod tests {
         assert_eq!(backlinks["b.md"], ["index.md"], "{backlinks:?}");
     }
 
+    /// A relation edge reaches the collected source from **both ends**, under
+    /// the name the vault gave it. Nothing here declares what a `sequel` is:
+    /// the archive's configuration does, and the census carries the name.
+    #[test]
+    fn a_typed_relation_reaches_both_ends_of_the_edge() {
+        let ws = sequels(&[
+            (
+                "index.md",
+                "---\ntitle: Home\ncontents:\n- one.md\n- two.md\n---\nHome.\n",
+            ),
+            (
+                "one.md",
+                "---\ntitle: One\npart_of: index.md\nsequel: two.md\n---\nOne.\n",
+            ),
+            (
+                "two.md",
+                "---\ntitle: Two\npart_of: index.md\nprequel: one.md\n---\nTwo.\n",
+            ),
+        ]);
+
+        let sources = collected(&ws, &["index.md", "one.md", "two.md"]);
+        let edge = |relation: &str, path: &str| plates_render::LinkEdge {
+            relation: Some(relation.to_string()),
+            path: path.to_string(),
+        };
+
+        assert!(
+            sources["one.md"]
+                .outbound
+                .contains(&edge("sequel", "two.md")),
+            "{:?}",
+            sources["one.md"].outbound
+        );
+        assert!(
+            sources["two.md"]
+                .inbound
+                .contains(&edge("sequel", "one.md")),
+            "{:?}",
+            sources["two.md"].inbound
+        );
+        // The spanning relation is a relation like any other: it is in here
+        // because the census carries it, and the nav publishes the same shape.
+        assert!(
+            sources["index.md"]
+                .outbound
+                .contains(&edge("contents", "one.md")),
+            "{:?}",
+            sources["index.md"].outbound
+        );
+    }
+
+    /// The disclosure control, on the edge this feature adds. A relation is two
+    /// documents, so **both** ends are checked: a withheld document must not be
+    /// named as this page's sequel, and must not name this page as its own.
+    #[test]
+    fn a_relation_across_the_gate_is_named_from_neither_end() {
+        let ws = sequels(&[
+            (
+                "index.md",
+                "---\ntitle: Home\ncontents:\n- public.md\n- private.md\n---\nHome.\n",
+            ),
+            (
+                "public.md",
+                "---\ntitle: Public\npart_of: index.md\nsequel: private.md\n---\nP.\n",
+            ),
+            (
+                "private.md",
+                "---\ntitle: Secret\npart_of: index.md\nsequel: public.md\n---\nS.\n",
+            ),
+        ]);
+
+        // The census sees both edges — which is the point: the filter is doing
+        // work rather than agreeing with an empty map.
+        let census = prov::block_on(ws.census("index.md")).unwrap();
+        let sequel_between = |from: &str, to: &str| {
+            census.iter().any(|e| {
+                e.source == Path::new(from)
+                    && matches!(&e.site, prov::LinkSite::Relation(r) if r == "sequel")
+                    && e.resolution.resolved_path() == Some(&PathBuf::from(to))
+            })
+        };
+        assert!(sequel_between("public.md", "private.md"), "{census:?}");
+        assert!(sequel_between("private.md", "public.md"), "{census:?}");
+
+        let sources = collected(&ws, &["index.md", "public.md"]);
+        let public = &sources["public.md"];
+
+        // Its `part_of: index.md` survives — that end is admitted. Its
+        // `sequel:` does not, in either direction, and neither does the name.
+        assert!(
+            public
+                .outbound
+                .iter()
+                .all(|e| e.relation.as_deref() == Some("part_of") && e.path == "index.md"),
+            "{:?}",
+            public.outbound
+        );
+        assert!(
+            public
+                .inbound
+                .iter()
+                .all(|e| e.relation.as_deref() == Some("contents") && e.path == "index.md"),
+            "{:?}",
+            public.inbound
+        );
+        // And index.md's own `contents:` names only the half that publishes.
+        assert!(
+            !sources["index.md"]
+                .outbound
+                .iter()
+                .any(|e| e.path.contains("private")),
+            "{:?}",
+            sources["index.md"].outbound
+        );
+    }
+
+    /// A link written in prose has no relation to be filed under, so it is not
+    /// given one — not even a reserved `body`, which is a name a vault is
+    /// entitled to declare. It reaches a reader through the inbound union.
+    #[test]
+    fn a_prose_link_carries_no_relation_name() {
+        let ws = sequels(&[
+            (
+                "index.md",
+                "---\ntitle: Home\ncontents:\n- one.md\n- two.md\n---\nHome.\n",
+            ),
+            (
+                "one.md",
+                "---\ntitle: One\npart_of: index.md\n---\nSee [Two](two.md).\n",
+            ),
+            ("two.md", "---\ntitle: Two\npart_of: index.md\n---\nTwo.\n"),
+        ]);
+
+        let sources = collected(&ws, &["index.md", "one.md", "two.md"]);
+
+        assert!(
+            sources["two.md"]
+                .inbound
+                .contains(&plates_render::LinkEdge {
+                    relation: None,
+                    path: "one.md".to_string(),
+                }),
+            "{:?}",
+            sources["two.md"].inbound
+        );
+        assert!(
+            !sources["one.md"]
+                .outbound
+                .iter()
+                .any(|e| e.path == "two.md"),
+            "{:?}",
+            sources["one.md"].outbound
+        );
+    }
+
     /// **Why the outline is asked for rather than read.** This vault's spine is
     /// `sections:`, which it is entitled to be — prov's `spanning:` names the
     /// relation that contains — and nothing in these documents says `contents:`
@@ -1261,6 +1546,7 @@ mod tests {
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
                 backlinks: &BTreeMap::new(),
+                census: &[],
                 spanning_root: Some(Path::new("index.md")),
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
@@ -1292,6 +1578,7 @@ mod tests {
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
                 backlinks: &BTreeMap::new(),
+                census: &[],
                 spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),

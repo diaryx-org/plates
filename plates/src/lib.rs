@@ -32,10 +32,14 @@
 //!   that an index need not be among the entries but must be admitted by the
 //!   gate, and [`IndexDirectory`] — a manifest node fronting a site with a whole
 //!   covered directory, rebased onto the site root.
-//! - **Backlinks.** prov's inverted census is about the *vault*, so a document
-//!   the gate refused links out of it. Narrowing it to what a site may name is
-//!   here, because this is the last layer that knows which documents were
-//!   refused. See [`SourceFile::backlinks`].
+//! - **The link edges, both ways.** prov's census is about the *vault*, so a
+//!   document the gate refused writes edges in it and is written about in it.
+//!   Narrowing both directions to what a site may name is here, because this is
+//!   the last layer that knows which documents were refused — and it is both
+//!   ends of each edge, since a private target discloses as much as a private
+//!   source. See [`SourceFile::inbound`] and [`SourceFile::outbound`]. The
+//!   relation names travel with the edges and are never interpreted: a vault
+//!   declares its own vocabulary.
 //! - **The spanning outline.** Which document contains which, walked through the
 //!   relation the *workspace configures* rather than through one dialect's
 //!   `contents:`/`part_of:` spelling. It rides on

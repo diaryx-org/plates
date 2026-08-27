@@ -150,6 +150,8 @@ What a template can name:
 | `parent` | the page containing this one, or null |
 | `breadcrumbs` | the trail from the root down to this page, itself last |
 | `backlinks` | the entries that link *to* this page, by path, each named once |
+| `relations` | the relation edges this page writes, keyed by relation name |
+| `inbound` | the pages that name this one, keyed by the relation they name it in |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
 `description`, `group_keys`, `is_root`. The pre-computed date parts are there
@@ -160,12 +162,22 @@ Every collection is assembled from the sources the render was handed, which are
 already the gate-admitted set — so **a template cannot name a withheld
 document**, because the data holding it was never built.
 
-`backlinks` is the exception that proves it, and the one field a caller has to
-be careful with. This crate reads nothing, so it cannot find what links to a
-page; the names arrive on `SourceDoc::backlinks` from a caller that inverted the
-archive's links, and **that caller must narrow them to the same site**. A name
-no source in this render answers to is dropped rather than published as a dead
-link, which is a second line of defence and not the first one.
+The three link keys are the exception that proves it, and the one place a caller
+has to be careful. This crate reads nothing, so it cannot find what links to a
+page or what a page links to; the edges arrive on `SourceDoc::inbound` and
+`SourceDoc::outbound` from a caller that walked the archive, and **that caller
+must narrow both ends of every edge to the same site** — a private target is
+disclosed by being named just as a private source is. A name no source in this
+render answers to is dropped rather than published as a dead link, which is a
+second line of defence and not the first one.
+
+`relations` and `inbound` are keyed by **the names the vault gave its
+relations** (`inbound.sequel`, `relations.translation-of`). Nothing here holds a
+list of them: a name arrives on a `LinkEdge` and becomes a key. A link written in
+prose has no name, so it is in neither — a reserved key for it would take a name
+a vault may legitimately declare — and it reaches a template through `backlinks`,
+the flat union of typed and untyped. A relation whose every target this render
+cannot answer for produces no key at all rather than an empty list.
 
 ### Why `{{ }}` survives in link destinations
 

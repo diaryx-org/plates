@@ -267,6 +267,30 @@ pub struct OutlineNode {
     pub children: Vec<OutlineNode>,
 }
 
+/// One link between two documents, named by the relation that carries it.
+///
+/// A vault **declares its own relations** — `sequel`, `translation_of`,
+/// `author`, whatever its configuration says — so the name is data, never
+/// something this crate knows. Nothing here may hardcode a vocabulary: whatever
+/// names arrive are the names a template can address.
+///
+/// [`relation`](Self::relation) is `None` for a link written in prose, which has
+/// no name to be filed under. Those reach a template through `backlinks`, the
+/// flat union, and nowhere else — a reserved key for them would collide with a
+/// relation a vault is entitled to declare.
+///
+/// [`path`](Self::path) is the document at the far end, spelled as
+/// [`SourceDoc::path`](crate::site::SourceDoc::path) spells it — the same
+/// coordinates, so an edge can be matched to the page it names without either
+/// side re-deriving the other's naming rule.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct LinkEdge {
+    /// The relation this edge is written in, or `None` for a body link.
+    pub relation: Option<String>,
+    /// The document at the far end.
+    pub path: String,
+}
+
 /// A node in the full site navigation tree.
 #[derive(Debug, Clone)]
 pub struct SiteNavNode {

@@ -25,7 +25,7 @@ use crate::dates;
 use crate::html::{HtmlRenderer, PageContext, SiteStyle};
 use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page};
 use crate::shell::ShellTemplate;
-use crate::types::{NavLink, OutlineNode, PageLayout, PublishedPage};
+use crate::types::{LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage};
 use crate::{body, links, page, template};
 
 /// A stored source document to render.
@@ -39,8 +39,8 @@ pub struct SourceDoc {
     pub markdown: String,
     /// Whether this is the workspace root/index page (renders to `index.html`).
     pub is_root: bool,
-    /// The documents that link *to* this one, spelled as their own
-    /// [`path`](Self::path)s.
+    /// The documents that link *to* this one, each carrying the relation it is
+    /// written in — `None` for a link written in prose.
     ///
     /// Supplied rather than derived, and not because it would be inconvenient:
     /// finding them means reading every document in the archive, and this crate
@@ -55,8 +55,19 @@ pub struct SourceDoc {
     /// belt-and-braces rather than the whole guarantee; the guarantee is the
     /// caller's.
     ///
+    /// A template reads this twice over: grouped by relation as `inbound`, and
+    /// flattened to one entry per document as `backlinks`.
+    ///
     /// Empty is the honest answer for a caller that computes none.
-    pub backlinks: Vec<String>,
+    pub inbound: Vec<LinkEdge>,
+    /// The relation edges this document *writes*, on exactly
+    /// [`inbound`](Self::inbound)'s terms — same coordinates, same obligation on
+    /// the caller to have narrowed both ends to this site.
+    ///
+    /// Prose links out are absent by design rather than by omission: they carry
+    /// no relation to group under, and the only key that publishes an unnamed
+    /// link is the inbound `backlinks`. A template reads this as `relations`.
+    pub outbound: Vec<LinkEdge>,
 }
 
 /// A fully rendered page: its output filename, HTML, and source identifier.
@@ -417,7 +428,17 @@ struct Collected {
     /// The entry records of the documents linking *to* each source, keyed the
     /// same way. Resolved against `by_path`, so a name no page in this render
     /// answers to is already gone.
+    ///
+    /// The flat union — a typed relation and a sentence of prose are one
+    /// inbound reference here — which is what `backlinks` has always meant and
+    /// goes on meaning.
     backlinks: HashMap<PathBuf, Vec<JsonValue>>,
+    /// The same inbound edges filed under the relation that carries each one:
+    /// per source, a mapping of relation name to entry records. Prose links are
+    /// absent, having no name to file under.
+    inbound: HashMap<PathBuf, JsonValue>,
+    /// The relation edges each source *writes*, filed the same way.
+    relations: HashMap<PathBuf, JsonValue>,
     /// Entry records in the site's order, so a breadcrumb walk and `entries`
     /// agree about what an entry is.
     order: Vec<PathBuf>,
@@ -534,16 +555,21 @@ fn collect_context(
         .filter_map(|key| by_path.get(key).cloned())
         .collect();
 
-    // After the loop, because a backlink is an *entry* and the entries do not
-    // all exist until the loop has run — a document is routinely linked to by
-    // one that comes after it.
-    let backlinks = sources
-        .iter()
-        .map(|s| {
-            let key = PathBuf::from(links::sanitize_rel_path(&s.path));
-            (key, inbound_entries(&s.backlinks, &by_path))
-        })
-        .collect();
+    // After the loop, because a linked document is an *entry* and the entries do
+    // not all exist until the loop has run — a document is routinely linked to
+    // by one that comes after it.
+    let mut backlinks = HashMap::new();
+    let mut inbound = HashMap::new();
+    let mut relations = HashMap::new();
+    for s in sources {
+        let key = PathBuf::from(links::sanitize_rel_path(&s.path));
+        backlinks.insert(
+            key.clone(),
+            entry_records(s.inbound.iter().map(|e| e.path.as_str()), &by_path),
+        );
+        inbound.insert(key.clone(), edges_by_relation(&s.inbound, &by_path));
+        relations.insert(key, edges_by_relation(&s.outbound, &by_path));
+    }
 
     let site = serde_json::json!({
         "title": opts
@@ -566,10 +592,12 @@ fn collect_context(
         spine,
         order,
         backlinks,
+        inbound,
+        relations,
     }
 }
 
-/// The entry records for one page's inbound links.
+/// The entry records a set of linked paths names.
 ///
 /// Sorted by path and deduplicated here rather than trusted from the caller,
 /// because a rendered page is a build artifact and two builds of one archive
@@ -580,9 +608,12 @@ fn collect_context(
 /// A name `by_path` does not answer to is dropped, on the rule
 /// `resolve_link` already follows for a `contents:` entry: a link this render
 /// cannot address is a 404 waiting to be published.
-fn inbound_entries(sources: &[String], by_path: &HashMap<PathBuf, JsonValue>) -> Vec<JsonValue> {
-    let mut keys: Vec<PathBuf> = sources
-        .iter()
+fn entry_records<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+    by_path: &HashMap<PathBuf, JsonValue>,
+) -> Vec<JsonValue> {
+    let mut keys: Vec<PathBuf> = paths
+        .into_iter()
         .map(|path| PathBuf::from(links::sanitize_rel_path(path)))
         .collect();
     keys.sort();
@@ -590,6 +621,43 @@ fn inbound_entries(sources: &[String], by_path: &HashMap<PathBuf, JsonValue>) ->
     keys.iter()
         .filter_map(|key| by_path.get(key).cloned())
         .collect()
+}
+
+/// Edges filed under the relation each is written in: a mapping of name to
+/// entry records, which is what makes `inbound.sequel.0.title` an address.
+///
+/// **The names are the vault's.** Whatever relations the archive declares are
+/// the keys, and no vocabulary is assumed — including the relation the site's
+/// own navigation is built from, which appears here like any other because it
+/// is one.
+///
+/// An unnamed edge — a link written in prose — is dropped rather than gathered
+/// under a reserved key: `body` is a name a vault may legitimately give a
+/// relation, and the flat `backlinks` already carries those links.
+///
+/// A relation whose every target this render cannot answer for produces **no
+/// key at all**, rather than an empty list. The list would render as nothing
+/// either way; the key would still be a statement that the edge exists, which is
+/// the one thing a filtered edge must not say.
+fn edges_by_relation(edges: &[LinkEdge], by_path: &HashMap<PathBuf, JsonValue>) -> JsonValue {
+    let mut by_relation: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    for edge in edges {
+        let Some(relation) = edge.relation.as_deref() else {
+            continue;
+        };
+        by_relation
+            .entry(relation)
+            .or_default()
+            .push(edge.path.as_str());
+    }
+    let mut out = serde_json::Map::new();
+    for (relation, paths) in by_relation {
+        let records = entry_records(paths, by_path);
+        if !records.is_empty() {
+            out.insert(relation.to_string(), JsonValue::Array(records));
+        }
+    }
+    JsonValue::Object(out)
 }
 
 /// One entry, as a template names it.
@@ -730,10 +798,21 @@ fn page_context_values(
     );
     // Always present, even empty: `:::each{of=backlinks}` over a page nobody
     // links to should produce nothing, not an error about a name the context
-    // does not hold.
+    // does not hold. The same for the two typed keys, whose relation names are
+    // the vault's own — a template naming one this archive does not declare gets
+    // an empty repetition rather than a failed publish.
     values.insert(
         "backlinks".into(),
         JsonValue::Array(collected.backlinks.get(&key).cloned().unwrap_or_default()),
+    );
+    let empty = || JsonValue::Object(serde_json::Map::new());
+    values.insert(
+        "relations".into(),
+        collected.relations.get(&key).cloned().unwrap_or_else(empty),
+    );
+    values.insert(
+        "inbound".into(),
+        collected.inbound.get(&key).cloned().unwrap_or_else(empty),
     );
     values
 }
@@ -1507,16 +1586,35 @@ mod tests {
             path: path.to_string(),
             markdown: markdown.to_string(),
             is_root,
-            backlinks: Vec::new(),
+            inbound: Vec::new(),
+            outbound: Vec::new(),
         }
     }
 
-    /// [`src`], told who links to it — the shape the collector hands over.
+    /// [`src`], told who links to it in prose — the shape the collector hands
+    /// over for an untyped link.
     fn linked(path: &str, markdown: &str, backlinks: &[&str]) -> SourceDoc {
         SourceDoc {
-            backlinks: backlinks.iter().map(|s| (*s).to_string()).collect(),
+            inbound: backlinks
+                .iter()
+                .map(|s| LinkEdge {
+                    relation: None,
+                    path: (*s).to_string(),
+                })
+                .collect(),
             ..src(path, markdown, false)
         }
+    }
+
+    /// `(relation, path)` pairs as the collector spells them.
+    fn edges(pairs: &[(&str, &str)]) -> Vec<LinkEdge> {
+        pairs
+            .iter()
+            .map(|(relation, path)| LinkEdge {
+                relation: Some((*relation).to_string()),
+                path: (*path).to_string(),
+            })
+            .collect()
     }
 
     /// The date chain these tests declare for their own views, written out
@@ -2894,6 +2992,137 @@ mod tests {
             "{:?}",
             out.body_template_errors
         );
+    }
+
+    /// A relation is addressed by **the name the vault gave it**. Nothing in
+    /// this crate knows what a `sequel` is; it is a key because the archive
+    /// declared one, and `inbound` is a mapping so the dotted path reaches it.
+    #[test]
+    fn an_inbound_relation_is_addressed_by_the_name_the_vault_gave_it() {
+        let body = "---\ntitle: Beta\n---\n:::each{of=inbound.sequel as=s}\n- [:val[s.title]]({{s.href}})\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("a.md", "---\ntitle: Alpha\n---\nA.\n", false),
+            SourceDoc {
+                inbound: edges(&[("sequel", "a.md")]),
+                ..src("b.md", body, false)
+            },
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let beta = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "b.html")
+            .unwrap();
+
+        assert!(beta.html.contains("Alpha"), "got {}", beta.html);
+        assert!(beta.html.contains(r#"href="a.html""#), "got {}", beta.html);
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// The other direction, and the two rules that keep the vocabulary the
+    /// vault's: an edge a page *writes* is under `relations`, and a link written
+    /// in prose is under neither — it has no name, and inventing one would take
+    /// a name a vault may declare.
+    #[test]
+    fn an_outbound_relation_is_published_and_a_prose_link_is_not_named_as_one() {
+        let body = "---\ntitle: Alpha\n---\nSequels:\n:::each{of=relations.sequel as=s}\n- :val[s.path]\n:::\nProse:\n:::each{of=relations.body as=s}\n- :val[s.path]\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("b.md", "---\ntitle: Beta\n---\nB.\n", false),
+            src("c.md", "---\ntitle: Gamma\n---\nC.\n", false),
+            SourceDoc {
+                outbound: edges(&[("sequel", "b.md")]),
+                inbound: vec![LinkEdge {
+                    relation: None,
+                    path: "c.md".into(),
+                }],
+                ..src("a.md", body, false)
+            },
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let alpha = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "a.html")
+            .unwrap();
+
+        assert!(alpha.html.contains("b.md"), "got {}", alpha.html);
+        assert!(!alpha.html.contains("c.md"), "got {}", alpha.html);
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// `backlinks` is unchanged by any of it: the flat union of the typed and
+    /// the prose, each document once.
+    #[test]
+    fn backlinks_stay_the_union_of_the_typed_and_the_untyped() {
+        let body = "---\ntitle: Beta\n---\n:::each{of=backlinks as=b}\n:val[b.path];\n:::\n";
+        let mut beta = src("b.md", body, false);
+        beta.inbound = edges(&[("sequel", "z.md")]);
+        beta.inbound.push(LinkEdge {
+            relation: None,
+            path: "a.md".into(),
+        });
+        // The same document twice, in a relation and in prose: one entry.
+        beta.inbound.push(LinkEdge {
+            relation: Some("sequel".into()),
+            path: "a.md".into(),
+        });
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("z.md", "---\ntitle: Zed\n---\nZ.\n", false),
+            src("a.md", "---\ntitle: Alpha\n---\nA.\n", false),
+            beta,
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let beta = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "b.html")
+            .unwrap();
+
+        let listed: Vec<&str> = beta
+            .html
+            .split(';')
+            .filter_map(|chunk| ["a.md", "z.md"].into_iter().find(|p| chunk.contains(p)))
+            .collect();
+        assert_eq!(listed, ["a.md", "z.md"], "got {}", beta.html);
+    }
+
+    /// A relation every one of whose targets this render cannot answer for
+    /// produces no key at all. The list would render as nothing either way; the
+    /// key would still be a statement that the edge exists.
+    #[test]
+    fn a_relation_pointing_only_outside_this_render_leaves_no_key() {
+        let body = "---\ntitle: Alpha\n---\n:::if{has=relations.sequel}\nHas a sequel.\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            SourceDoc {
+                outbound: edges(&[("sequel", "private.md")]),
+                ..src("a.md", body, false)
+            },
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let alpha = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "a.html")
+            .unwrap();
+
+        assert!(!alpha.html.contains("Has a sequel"), "got {}", alpha.html);
+        assert!(!alpha.html.contains("private"), "got {}", alpha.html);
     }
 
     /// The `{{ }}` migration: a brace outside a link destination publishes as

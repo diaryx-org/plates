@@ -133,10 +133,10 @@ pub fn build_sites(
     // Every link in the archive, resolved against the archive — walked once for
     // the whole run, since the answer does not depend on which site is asking.
     // The census is what lets a build tell a link to an unpublished page (the
-    // gate working, and nothing to fix) from a link to nothing at all; its
-    // inversion is each page's backlinks, which collection narrows to a site's
-    // own admitted set. The second call re-iterates the read scope's memo, not
-    // the disk.
+    // gate working, and nothing to fix) from a link to nothing at all, and read
+    // forwards it is each page's own typed relations; its inversion is each
+    // page's backlinks. Collection narrows both to a site's own admitted set.
+    // The second call re-iterates the read scope's memo, not the disk.
     //
     // An archive whose census cannot be read is one no site can be planned from
     // either, so the planner below says so with the whole build's exit code; a
@@ -173,6 +173,7 @@ pub fn build_sites(
                 stamp: &NoStamp,
                 id_by_path: &id_by_path,
                 backlinks: &backlinks,
+                census: &census,
                 // The same document the plan was walked from, so the site
                 // carries the archive's own hierarchy for its nav to be built
                 // from rather than one re-derived from `contents:` strings.
@@ -264,9 +265,10 @@ fn assemble(
             path: source.source_rel_path.clone(),
             markdown: source.source_markdown.clone(),
             is_root: source.is_index,
-            // Already narrowed to this site by collection, which is the layer
-            // that knows what the gate refused.
-            backlinks: source.backlinks.clone(),
+            // Both directions already narrowed to this site by collection,
+            // which is the layer that knows what the gate refused.
+            inbound: source.inbound.clone(),
+            outbound: source.outbound.clone(),
         })
         .collect();
 

@@ -29,8 +29,9 @@ pub struct SourceFile {
     pub id: Option<String>,
     /// Whether this is the site's front page.
     pub is_index: bool,
-    /// The [`source_rel_path`](Self::source_rel_path)s of the documents that
-    /// link to this one, sorted and each named once.
+    /// The documents that link *to* this one, each named by the relation
+    /// carrying the link — `None` where the link is written in prose. Sorted,
+    /// and each (relation, document) pair named once.
     ///
     /// **Narrowed to this site**, which is the field's whole discipline: the
     /// archive's inverted link map is about the vault, and a document the gate
@@ -43,7 +44,18 @@ pub struct SourceFile {
     /// exactly as [`source_rel_path`](Self::source_rel_path) is, so the render
     /// layer can match a name here against the source that carries it without
     /// a second convention to keep in step.
-    pub backlinks: Vec<String>,
+    pub inbound: Vec<plates_render::LinkEdge>,
+    /// The relation edges this document *writes*, on
+    /// [`inbound`](Self::inbound)'s terms in every respect — same coordinates,
+    /// same narrowing, and **both** ends of each edge checked against the set
+    /// the plan admits, because a private target is disclosed by being named
+    /// just as a private source is.
+    ///
+    /// Prose links out are deliberately absent: they carry no relation to be
+    /// filed under, and there is no published key that would hold them. See
+    /// [`CollectOptions::census`](crate::CollectOptions::census), which is where
+    /// these come from.
+    pub outbound: Vec<plates_render::LinkEdge>,
 }
 
 /// A file a site ships verbatim: an image a body references, an `attachments:`

@@ -141,7 +141,10 @@ let collected = collect_site(
         strip_keys: &["publish"],
         stamp: &NoStamp,
         id_by_path: &HashMap::new(),
+        // Who links here, and — read forwards, the same walk — what each page
+        // links to through a relation.
         backlinks: &workspace.backlinks(root_doc).await?,
+        census: &census,
         // Where the spanning walk starts, so the collected site carries the
         // archive's own hierarchy for the nav to be built from.
         spanning_root: Some(root_doc),
@@ -181,16 +184,24 @@ from the same one, and none of them opens the workspace again.
 `plates_render` rather than resolving two versions of the `Workspace` it is
 about to hand back.
 
-### Who links here
+### Who links here, and what this links to
 
-`CollectOptions::backlinks` is prov's inverted census — the whole vault's, taken
-once per run because a document reached by two sites should be censused once.
-Narrowing it is this crate's, and it is a disclosure control rather than
-tidiness: a document the gate refused links out of that map like any other, and
-`SourceFile::backlinks` is published as a titled link on the page it points at.
-So collection intersects the map with the set the plan admits, spells what
-survives in the same coordinates as `SourceFile::source_rel_path`, and names
-each linking document once however many times it links.
+`CollectOptions::backlinks` is prov's census inverted and `CollectOptions::census`
+is the same census read forwards — the whole vault's, both taken once per run
+because a document reached by two sites should be censused once. What comes out
+is `SourceFile::inbound` and `SourceFile::outbound`: the edges at each end of a
+page, every one carrying **the name of the relation it is written in**, which is
+the vault's own (`sequel`, `translation-of`, whatever its configuration declares)
+and is never interpreted here. A link written in prose carries no name and is
+inbound-only; nothing invents one for it.
+
+Narrowing is this crate's, and it is a disclosure control rather than tidiness: a
+document the gate refused sits in that census like any other, and an edge is
+published as a titled link on the page at the far end. So collection intersects
+with the set the plan admits — **both ends of every edge**, because a private
+target is disclosed by being named exactly as a private source is — spells what
+survives in the same coordinates as `SourceFile::source_rel_path`, and names each
+(relation, document) pair once however many times it is written.
 
 ### Not reading what you already know
 

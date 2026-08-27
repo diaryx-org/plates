@@ -241,6 +241,8 @@ turns out to be wanted is one line of context; a filter grammar is permanent.
 | `parent` | the current page's `part_of` link, or null |
 | `breadcrumbs` | root-to-here trail, this page last |
 | `backlinks` | the entries that link *to* this page, by path |
+| `relations` | this page's own relation edges, by relation name |
+| `inbound` | the same, inverted: who names this page, by relation name |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
 `description`, `group_keys`, `is_root`. Frontmatter keys are also addressable
@@ -258,26 +260,64 @@ because the data was never assembled — a property of *where* the context is
 built rather than of a check, and tested as such
 (`a_template_cannot_reach_a_withheld_document`).
 
-`backlinks` is the one name in that table the render layer cannot answer for
-itself. Finding what links to a page means reading every document in the
-archive, and `plates-render` reads nothing — so `plates` inverts prov's census
-once per build, hands each collected source the list on `SourceFile::backlinks`,
-and the context assembler resolves those names against the entries it already
-built.
+The last three are the names the render layer cannot answer for itself. Finding
+what a page is linked from — or what it links to, beyond what its own
+frontmatter happens to say — means reading every document in the archive, and
+`plates-render` reads nothing. So `plates` takes prov's census once per build,
+reads it forwards and inverted, hands each collected source both edge lists on
+`SourceFile::outbound`/`SourceFile::inbound`, and the context assembler resolves
+those names against the entries it already built.
 
-Which puts the gate somewhere new, and worth saying out loud. `entries` is safe
-because it *is* the render set; `backlinks` arrives from outside it, and prov's
-map is the vault's — a document the gate refused links out of it like any other.
-So collection intersects the map with the set the plan admits before a name
-crosses the boundary (`a_linker_this_site_does_not_admit_is_not_named`), and the
-assembler drops a name no entry answers to
+### The vocabulary is the vault's
+
+`relations` and `inbound` are **mappings keyed by relation name**, so
+`relations.sequel.0.title` is a plain dotted path and `:::each{of=inbound.author}`
+is an ordinary repetition. The names come from the archive: a vault declares its
+own relations (prov's `relation_defs`), and every one it declares is a key here.
+Nothing in `plates` or `plates-render` holds a list of them, which is the whole
+point — a vault that spells its cross-references `translation-of` gets
+`inbound.translation-of` without either crate learning the word.
+
+The relation the site's navigation is built from is in there too, unexceptional
+and un-special-cased: `relations.contents` and `inbound.part_of` are edges like
+any other, and the nav already publishes that same structure by another route.
+
+A link written in **prose** is in neither. It carries no relation name, and there
+is no reserved key for it — `body` is a name a vault may legitimately give a
+relation, so taking it would be taking something that is not ours. Those links
+reach a reader through `backlinks`, which is unchanged: the flat union of the
+typed and the untyped, each linking document named once.
+
+Both keys are always present, an empty mapping included, on the precedent
+`backlinks` set — a template naming a relation this archive does not declare
+renders nothing rather than failing to publish.
+
+### Which puts the gate somewhere new
+
+Worth saying out loud. `entries` is safe because it *is* the render set; these
+three arrive from outside it, and prov's census is the vault's — a document the
+gate refused links out of it, and is linked to from it, like any other.
+
+So collection intersects with the set the plan admits before a name crosses the
+boundary (`a_linker_this_site_does_not_admit_is_not_named`,
+`a_relation_across_the_gate_is_named_from_neither_end`), and the assembler drops
+a name no entry answers to
 (`a_backlink_to_a_document_outside_this_render_is_not_published`). The first is
 the guarantee; the second is what stops a caller's mistake becoming a dead link.
 
+An edge has **two** ends, and the outbound direction is where that starts to
+matter. An unfiltered backlink discloses the document that links here; an
+unfiltered relation discloses the document this one points at — the same leak,
+arriving the other way round — so both ends of every edge are checked. And a
+relation whose every target is filtered out produces no key at all rather than an
+empty list: the list renders as nothing either way, but the key would still be a
+statement that the edge exists.
+
 prov counts link *sites*, so a document naming this one in a relation and again
-in a sentence is two inbound references. A reader wants the document once, and
-the list is deduplicated and sorted by path — a rendered page is a build
-artifact, and two builds of one archive have to be the same bytes.
+in a sentence is two inbound references. `backlinks` wants the document once and
+deduplicates by path; `inbound` deduplicates within each relation. Both sort by
+path — a rendered page is a build artifact, and two builds of one archive have to
+be the same bytes.
 
 ## The shell is unchanged
 

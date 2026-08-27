@@ -52,4 +52,4 @@ pub use nav::{build_site_nav_tree, forest_roots, nav_for_page};
 pub use shell::{ShellError, ShellSlots, ShellTemplate};
 #[cfg(feature = "syntax-highlighting")]
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
-pub use types::{Arrangement, Grain, Grouping, OutlineNode, PageLayout, serve_at_dest};
+pub use types::{Arrangement, Grain, Grouping, LinkEdge, OutlineNode, PageLayout, serve_at_dest};
