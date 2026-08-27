@@ -34,6 +34,10 @@
 //!   covered directory, rebased onto the site root.
 //! - **The theme.** Reading a declaration's shell and stylesheet into *text*,
 //!   because the renderer cannot open a file.
+//! - **The link report.** Which of a site's links lead nowhere, told apart from
+//!   the ones that lead somewhere this site does not publish — a render cannot
+//!   tell those apart, and demotes both to the same unclickable span. See
+//!   [`links`].
 //!
 //! # The dependency list is the design
 //!
@@ -65,6 +69,7 @@
 pub mod collect;
 pub mod digest;
 pub mod error;
+pub mod links;
 pub mod plan;
 pub mod source;
 pub mod spec;
@@ -76,6 +81,7 @@ pub use collect::{
 };
 pub use digest::{DigestMemo, NoDigests, mtime_ms};
 pub use error::{Error, Result};
+pub use links::{LinkDiagnostic, LinkProblem, link_diagnostics};
 pub use plan::{AUDIENCE_FIELD, plan_site, to_export};
 pub use source::{Attachment, CollectedSite, SourceFile};
 pub use spec::{

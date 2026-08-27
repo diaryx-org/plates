@@ -59,6 +59,12 @@ and what the other two crates do, is
   because the renderer cannot open a file. A missing one is reported in
   `SiteTheme::warnings` and ignored — a vault that cannot publish because a
   theme file was renamed has paid its existence for its styling.
+- **The link report.** A render demotes every link it cannot publish to the same
+  unclickable span, which is right for the page and useless as a report: a link
+  to a page the gate holds back is the gate working, and a link to a renamed
+  file is a mistake. prov's census tells them apart, and
+  `SitePlan::link_diagnostics` carries only the second kind — named, never
+  fatal, and never a reason a document is added to or dropped from a site.
 
 ## Why a site is neither an audience nor a view
 
@@ -110,8 +116,14 @@ use std::collections::HashMap;
 use plates::{CollectOptions, NoDigests, NoStamp, collect_site, plan_site, read_theme};
 use plates_render::site::{SiteOptions, render_site};
 
+// Every link in the archive, resolved against the archive — one walk per build,
+// since the answer is the same for every site planned from it. It is what tells
+// a link to an unpublished page from a link to nothing at all, and `&[]` is a
+// caller that does not want `SitePlan::link_diagnostics`.
+let census = workspace.census(root_doc).await?;
+
 // Which gate admits this site, which view arranges it, what fronts it.
-let plan = plan_site(&workspace, &spec, &views, root_doc).await?;
+let plan = plan_site(&workspace, &spec, &views, root_doc, &census).await?;
 let theme = read_theme(&workspace, &spec, &views).await;
 
 // Which documents leave, and what rides along with them.

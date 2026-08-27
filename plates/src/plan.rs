@@ -28,11 +28,19 @@ use crate::spec::{FRONT_PAGE, IndexDirectory, SitePlan, SiteSpec, finish};
 /// `views` is the pool `spec.view` is resolved against, and `root_doc` is the
 /// document the spanning walk starts from — both the caller's to supply, for
 /// the reason in the module docs.
+///
+/// `census` is [`prov::Workspace::census`]'s, and it is a parameter rather than
+/// something taken here because a build plans every site the archive declares
+/// against one archive: the resolutions do not differ between sites, and taking
+/// the census per site would walk the whole graph once per site to learn the
+/// same thing. A caller with no use for [`SitePlan::link_diagnostics`] passes
+/// `&[]`.
 pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
     ws: &Workspace<FS, Id, Ix>,
     spec: &SiteSpec,
     views: &[ViewSpec],
     root_doc: &Path,
+    census: &[prov::CensusEntry],
 ) -> Result<SitePlan> {
     // Resolve the index first: a front page that points at nothing is a mistake
     // worth reporting before spending a whole tree walk on the plan it would
@@ -63,7 +71,7 @@ pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
             other => Error::Export(other.to_string()),
         })?;
 
-    finish(spec, export, index.as_deref(), index_directory)
+    finish(spec, export, index.as_deref(), index_directory, census)
 }
 
 /// The field a site's gate is judged on when it names none.

@@ -53,9 +53,11 @@
 
 use std::path::{Path, PathBuf};
 
+use prov::CensusEntry;
 use prov::exports::ExportPlan;
 
 use crate::error::{Error, Result};
+use crate::links::{LinkDiagnostic, link_diagnostics};
 
 /// One site a vault declares for itself: an audience to publish to, optionally
 /// arranged by a view and fronted by a chosen index.
@@ -295,17 +297,28 @@ pub struct SitePlan {
     /// move to prov's exact-match gate could otherwise introduce; a caller is
     /// expected to say so rather than let the count speak for itself.
     pub case_drift: Vec<PathBuf>,
+    /// Links this site's own pages write that lead nowhere — a renamed file, a
+    /// retired id, a name two documents answer to. See [`crate::links`] for why
+    /// a link to a document the *gate* held back is not one of these.
+    ///
+    /// Empty when the caller planned without a census, which is what a caller
+    /// that does not want the report passes.
+    pub link_diagnostics: Vec<LinkDiagnostic>,
 }
 
-/// Finish a prov export plan into a site plan: attach the front page, and name
-/// the documents the exact-match gate held back that a case-insensitive rule
-/// would have let through.
+/// Finish a prov export plan into a site plan: attach the front page, name the
+/// documents the exact-match gate held back that a case-insensitive rule would
+/// have let through, and name the links its pages write that lead nowhere.
 ///
 /// `index` is `spec.index` already resolved to a path by the caller, and
 /// `index_directory` is what that path turned out to cover when it was a
 /// manifest node; this function's job is to confirm the index is a member. The
 /// set arithmetic that matters — the one-way valve — already happened in
 /// [`prov::exports::compose`].
+///
+/// `census` is the archive's, taken once for a whole run rather than per site —
+/// the resolutions in it belong to the archive and do not change with who is
+/// reading them. `&[]` is a caller that does not want the link report.
 ///
 /// The gate check is made against the *node*, not the directory, and that is the
 /// right place for it: the node is the document carrying the audience its
@@ -317,6 +330,7 @@ pub fn finish(
     export: ExportPlan,
     index: Option<&Path>,
     index_directory: Option<IndexDirectory>,
+    census: &[CensusEntry],
 ) -> Result<SitePlan> {
     let entries: Vec<VisibleDoc> = export
         .entries
@@ -356,6 +370,17 @@ pub fn finish(
         None => None,
     };
 
+    // What the site publishes *as pages*, which is what bounds the link report:
+    // the entries, plus the front page when it is a document. A front page that
+    // is a covered directory is left out for the reason collection leaves it
+    // out — a manifest node is never rendered, so nothing a reader can click on
+    // comes from it.
+    let pages = entries
+        .iter()
+        .map(|doc| doc.path.as_path())
+        .chain(index.as_deref().filter(|_| index_directory.is_none()));
+    let link_diagnostics = link_diagnostics(census, pages);
+
     Ok(SitePlan {
         site: spec.name.clone(),
         audience: spec.audience.clone(),
@@ -364,6 +389,7 @@ pub fn finish(
         index_directory,
         outside_view: export.outside_view,
         case_drift: case_drift(&spec.audience, &export.withheld),
+        link_diagnostics,
     })
 }
 
@@ -483,6 +509,7 @@ mod tests {
             plan_of(vec![entry("index.md"), entry("trip.md")], Vec::new()),
             Some(Path::new("index.md")),
             None,
+            &[],
         )
         .expect("a plan");
         assert_eq!(plan.index, Some(PathBuf::from("index.md")));
@@ -499,6 +526,7 @@ mod tests {
             plan_scoping_out(vec![entry("daily/monday.md")], vec!["daily.md"]),
             Some(Path::new("daily.md")),
             None,
+            &[],
         )
         .expect("a plan");
         assert_eq!(plan.index, Some(PathBuf::from("daily.md")));
@@ -519,6 +547,7 @@ mod tests {
             plan_of(vec![entry("trip.md")], Vec::new()),
             Some(Path::new("index.md")),
             None,
+            &[],
         )
         .unwrap_err();
         assert!(
@@ -561,6 +590,7 @@ mod tests {
             ),
             None,
             None,
+            &[],
         )
         .expect("a plan");
 
@@ -576,6 +606,45 @@ mod tests {
                 .iter()
                 .any(|d| d.path == Path::new("letter.md")),
             "and naming it must never put it back in the set"
+        );
+    }
+
+    /// The link report is bounded by the site, not by the archive: the census
+    /// covers every document prov can reach, and a site answers for the pages it
+    /// publishes. A broken link in a document the gate held back is a real
+    /// mistake in somebody's vault and not this site's to print.
+    #[test]
+    fn the_link_report_covers_this_sites_pages_and_no_others() {
+        let broken = |source: &str| prov::CensusEntry {
+            source: PathBuf::from(source),
+            site: prov::LinkSite::Body(0..7),
+            target_text: "gone.md".to_string(),
+            label: None,
+            resolution: prov::Resolution::Broken,
+        };
+        let plan = finish(
+            &site("letters", "family"),
+            plan_scoping_out(vec![entry("daily/monday.md")], vec!["daily.md"]),
+            Some(Path::new("daily.md")),
+            None,
+            &[
+                broken("daily/monday.md"),
+                broken("daily.md"),
+                broken("private.md"),
+            ],
+        )
+        .expect("a plan");
+
+        let sources: Vec<&Path> = plan
+            .link_diagnostics
+            .iter()
+            .map(|d| d.source.as_path())
+            .collect();
+        assert_eq!(
+            sources,
+            [Path::new("daily/monday.md"), Path::new("daily.md")],
+            "the entries and the front page — which is a published page even \
+             though the view scoped it out of the entries"
         );
     }
 }

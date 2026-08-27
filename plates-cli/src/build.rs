@@ -130,6 +130,15 @@ pub fn build_sites(
     // parsed once rather than once per site.
     let _scope = ws.read_scope();
     let id_by_path = session.id_by_path(&ws);
+    // Every link in the archive, resolved against the archive — one walk for the
+    // whole run, since the answer does not depend on which site is asking. It is
+    // what lets a build tell a link to an unpublished page (the gate working,
+    // and nothing to fix) from a link to nothing at all.
+    //
+    // An archive this cannot be read from is one no site can be planned from
+    // either, so the planner below says so with the whole build's exit code; a
+    // report is never the thing that stops one.
+    let census = block_on(ws.census(&session.root_doc)).unwrap_or_default();
 
     let mut built = Vec::new();
     let mut known = Vec::new();
@@ -145,6 +154,7 @@ pub fn build_sites(
             spec,
             &session.config.views,
             &session.root_doc,
+            &census,
         ))
         .map_err(|e| format!("site {:?}: {e}", spec.name))?;
         let collected = block_on(collect_site(
@@ -177,6 +187,15 @@ pub fn build_sites(
                 spec.audience,
                 plan.case_drift[0].display(),
             ));
+        }
+
+        // Links this site's pages write that lead nowhere. One line each rather
+        // than a count, because each one is a different file to open and a
+        // different thing to type — and because the page they are written in
+        // publishes either way, with the link demoted to text nobody can click
+        // and no other sign that it was ever meant to go somewhere.
+        for diagnostic in &plan.link_diagnostics {
+            warnings.push(format!("site {:?}: {diagnostic}", spec.name));
         }
 
         built.push(assemble(
