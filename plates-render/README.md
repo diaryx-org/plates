@@ -146,8 +146,8 @@ What a template can name:
 | `page` | this page as an entry |
 | `entries` | the site's pages, in its own order — source order, `nav_order` overriding |
 | `groups` | `{key, entries}` per group, when the arrangement is grouped |
-| `children` | the page's `contents:` links |
-| `parent` | the page's `part_of` link, or null |
+| `children` | the pages this one contains |
+| `parent` | the page containing this one, or null |
 | `breadcrumbs` | the trail from the root down to this page, itself last |
 | `backlinks` | the entries that link *to* this page, by path, each named once |
 
@@ -249,6 +249,18 @@ survives — a visible parent still nests its visible children — and every pag
 walk cannot reach becomes a root of its own. The invariant, pinned by a test, is
 that **every page in the render set appears exactly once in the nav**.
 
+The containment itself is the archive's, not a reading of frontmatter. A vault
+*names* the relation that contains (prov's `spanning:`), and this crate opens no
+workspace to find out which — so the caller walks it and passes the materialized
+outline in as `SiteOptions::outline`, in the same coordinates the sources are
+named by. A node naming a document the site does not publish is pruned and what
+hung below it hoists to the nearest published ancestor. The nav tree, the
+breadcrumb trail and a template's `parent`/`children`/`breadcrumbs` are all read
+off those same pruned edges, so they cannot contradict each other. With no
+outline the crate falls back to each page's own `contents:`/`part_of:` links,
+which is right for a vault that spells its spine that way and all a caller
+holding nothing but sources could offer.
+
 An `Arrangement` is either `Containment` or `Grouped`, and grouping is
 `prov::views`' own `Grouping`/`Grain` — by date at a chosen grain, or by any
 field — so a site groups its entries the way the vault's view cuts them, not a
@@ -327,6 +339,7 @@ let render = render_site(
         generate_seo: true,
         generate_feeds: true,
         template: Some(shell_html), // the shell as text; None uses the built-in
+        outline,                    // the archive's spanning tree, from `plates`
         ..SiteOptions::default()
     },
 );

@@ -173,6 +173,10 @@ pub fn build_sites(
                 stamp: &NoStamp,
                 id_by_path: &id_by_path,
                 backlinks: &backlinks,
+                // The same document the plan was walked from, so the site
+                // carries the archive's own hierarchy for its nav to be built
+                // from rather than one re-derived from `contents:` strings.
+                spanning_root: Some(&session.root_doc),
                 digests: &UnreadAttachments,
                 digest: no_digest,
             },
@@ -289,6 +293,10 @@ fn assemble(
                 ..SiteStyle::default()
             },
             arrangement: theme.arrangement.clone(),
+            // Which document contains which, as the archive itself says —
+            // collection walked the relation this workspace configures, and the
+            // render layer has no workspace to ask.
+            outline: collected.outline,
             front_page_supplied: collected.verbatim_front_page,
             template: theme.template.clone(),
             templates: theme

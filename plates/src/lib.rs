@@ -36,6 +36,12 @@
 //!   the gate refused links out of it. Narrowing it to what a site may name is
 //!   here, because this is the last layer that knows which documents were
 //!   refused. See [`SourceFile::backlinks`].
+//! - **The spanning outline.** Which document contains which, walked through the
+//!   relation the *workspace configures* rather than through one dialect's
+//!   `contents:`/`part_of:` spelling. It rides on
+//!   [`CollectedSite::outline`](source::CollectedSite::outline) because reading a
+//!   vault's `spanning:` needs a vault, and the renderer builds the site's
+//!   navigation from it.
 //! - **The theme.** Reading a declaration's shell and stylesheet into *text*,
 //!   because the renderer cannot open a file.
 //! - **The link report.** Which of a site's links lead nowhere, told apart from

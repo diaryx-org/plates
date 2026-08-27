@@ -8,7 +8,9 @@
 //! is found, weighed, and named at the address it will be served from.
 //!
 //! No HTML is produced here. What comes out is [`CollectedSite`], and a
-//! renderer, a publisher and a content diff all start from the same one.
+//! renderer, a publisher and a content diff all start from the same one — along
+//! with the archive's spanning outline, which is the shape a renderer with no
+//! workspace cannot ask for itself. See [`CollectOptions::spanning_root`].
 //!
 //! # The anchor
 //!
@@ -98,6 +100,20 @@ pub struct CollectOptions<'a> {
     /// An empty map is a legitimate answer, and means no page learns who links
     /// to it.
     pub backlinks: &'a BTreeMap<PathBuf, Vec<prov::Backlink>>,
+    /// The document the site's **spanning outline** is walked from — the vault's
+    /// root document, the same one the plan was walked from.
+    ///
+    /// Naming it is what lets the collected site carry
+    /// [`CollectedSite::outline`], and therefore what lets the render layer build
+    /// a nav from the relation this workspace *configures* rather than from one
+    /// dialect's `contents:`/`part_of:` spelling. `None` collects no outline,
+    /// and the nav falls back to those strings — which is what every site
+    /// published before this got, and correct for the vaults that spell their
+    /// spine that way.
+    ///
+    /// It costs one more walk of the reachable set. Inside a read scope that is
+    /// a walk of prov's memo rather than of the disk.
+    pub spanning_root: Option<&'a Path>,
     /// What each attachment hashed to last time. See [`crate::digest`].
     pub digests: &'a dyn DigestMemo,
     /// How an attachment's bytes are digested when the memo does not recognize
@@ -453,9 +469,15 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         });
     }
 
+    let outline = match opts.spanning_root {
+        Some(root) => outline_of(ws, root, anchor).await?,
+        None => Vec::new(),
+    };
+
     Ok(CollectedSite {
         sources,
         attachments,
+        outline,
         // Set by `collect_site` when the front page turned out to be a covered
         // directory; nothing collected here can supply one.
         verbatim_front_page: false,
@@ -510,6 +532,51 @@ fn site_backlinks(
     out.sort();
     out.dedup();
     out
+}
+
+/// The archive's spanning outline from `root`, in the coordinates the collected
+/// sources are written in.
+///
+/// prov materializes the tree through the relation the workspace *configures*
+/// (`spanning:`), which is the whole point of asking it rather than reading
+/// `contents:` here: a vault that names some other relation as its spine has
+/// always had a hierarchy, and it was the layer above that could not see it.
+///
+/// The whole tree is kept, unpruned — nodes for documents this site does not
+/// publish included. Pruning is the render layer's, and it needs the interior
+/// nodes to do it: a published entry under a private parent hoists to the
+/// nearest *published* ancestor, which is a question about the shape above it.
+async fn outline_of<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    root: &Path,
+    anchor: &Path,
+) -> Result<Vec<plates_render::OutlineNode>> {
+    let tree = ws.tree(root).await.map_err(|e| Error::Document {
+        path: root.to_path_buf(),
+        reason: e.to_string(),
+    })?;
+    Ok(vec![outline_node(&tree, anchor)])
+}
+
+/// One prov node as the render layer's, named through
+/// [`collected_source_path`] — the same rule the source it points at was named
+/// by, because the two coordinates have to be one string or a node matches no
+/// page and its whole subtree hoists away.
+///
+/// A node whose target is missing, unreadable, cyclic or foreign keeps its path
+/// and is carried across like any other. It names no page this site publishes,
+/// so it prunes on arrival; deciding *here* which kinds could never match would
+/// be this layer guessing at the render layer's set.
+fn outline_node(node: &prov::Node, anchor: &Path) -> plates_render::OutlineNode {
+    plates_render::OutlineNode {
+        path: collected_source_path(&node.path, anchor),
+        label: node.label.clone(),
+        children: node
+            .children
+            .iter()
+            .map(|child| outline_node(child, anchor))
+            .collect(),
+    }
 }
 
 /// The destination a document's frontmatter `serve_at:` claims, or `None` when
@@ -1000,6 +1067,36 @@ mod tests {
         assert_eq!(out, ["b.md"], "a listed one is a statement of intent");
     }
 
+    /// An outline node names a source in the coordinates the collected sources
+    /// are written in — rebased onto the site's anchor, sanitized, carrying the
+    /// body's own grammar. If the two spellings ever part company, a node
+    /// matches no page and the whole subtree below it hoists away, which is a
+    /// site that quietly loses its hierarchy rather than failing.
+    #[test]
+    fn an_outline_node_is_named_the_way_its_source_is() {
+        let node = prov::Node {
+            path: PathBuf::from("www/notes/My Note!.md"),
+            title: Some("My Note".into()),
+            label: Some("The Note".into()),
+            kind: prov::NodeKind::Doc,
+            children: vec![prov::Node {
+                path: PathBuf::from("www/notes/entry.djot"),
+                title: None,
+                label: None,
+                kind: prov::NodeKind::Doc,
+                children: Vec::new(),
+            }],
+        };
+
+        let out = outline_node(&node, Path::new("www"));
+        assert_eq!(out.path, "notes/My Note.md");
+        assert_eq!(out.label.as_deref(), Some("The Note"));
+        assert_eq!(
+            out.children[0].path, "notes/entry.dj",
+            "the canonical spelling of the grammar it is written in"
+        );
+    }
+
     /// A listed file that is also one of the site's own pages stays a page.
     /// Publishing it twice would put opaque bytes at a key the render is about
     /// to write over.
@@ -1050,6 +1147,7 @@ mod tests {
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
                 backlinks: &backlinks,
+                spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
             },
@@ -1116,5 +1214,91 @@ mod tests {
         let backlinks = collected_backlinks(&ws, &["index.md", "b.md"]);
 
         assert_eq!(backlinks["b.md"], ["index.md"], "{backlinks:?}");
+    }
+
+    /// **Why the outline is asked for rather than read.** This vault's spine is
+    /// `sections:`, which it is entitled to be — prov's `spanning:` names the
+    /// relation that contains — and nothing in these documents says `contents:`
+    /// or `part_of:`. A layer that knew one spelling would see three unrelated
+    /// files; what comes back is the tree the archive actually has.
+    #[test]
+    fn the_outline_follows_the_relation_the_workspace_configures() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\nsections:\n- letters.md\n---\nHome.\n",
+            ),
+            (
+                "letters.md",
+                "---\ntitle: Letters\nsections:\n- letters/first.md\n---\nL.\n",
+            ),
+            ("letters/first.md", "---\ntitle: The First\n---\nDear…\n"),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        let ws = Workspace::builder(fs)
+            .root("/vault")
+            .relations(
+                prov::RelationSet::new()
+                    .with(prov::Relation::many("sections"))
+                    .spanning("sections"),
+            )
+            .build();
+
+        let docs: Vec<(PathBuf, bool)> = ["index.md", "letters.md", "letters/first.md"]
+            .iter()
+            .map(|p| (PathBuf::from(p), *p == "index.md"))
+            .collect();
+        let site = prov::block_on(collect_documents(
+            &ws,
+            &docs,
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &BTreeMap::new(),
+                spanning_root: Some(Path::new("index.md")),
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+            },
+        ))
+        .unwrap();
+
+        let root = &site.outline[0];
+        assert_eq!(root.path, "index.md");
+        assert_eq!(root.children[0].path, "letters.md");
+        assert_eq!(
+            root.children[0].children[0].path, "letters/first.md",
+            "the whole spine, in the coordinates the sources are named by"
+        );
+    }
+
+    /// …and naming no root collects no outline, which leaves the render layer
+    /// on the frontmatter fallback rather than on a tree nobody walked.
+    #[test]
+    fn no_spanning_root_collects_no_outline() {
+        let ws = vault(&[("index.md", "---\ntitle: Home\n---\nHome.\n")]);
+        let site = prov::block_on(collect_documents(
+            &ws,
+            &[(PathBuf::from("index.md"), true)],
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &BTreeMap::new(),
+                spanning_root: None,
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+            },
+        ))
+        .unwrap();
+
+        assert!(site.outline.is_empty());
     }
 }

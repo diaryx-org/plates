@@ -236,6 +236,37 @@ impl PublishedPage {
     }
 }
 
+/// One node of a site's **spanning outline**: the archive's own containment
+/// hierarchy, materialized by whoever holds the workspace.
+///
+/// A vault's spine is configured, not spelled: prov's `spanning:` names the
+/// relation whose links contain, and `contents:`/`part_of:` is one vault
+/// dialect's spelling of it. This crate cannot read a workspace's configuration
+/// — it reads nothing — so the layer that can walks the tree and hands the
+/// result down as plain data. See [`SiteOptions::outline`](crate::site::SiteOptions::outline).
+///
+/// [`path`](Self::path) is the source path in the coordinates
+/// [`SourceDoc::path`](crate::site::SourceDoc::path) is written in: rebased onto
+/// the site's anchor, sanitized, carrying the body's own extension. That is what
+/// lets a node be matched to the page it became without either side re-deriving
+/// the other's naming rule.
+///
+/// A node naming a document this site does not publish is not an error and not a
+/// nav entry — it is pruned, and its published descendants hoist to the nearest
+/// ancestor that *is* published. Under explicit-only visibility that is the
+/// ordinary shape, not the edge case.
+#[derive(Debug, Clone, Default)]
+pub struct OutlineNode {
+    /// The source path this node names, spelled as
+    /// [`SourceDoc::path`](crate::site::SourceDoc::path) spells it.
+    pub path: String,
+    /// The label the containing document's link carried (`[Label](path)`), when
+    /// it carried one. A fallback only: a page's own `nav_title`/`title` wins.
+    pub label: Option<String>,
+    /// Contained nodes, in the order the containing document declared them.
+    pub children: Vec<OutlineNode>,
+}
+
 /// A node in the full site navigation tree.
 #[derive(Debug, Clone)]
 pub struct SiteNavNode {

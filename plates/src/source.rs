@@ -83,6 +83,22 @@ pub struct Attachment {
 pub struct CollectedSite {
     /// The documents, in the order the plan listed them.
     pub sources: Vec<SourceFile>,
+    /// The archive's spanning outline — which document contains which, in
+    /// declaration order — walked through the relation *this workspace
+    /// configures*, with every path written in
+    /// [`SourceFile::source_rel_path`]'s coordinates.
+    ///
+    /// What the render layer builds a site's navigation from
+    /// (`plates_render::site::SiteOptions::outline`). It is materialized here
+    /// because reading a workspace's `spanning:` needs a workspace, and the
+    /// renderer has none — which is exactly why the nav used to re-derive
+    /// containment from `contents:`/`part_of:` strings and got a vault that
+    /// spells its spine some other way wrong.
+    ///
+    /// Empty when the caller named no
+    /// [`CollectOptions::spanning_root`](crate::CollectOptions::spanning_root),
+    /// which leaves the renderer on its frontmatter fallback.
+    pub outline: Vec<plates_render::OutlineNode>,
     /// Every file the site ships alongside them, deduplicated by destination.
     pub attachments: Vec<Attachment>,
     /// Whether this site's front page is among the

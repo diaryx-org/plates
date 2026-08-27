@@ -23,9 +23,9 @@ use serde_json::Value as JsonValue;
 use crate::dates;
 
 use crate::html::{HtmlRenderer, PageContext, SiteStyle};
-use crate::nav::{build_site_nav_tree, nav_for_page};
+use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page};
 use crate::shell::ShellTemplate;
-use crate::types::{NavLink, PageLayout, PublishedPage};
+use crate::types::{NavLink, OutlineNode, PageLayout, PublishedPage};
 use crate::{body, links, page, template};
 
 /// A stored source document to render.
@@ -101,6 +101,23 @@ pub struct SiteOptions {
     pub style: SiteStyle,
     /// How the site is arranged, from its declared view.
     pub arrangement: Arrangement,
+    /// The archive's **spanning outline**, materialized by the caller: which
+    /// document contains which, in declaration order, as a forest of
+    /// [`OutlineNode`]s whose paths are spelled the way [`SourceDoc::path`] is.
+    ///
+    /// This is where a site's hierarchy comes from. A vault names the relation
+    /// that contains (prov's `spanning:`), so re-deriving containment from
+    /// `contents:`/`part_of:` here would hardcode one vault dialect's spelling
+    /// of it and give every other vault the wrong nav. This crate reads no
+    /// configuration, so the layer that holds the workspace walks the relation —
+    /// `plates::collect_site` does it, and puts the result on
+    /// `plates::CollectedSite::outline`.
+    ///
+    /// Empty falls the nav back to each page's own resolved
+    /// `contents`/`part_of` links, which is what every site published before
+    /// this existed got. Nodes naming documents this site does not publish are
+    /// pruned; their published descendants hoist. See [`crate::nav`].
+    pub outline: Vec<OutlineNode>,
     /// The site's shell template, as the text of the template file.
     ///
     /// A string rather than a path because this crate reads nothing: it is
@@ -199,6 +216,7 @@ impl Default for SiteOptions {
             generate_feeds: true,
             style: SiteStyle::default(),
             arrangement: Arrangement::default(),
+            outline: Vec::new(),
             template: None,
             templates: IndexMap::new(),
             lang: DEFAULT_LANG.to_string(),
@@ -386,8 +404,16 @@ struct Collected {
     /// The entry record for each source, keyed by its sanitized path. This is
     /// what a page names as `page`, and what a breadcrumb trail is made of.
     by_path: HashMap<PathBuf, JsonValue>,
-    /// Each source's `part_of` target, for walking a trail back to the root.
+    /// Each source's container, for walking a trail back to the root.
     parent_of: HashMap<PathBuf, PathBuf>,
+    /// Each source's contained pages, when the caller supplied the archive's
+    /// [outline](SiteOptions::outline): the spine the *vault* declares, pruned
+    /// to what this site publishes by [`crate::nav::pruned_edges`] — the same edges the
+    /// nav tree is built from.
+    ///
+    /// `None` is the fallback, where a page's own `contents:`/`part_of:` is the
+    /// only answer available.
+    spine: Option<HashMap<PathBuf, Vec<PathBuf>>>,
     /// The entry records of the documents linking *to* each source, keyed the
     /// same way. Resolved against `by_path`, so a name no page in this render
     /// answers to is already gone.
@@ -441,7 +467,11 @@ fn collect_context(
             Arrangement::Grouped(grouping) => grouping.keys_of(&YamlValue::Mapping(fm.clone())),
         };
 
-        if let Some(parent) = frontmatter::get_string(&fm, "part_of") {
+        // …unless the caller walked the archive's own spanning relation, which
+        // is a better answer to the same question and is applied below.
+        if opts.outline.is_empty()
+            && let Some(parent) = frontmatter::get_string(&fm, "part_of")
+        {
             let link = prov::Link::parse_path_only(parent.trim());
             let canonical = prov::link::resolve(Path::new(&s.path), &link.target);
             parent_of.insert(
@@ -475,6 +505,27 @@ fn collect_context(
             .unwrap_or(idx as i32);
         sortable.push((order_key, key));
     }
+
+    // The archive's spine, in place of the `part_of` read above. A vault *names*
+    // the relation that contains (prov's `spanning:`), so a context assembled
+    // from one dialect's spelling of it would give a template a `parent` and a
+    // trail that contradict the nav rendered beside them. Pruned by `nav`, from
+    // the same edges the nav tree is built out of.
+    let spine = (!opts.outline.is_empty()).then(|| {
+        let mut spine: HashMap<PathBuf, Vec<PathBuf>> = HashMap::new();
+        for edge in
+            crate::nav::pruned_edges(&opts.outline, &|path| by_path.contains_key(Path::new(path)))
+        {
+            let (container, contained) =
+                (PathBuf::from(edge.container), PathBuf::from(edge.contained));
+            spine
+                .entry(container.clone())
+                .or_default()
+                .push(contained.clone());
+            parent_of.entry(contained).or_insert(container);
+        }
+        spine
+    });
 
     sortable.sort_by_key(|(k, _)| *k);
     let order: Vec<PathBuf> = sortable.into_iter().map(|(_, key)| key).collect();
@@ -512,6 +563,7 @@ fn collect_context(
         ),
         by_path,
         parent_of,
+        spine,
         order,
         backlinks,
     }
@@ -642,14 +694,36 @@ fn page_context_values(
     if let Some(entry) = collected.by_path.get(&key) {
         values.insert("page".into(), entry.clone());
     }
-    values.insert(
-        "children".into(),
-        JsonValue::Array(contents_links.iter().map(nav_link_value).collect()),
-    );
-    values.insert(
-        "parent".into(),
-        parent_link.map(nav_link_value).unwrap_or(JsonValue::Null),
-    );
+    // What contains this page and what it contains, from the archive's spine
+    // when the caller walked one and from the page's own links otherwise — the
+    // same choice `crate::nav` makes, so a template's `parent` and the
+    // breadcrumb printed above it can never name two different pages.
+    let (children, parent) = match &collected.spine {
+        Some(spine) => (
+            spine
+                .get(&key)
+                .into_iter()
+                .flatten()
+                .filter_map(|child| collected.by_path.get(child))
+                .map(link_value)
+                .collect(),
+            collected
+                .parent_of
+                .get(&key)
+                .and_then(|container| collected.by_path.get(container))
+                .map(link_value)
+                .unwrap_or(JsonValue::Null),
+        ),
+        None => (
+            contents_links
+                .iter()
+                .map(nav_link_value)
+                .collect::<Vec<_>>(),
+            parent_link.map(nav_link_value).unwrap_or(JsonValue::Null),
+        ),
+    };
+    values.insert("children".into(), JsonValue::Array(children));
+    values.insert("parent".into(), parent);
     values.insert(
         "breadcrumbs".into(),
         JsonValue::Array(breadcrumbs_of(&key, collected)),
@@ -666,6 +740,12 @@ fn page_context_values(
 
 fn nav_link_value(link: &NavLink) -> JsonValue {
     serde_json::json!({ "title": link.title, "href": link.href })
+}
+
+/// An entry record cut down to a link, so `children` and `parent` hold one
+/// shape whichever spine answered for them.
+fn link_value(entry: &JsonValue) -> JsonValue {
+    serde_json::json!({ "title": entry.get("title"), "href": entry.get("href") })
 }
 
 /// The trail from the site's root down to one page, itself included.
@@ -734,7 +814,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     }
 
     let renderer = HtmlRenderer::with_style(opts.style.clone());
-    let nav_tree = build_site_nav_tree(&pages);
+    let nav_tree = build_site_nav_tree(&pages, &opts.outline);
 
     // Compiled once for the whole site, not once per page: a template's errors
     // are about the template, and reporting them per page would say the same
@@ -1132,8 +1212,8 @@ const DEFAULT_SITE_TITLE: &str = "Site";
 /// underneath it.
 ///
 /// Under [`Arrangement::Containment`] it lists the forest roots — the pages
-/// whose parents audience filtering removed — and lets containment show the
-/// rest. Under [`Arrangement::Grouped`] it lists every entry under its group's
+/// nothing in this site contains, because the gate or the view removed whatever
+/// did — and lets containment show the rest. Under [`Arrangement::Grouped`] it lists every entry under its group's
 /// heading, because a site that declared an arrangement asked to be read that
 /// way rather than by hierarchy.
 pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> PublishedPage {
@@ -1147,10 +1227,7 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
 
     let (body, links) = match &opts.arrangement {
         Arrangement::Containment => {
-            let roots: Vec<&PublishedPage> = pages
-                .iter()
-                .filter(|p| !p.hide_from_nav && is_forest_root(p, pages))
-                .collect();
+            let roots = forest_roots(pages, &opts.outline);
             (render_entry_list(&roots), nav_links(&roots))
         }
         Arrangement::Grouped(grouping) => {
@@ -1194,15 +1271,6 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         // document identity to mint one against.
         id: None,
         source_markdown: String::new(),
-    }
-}
-
-/// Whether a page starts its own subtree — it names no parent, or names one
-/// that audience filtering left out of this render set.
-fn is_forest_root(page: &PublishedPage, pages: &[PublishedPage]) -> bool {
-    match &page.parent_link {
-        Some(link) => !pages.iter().any(|p| p.dest_filename == link.href),
-        None => true,
     }
 }
 
@@ -2892,5 +2960,77 @@ mod tests {
             .zip(kid.html.find("<li>Child</li>"));
         let (root_at, self_at) = trail.unwrap_or_else(|| panic!("got {}", kid.html));
         assert!(root_at < self_at, "got {}", kid.html);
+    }
+
+    /// The whole hand-off, end to end. These sources say nothing about what
+    /// contains what — the vault spells its spine through some other relation,
+    /// and `plates` walked it — so the sidebar, the breadcrumb trail and the
+    /// `parent` a template names exist only because the outline was passed in.
+    #[test]
+    fn the_site_nests_by_the_outline_it_is_given() {
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nHi.\n", true),
+            src("letters.md", "---\ntitle: Letters\n---\nBody.\n", false),
+            src(
+                "letters/first.md",
+                "---\ntitle: The First Letter\n---\nin: :val[parent.title]\n",
+                false,
+            ),
+        ];
+        let outline = vec![OutlineNode {
+            path: "index.md".into(),
+            label: None,
+            children: vec![OutlineNode {
+                path: "letters.md".into(),
+                label: None,
+                children: vec![OutlineNode {
+                    path: "letters/first.md".into(),
+                    label: None,
+                    children: Vec::new(),
+                }],
+            }],
+        }];
+
+        let letter = |opts: &SiteOptions| {
+            render_site(&sources, opts)
+                .pages
+                .into_iter()
+                .find(|p| p.dest_filename == "letters/first.html")
+                .expect("the letter")
+                .html
+        };
+
+        // The breadcrumb trail alone: the sidebar names every page either way,
+        // so it is the trail that says where this one *sits*.
+        let trail = |html: &str| {
+            let start = html
+                .find(r#"<nav class="breadcrumbs""#)
+                .expect("a breadcrumb trail");
+            let end = html[start..].find("</nav>").expect("a closed one") + start;
+            html[start..end].to_string()
+        };
+
+        let placed = letter(&SiteOptions {
+            outline,
+            ..SiteOptions::default()
+        });
+        assert!(
+            trail(&placed).contains(">Letters</a>"),
+            "the trail the archive's own hierarchy gives it: {}",
+            trail(&placed)
+        );
+        assert!(
+            placed.contains("in: Letters"),
+            "and the same answer where a template asks for it: {placed}"
+        );
+
+        // Without it, the same sources are three pages that know nothing about
+        // each other — which is all this crate can see on its own.
+        let loose = letter(&SiteOptions::default());
+        assert!(
+            !trail(&loose).contains(">Letters</a>"),
+            "nothing here nests them: {}",
+            trail(&loose)
+        );
     }
 }

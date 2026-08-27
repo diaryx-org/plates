@@ -55,6 +55,12 @@ and what the other two crates do, is
   the rule that an index need not be among the entries but must be admitted by
   the gate; and `IndexDirectory`, a manifest node fronting a site with a whole
   covered directory, rebased onto the site root.
+- **The spanning outline.** Which document contains which, materialized by prov
+  through the relation the *workspace configures* rather than through one
+  dialect's `contents:`/`part_of:` spelling. It rides on `CollectedSite::outline`
+  and is what `plates-render` builds a site's navigation from, because reading a
+  vault's `spanning:` needs a vault and the renderer has none. Walked from
+  `CollectOptions::spanning_root`; naming no root collects no outline.
 - **The theme.** Reading a declaration's shell and stylesheet into *text*,
   because the renderer cannot open a file. A missing one is reported in
   `SiteTheme::warnings` and ignored — a vault that cannot publish because a
@@ -136,6 +142,9 @@ let collected = collect_site(
         stamp: &NoStamp,
         id_by_path: &HashMap::new(),
         backlinks: &workspace.backlinks(root_doc).await?,
+        // Where the spanning walk starts, so the collected site carries the
+        // archive's own hierarchy for the nav to be built from.
+        spanning_root: Some(root_doc),
         digests: &NoDigests,
         digest: sha256_hex,
     },
@@ -147,6 +156,7 @@ let render = render_site(
     &collected.sources,
     &SiteOptions {
         site_title: Some(theme.title),
+        outline: collected.outline,
         template: theme.template,
         arrangement: theme.arrangement,
         lang: theme.lang,

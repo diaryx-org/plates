@@ -65,6 +65,11 @@ other two.
   an undeclared one is private, and visibility is never inherited.
 - **`:vis[…]` regions.** Per-audience directives decide which *parts* of a
   document leave, filtered against the same audience name the gate used.
+- **The archive's own hierarchy.** The navigation is the spanning tree `prov`
+  materializes through the relation the vault *configures*, not a
+  `contents:`/`part_of:` spelling of it re-derived here. A document the site
+  does not publish is pruned out of the sidebar and what hung below it hoists
+  up, so a published entry under a private parent keeps its place.
 - **Anchoring.** A site's front page's directory becomes the site's root, and
   every published path is written relative to it.
 - **One collector.** Building to a directory, serving a preview and uploading to
