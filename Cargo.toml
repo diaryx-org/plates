@@ -22,12 +22,16 @@ authors = ["Adam Harris"]
 # exist, what relates them and who may see them comes from here; nothing is
 # re-derived. `default-features = false` so the format features below decide
 # which parsers are compiled rather than prov's default doing it for us.
-# 0.9.1 is a floor, not a preference: it is where prov re-exported `twig`
-# (`prov::twig`). The visibility filter and the template expander address the
-# body's AST rather than scanning its text, and reaching twig any other way
-# means pinning it a second time and resolving to a different `Document` than
-# the one prov parses bodies with.
-prov = { version = "0.9.1", default-features = false }
+# 0.9.2 is a floor, not a preference, and two things put it there. 0.9.1 is
+# where prov re-exported `twig` (`prov::twig`): the visibility filter and the
+# template expander address the body's AST rather than scanning its text, and
+# reaching twig any other way means pinning it a second time and resolving to a
+# different `Document` than the one prov parses bodies with. 0.9.2 is where a
+# reference that names only a place inside its own document (`#3`) resolves as
+# `SameDocument` rather than as a path to the citing file — without that,
+# `SitePlan::link_diagnostics` would have to tell those apart itself, and every
+# locator in the archive is a link it could get wrong.
+prov = { version = "0.9.2", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.
