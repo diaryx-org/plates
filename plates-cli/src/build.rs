@@ -292,6 +292,12 @@ fn assemble(
     for error in &rendered.syntax_errors {
         warnings.push(format!("site {name:?}: {error}"));
     }
+    // A body template, which unlike the three above is authorial: a page names
+    // itself here when its template will not expand, or when it still writes a
+    // `{{ }}` in a position that is no longer a template.
+    for error in &rendered.body_template_errors {
+        warnings.push(format!("site {name:?}: {error}"));
+    }
 
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     for page in rendered.pages {

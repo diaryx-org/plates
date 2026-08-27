@@ -17,6 +17,9 @@ use crate::frontmatter;
 use indexmap::IndexMap;
 use prov::ContentFormat;
 use prov::Value as YamlValue;
+use serde_json::Value as JsonValue;
+
+use crate::dates;
 
 use crate::html::{HtmlRenderer, PageContext, SiteStyle};
 use crate::nav::{build_site_nav_tree, nav_for_page};
@@ -260,6 +263,17 @@ pub struct SiteRender {
     /// the site still publishes. Empty without the `syntax-highlighting`
     /// feature, where no grammar is consulted in the first place.
     pub syntax_errors: Vec<String>,
+    /// What went wrong in a page's **body** template, named by the page.
+    ///
+    /// A body whose template will not expand publishes its own source, which
+    /// used to happen with nothing reported at all — the failure this crate
+    /// spent [`template_error`](Self::template_error) and
+    /// [`page_shell_errors`](Self::page_shell_errors) refusing to allow for a
+    /// *shell*, arriving through the one surface that had no channel for it.
+    /// It carries the `{{ }}` migration's warnings too, which are not failures:
+    /// a brace outside a link destination is no longer a template, and the page
+    /// publishes it as the text it is.
+    pub body_template_errors: Vec<String>,
 }
 
 /// Reconstruct [`PublishedPage`]s from stored sources, fully rendering each
@@ -268,6 +282,10 @@ pub struct SiteRender {
 /// The returned set does **not** include a synthesized index; that is
 /// [`synthesize_index`]'s job, applied by [`render_site`] when no source claims
 /// `is_root`.
+/// The returned set also drops whatever the body templates had to say. A
+/// caller that wants those calls [`render_site`], which carries them in
+/// [`SiteRender::body_template_errors`]; this entry point has no error channel
+/// and adding one to its return type would change what a page *is*.
 pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPage> {
     #[cfg(feature = "syntax-highlighting")]
     let syntaxes = resolve_syntaxes(opts);
@@ -276,6 +294,7 @@ pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPa
         opts,
         #[cfg(feature = "syntax-highlighting")]
         syntaxes.get(),
+        &mut Vec::new(),
     )
 }
 
@@ -288,6 +307,7 @@ fn pages_from(
     sources: &[SourceDoc],
     opts: &SiteOptions,
     #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+    reports: &mut Vec<String>,
 ) -> Vec<PublishedPage> {
     // Map sanitized canonical `.md` path → output `.html` filename (root →
     // index.html, a `serve_at:` claim to what it claims). Sources are keyed by
@@ -311,6 +331,14 @@ fn pages_from(
         path_to_filename.insert(key, dest_for(&s.path, s.is_root, &fm));
     }
 
+    // The collection context, from the same sources and therefore from the
+    // same gate: `build_pages` is handed the audience-admitted set, so a
+    // template cannot name a withheld document because the data holding it was
+    // never assembled. That is a property of *where* this is built, which is
+    // why `a_template_cannot_reach_a_withheld_document` tests the shape of the
+    // pipeline rather than a check inside it.
+    let collected = collect_context(sources, opts, &path_to_filename);
+
     sources
         .iter()
         .map(|s| {
@@ -319,11 +347,255 @@ fn pages_from(
                 opts,
                 &path_to_filename,
                 &title_map,
+                &collected,
                 #[cfg(feature = "syntax-highlighting")]
                 syntaxes,
+                reports,
             )
         })
         .collect()
+}
+
+// ── The template context ────────────────────────────────────────────────────
+
+/// The site-level context, plus the two per-path lookups a page's own half of
+/// it is assembled from.
+struct Collected {
+    /// `site`, `entries` and `groups` — one copy for the whole render, borrowed
+    /// by every page rather than cloned into each.
+    context: template::SiteContext,
+    /// The entry record for each source, keyed by its sanitized path. This is
+    /// what a page names as `page`, and what a breadcrumb trail is made of.
+    by_path: HashMap<PathBuf, JsonValue>,
+    /// Each source's `part_of` target, for walking a trail back to the root.
+    parent_of: HashMap<PathBuf, PathBuf>,
+    /// Entry records in the site's order, so a breadcrumb walk and `entries`
+    /// agree about what an entry is.
+    order: Vec<PathBuf>,
+}
+
+/// Assemble everything a template can name, from frontmatter alone.
+///
+/// Frontmatter alone is the point: an entry record needs a title, a href, a
+/// date and its group keys, and every one of those is metadata. Nothing here
+/// renders a body, so the context is available *before* the first page is
+/// built — which is what breaks the circularity of a page whose template lists
+/// the pages.
+fn collect_context(
+    sources: &[SourceDoc],
+    opts: &SiteOptions,
+    path_to_filename: &HashMap<PathBuf, String>,
+) -> Collected {
+    let mut by_path: HashMap<PathBuf, JsonValue> = HashMap::new();
+    let mut parent_of: HashMap<PathBuf, PathBuf> = HashMap::new();
+    let mut sortable: Vec<(i32, PathBuf)> = Vec::new();
+    let mut root_title: Option<String> = None;
+
+    for (idx, s) in sources.iter().enumerate() {
+        let key = PathBuf::from(links::sanitize_rel_path(&s.path));
+        let fm = frontmatter::parse_or_empty(&s.markdown)
+            .map(|parsed| parsed.frontmatter)
+            .unwrap_or_default();
+
+        let title = frontmatter::get_string(&fm, "title")
+            .map(String::from)
+            .unwrap_or_else(|| filename_to_title(&s.path));
+        if s.is_root {
+            root_title = Some(title.clone());
+        }
+
+        let date = frontmatter::get_string(&fm, "date_of_document")
+            .or_else(|| frontmatter::get_string(&fm, "created"))
+            .or_else(|| frontmatter::get_string(&fm, "updated"))
+            .filter(|d| !d.is_empty())
+            .map(String::from);
+        let group_keys = match &opts.arrangement {
+            Arrangement::Containment => Vec::new(),
+            Arrangement::Grouped(grouping) => grouping.keys_of(&YamlValue::Mapping(fm.clone())),
+        };
+
+        if let Some(parent) = frontmatter::get_string(&fm, "part_of") {
+            let link = prov::Link::parse_path_only(parent.trim());
+            let canonical = prov::link::resolve(Path::new(&s.path), &link.target);
+            parent_of.insert(
+                key.clone(),
+                PathBuf::from(links::sanitize_rel_path(&canonical.to_string_lossy())),
+            );
+        }
+
+        let href = path_to_filename
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| dest_for(&s.path, s.is_root, &fm));
+
+        by_path.insert(
+            key.clone(),
+            entry_value(&s.path, &title, &href, date, &fm, group_keys, s.is_root),
+        );
+
+        // Source order, `nav_order` overriding — the rule `crate::nav` sorts
+        // siblings by, restated here so a template listing entries and a nav
+        // listing them cannot disagree.
+        let order_key = fm
+            .get("nav_order")
+            .and_then(|v| match v {
+                YamlValue::Int(i) => Some(*i as i32),
+                YamlValue::Float(f) => Some(*f as i32),
+                YamlValue::String(st) => st.parse::<i32>().ok(),
+                _ => None,
+            })
+            .unwrap_or(idx as i32);
+        sortable.push((order_key, key));
+    }
+
+    sortable.sort_by_key(|(k, _)| *k);
+    let order: Vec<PathBuf> = sortable.into_iter().map(|(_, key)| key).collect();
+    let entries: Vec<JsonValue> = order
+        .iter()
+        .filter_map(|key| by_path.get(key).cloned())
+        .collect();
+
+    let site = serde_json::json!({
+        "title": opts
+            .site_title
+            .clone()
+            .or(root_title)
+            .unwrap_or_else(|| DEFAULT_SITE_TITLE.to_string()),
+        "lang": opts.lang.clone(),
+        "base_url": opts.base_url.clone().unwrap_or_default(),
+    });
+
+    Collected {
+        context: template::SiteContext::new(site, entries.clone(), groups_of(&entries)),
+        by_path,
+        parent_of,
+        order,
+    }
+}
+
+/// One entry, as a template names it.
+///
+/// `date_year` and `date_month` are here rather than in a filter syntax on
+/// purpose: a filter language is the thing that turns a template format into a
+/// template *engine*, and this crate already knows how to read a date. A field
+/// that turns out to be wanted is one line; a filter grammar is permanent.
+fn entry_value(
+    path: &str,
+    title: &str,
+    href: &str,
+    date: Option<String>,
+    fm: &IndexMap<String, YamlValue>,
+    group_keys: Vec<String>,
+    is_root: bool,
+) -> JsonValue {
+    let normalized = date.as_deref().and_then(dates::to_rfc3339);
+    serde_json::json!({
+        "path": path,
+        "title": title,
+        "href": href,
+        "date": date,
+        "date_year": normalized.as_deref().and_then(|d| d.get(0..4)),
+        "date_month": normalized.as_deref().and_then(|d| d.get(0..7)),
+        "id": frontmatter::get_string(fm, "id"),
+        "description": frontmatter::get_string(fm, "description"),
+        "group_keys": group_keys,
+        "is_root": is_root,
+    })
+}
+
+/// Gather entries into `{key, entries}` records, in first-appearance order.
+///
+/// Empty when the arrangement is containment, because then no entry carries a
+/// group key and there is nothing to gather — which is also the honest answer
+/// for `:::group` on an ungrouped site: no groups, so no repetitions.
+fn groups_of(entries: &[JsonValue]) -> Vec<JsonValue> {
+    let mut keys: Vec<String> = Vec::new();
+    let mut members: HashMap<String, Vec<JsonValue>> = HashMap::new();
+    for entry in entries {
+        let Some(JsonValue::Array(entry_keys)) = entry.get("group_keys") else {
+            continue;
+        };
+        for key in entry_keys.iter().filter_map(|k| k.as_str()) {
+            if !members.contains_key(key) {
+                keys.push(key.to_string());
+            }
+            members
+                .entry(key.to_string())
+                .or_default()
+                .push(entry.clone());
+        }
+    }
+    keys.into_iter()
+        .map(|key| {
+            let entries = members.remove(&key).unwrap_or_default();
+            serde_json::json!({ "key": key, "entries": entries })
+        })
+        .collect()
+}
+
+/// This page's own half of the context: what it is, what it contains, what
+/// contains it, and the trail from the root down to it.
+fn page_context_values(
+    s: &SourceDoc,
+    fm: &IndexMap<String, YamlValue>,
+    collected: &Collected,
+    contents_links: &[NavLink],
+    parent_link: Option<&NavLink>,
+    audience: Option<&str>,
+) -> serde_json::Map<String, JsonValue> {
+    let viewer: Vec<&str> = audience.into_iter().collect();
+    let mut values = template::page_values(fm, Path::new(&s.path), None, &viewer);
+    let key = PathBuf::from(links::sanitize_rel_path(&s.path));
+
+    if let Some(entry) = collected.by_path.get(&key) {
+        values.insert("page".into(), entry.clone());
+    }
+    values.insert(
+        "children".into(),
+        JsonValue::Array(contents_links.iter().map(nav_link_value).collect()),
+    );
+    values.insert(
+        "parent".into(),
+        parent_link.map(nav_link_value).unwrap_or(JsonValue::Null),
+    );
+    values.insert(
+        "breadcrumbs".into(),
+        JsonValue::Array(breadcrumbs_of(&key, collected)),
+    );
+    values
+}
+
+fn nav_link_value(link: &NavLink) -> JsonValue {
+    serde_json::json!({ "title": link.title, "href": link.href })
+}
+
+/// The trail from the site's root down to one page, itself included.
+///
+/// Walked over `part_of` rather than over the nav tree, because the nav tree is
+/// built from rendered pages and this runs before any of them exist. The walk
+/// is bounded by the number of entries and refuses to revisit a path, so a
+/// vault whose `part_of` links form a cycle produces a short trail instead of
+/// hanging a publish.
+fn breadcrumbs_of(from: &Path, collected: &Collected) -> Vec<JsonValue> {
+    let mut trail: Vec<JsonValue> = Vec::new();
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut at = from.to_path_buf();
+    for _ in 0..=collected.order.len() {
+        if seen.contains(&at) {
+            break;
+        }
+        let Some(entry) = collected.by_path.get(&at) else {
+            break;
+        };
+        trail.push(entry.clone());
+        seen.push(at.clone());
+        let Some(parent) = collected.parent_of.get(&at) else {
+            break;
+        };
+        at = parent.clone();
+    }
+    trail.reverse();
+    trail
 }
 
 /// Reconstruct and render a whole site from stored sources.
@@ -337,11 +609,13 @@ fn pages_from(
 pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     #[cfg(feature = "syntax-highlighting")]
     let syntaxes = resolve_syntaxes(opts);
+    let mut body_template_errors = Vec::new();
     let mut pages = pages_from(
         sources,
         opts,
         #[cfg(feature = "syntax-highlighting")]
         syntaxes.get(),
+        &mut body_template_errors,
     );
 
     // Read the site's name off an **authored** root, before synthesis can add
@@ -497,6 +771,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
         syntax_errors: syntaxes.warnings().to_vec(),
         #[cfg(not(feature = "syntax-highlighting"))]
         syntax_errors: Vec::new(),
+        body_template_errors,
     }
 }
 
@@ -507,7 +782,9 @@ fn build_page(
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
     title_map: &HashMap<PathBuf, String>,
+    collected: &Collected,
     #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+    reports: &mut Vec<String>,
 ) -> PublishedPage {
     let audience = opts.audience.as_deref();
     let parsed = frontmatter::parse_or_empty(&s.markdown).unwrap_or(frontmatter::ParsedFile {
@@ -546,23 +823,56 @@ fn build_page(
 
     let layout = PageLayout::parse(frontmatter::get_string(fm, "layout"));
 
-    // The stored body is already visibility-filtered; template rendering still
+    // The stored body is already visibility-filtered; template expansion still
     // needs to run (sources are stored pre-template). `template::render*`
-    // re-applies visibility (a no-op now) then interpolates handlebars.
+    // re-applies visibility (a no-op now) and then expands the directives.
     //
     // A `verbatim` page skips it, as it skips everything else: a hand-authored
-    // HTML file is full of braces that mean something to a browser and nothing
-    // to handlebars, and interpolating them is exactly the kind of help it asked
-    // not to be given.
+    // HTML file is a document someone designed, and rewriting anything inside it
+    // is exactly the kind of help it asked not to be given.
+    //
+    // A template that will not expand still publishes its own source — there is
+    // no better body to publish — but it no longer does so *quietly*. The page
+    // names itself in `reports`, which `render_site` carries out as
+    // `SiteRender::body_template_errors`, on the principle the shell templates
+    // already hold to: silently serving the wrong thing is how a broken theme
+    // survives a release.
     let file_path = Path::new(&s.path);
+    let format = ContentFormat::from_extension(file_path).unwrap_or(ContentFormat::Markdown);
     let rendered_body = if layout.is_verbatim() {
         parsed.body.clone()
     } else {
-        match audience {
-            Some(a) => template::render_for_audience(&parsed.body, fm, file_path, None, a),
-            None => template::render(&parsed.body, fm, file_path, None),
+        let values = page_context_values(
+            s,
+            fm,
+            collected,
+            &contents_links,
+            parent_link.as_ref(),
+            audience,
+        );
+        let context = template::Context::new(&collected.context, &values);
+        let mut warnings = Vec::new();
+        let rendered = match audience {
+            Some(a) => {
+                template::render_for_audiences(&parsed.body, format, context, &[a], &mut warnings)
+            }
+            None => template::render(&parsed.body, format, context, &mut warnings),
+        };
+        reports.extend(
+            warnings
+                .into_iter()
+                .map(|w| format!("{}: {w}", current_path.display())),
+        );
+        match rendered {
+            Ok(body) => body,
+            Err(err) => {
+                reports.push(format!(
+                    "{}: {err} — the page is published as its own source",
+                    current_path.display()
+                ));
+                parsed.body.clone()
+            }
         }
-        .unwrap_or_else(|_| parsed.body.clone())
     };
 
     // Body → HTML in the document's own grammar, then rewrite internal document
@@ -583,7 +893,6 @@ fn build_page(
     let final_html = if layout.is_verbatim() {
         rendered_body.clone()
     } else {
-        let format = ContentFormat::from_extension(file_path).unwrap_or(ContentFormat::Markdown);
         // The site's grammars, not the built-in set that plain `render_body`
         // reaches for: a site that declared one of its own declared it to be
         // used here.
@@ -1124,7 +1433,7 @@ mod tests {
 
     #[test]
     fn build_pages_derives_graph_and_renders() {
-        let index = "---\ntitle: Home\ncontents:\n  - \"[Child](/child.md)\"\n---\nWelcome to {{ title }}.\n";
+        let index = "---\ntitle: Home\ncontents:\n  - \"[Child](/child.md)\"\n---\nWelcome to :val[title].\n";
         let child = "---\ntitle: Child Page\npart_of: \"/index.md\"\n---\nSee [home](/index.md) and a ==highlight==.\n";
 
         let sources = vec![src("index.md", index, true), src("child.md", child, false)];
@@ -1137,7 +1446,7 @@ mod tests {
         assert_eq!(home.dest_filename, "index.html");
         assert_eq!(kid.dest_filename, "child.html");
 
-        // template rendered {{ title }}
+        // the value directive resolved against frontmatter
         assert!(home.rendered_body.contains("Welcome to Home."));
 
         // contents_links resolved to child's html + frontmatter title
@@ -2246,5 +2555,124 @@ mod tests {
 
         // assets include the stylesheet
         assert!(out.assets.iter().any(|(n, _)| n == "style.css"));
+    }
+
+    /// The whole point of widening the context: a page can list the other
+    /// pages, which is the thing no amount of template *engine* could fix.
+    #[test]
+    fn a_page_can_list_the_sites_entries() {
+        let index =
+            "---\ntitle: Home\n---\n:::each{of=entries as=e}\n- [:val[e.title]]({{e.href}})\n:::\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("a.md", "---\ntitle: Alpha\n---\nA.\n", false),
+            src("b.md", "---\ntitle: Beta\n---\nB.\n", false),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+
+        assert!(home.html.contains(r#"href="a.html""#), "got {}", home.html);
+        assert!(home.html.contains("Alpha"), "got {}", home.html);
+        assert!(home.html.contains("Beta"), "got {}", home.html);
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// The gate property, tested as a property of the pipeline rather than of a
+    /// check: `entries` is built from the sources this render was handed, and
+    /// audience exclusion happens before that — so there is no path by which a
+    /// withheld document reaches a template. Remove the document, and the
+    /// listing simply has nothing to say about it.
+    #[test]
+    fn a_template_cannot_reach_a_withheld_document() {
+        let index = "---\ntitle: Home\n---\n:::each{of=entries as=e}\n- :val[e.title]\n:::\n";
+        let admitted = vec![
+            src("index.md", index, true),
+            src("public.md", "---\ntitle: Public\n---\nP.\n", false),
+        ];
+
+        let out = render_site(&admitted, &SiteOptions::default());
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+
+        assert!(home.html.contains("Public"), "got {}", home.html);
+        assert!(!home.html.contains("Private"), "got {}", home.html);
+    }
+
+    /// The `{{ }}` migration: a brace outside a link destination publishes as
+    /// itself and names its own page, rather than vanishing or being
+    /// substituted.
+    #[test]
+    fn a_stray_brace_is_reported_against_the_page_that_wrote_it() {
+        let index = "---\ntitle: Home\n---\nWelcome to {{ title }}.\n";
+        let sources = vec![src("index.md", index, true)];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = &out.pages[0];
+
+        assert!(home.html.contains("{{ title }}"), "got {}", home.html);
+        assert_eq!(out.body_template_errors.len(), 1);
+        assert!(
+            out.body_template_errors[0].starts_with("index.md:"),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// A body template that will not expand publishes its own source — and
+    /// says so, which is the half that used to be missing.
+    #[test]
+    fn a_broken_body_template_is_reported_rather_than_swallowed() {
+        let index = "---\ntitle: Home\n---\n:::if{equals=title}\nX\n:::\n";
+        let sources = vec![src("index.md", index, true)];
+
+        let out = render_site(&sources, &SiteOptions::default());
+
+        assert_eq!(out.body_template_errors.len(), 1);
+        assert!(
+            out.body_template_errors[0].contains("equals"),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    #[test]
+    fn a_page_can_name_its_parent_children_and_trail() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"[Child](/child.md)\"\n---\n:::each{of=children as=c}\n- :val[c.title]\n:::\n";
+        let child = "---\ntitle: Child\npart_of: \"/index.md\"\n---\nparent: :val[parent.title]\n\n:::each{of=breadcrumbs as=b}\n- :val[b.title]\n:::\n";
+        let sources = vec![src("index.md", index, true), src("child.md", child, false)];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+        let kid = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "child.html")
+            .unwrap();
+
+        assert!(home.html.contains("<li>Child</li>"), "got {}", home.html);
+        assert!(kid.html.contains("parent: Home"), "got {}", kid.html);
+        // Root first, this page last.
+        let trail = kid
+            .html
+            .find("<li>Home</li>")
+            .zip(kid.html.find("<li>Child</li>"));
+        let (root_at, self_at) = trail.unwrap_or_else(|| panic!("got {}", kid.html));
+        assert!(root_at < self_at, "got {}", kid.html);
     }
 }

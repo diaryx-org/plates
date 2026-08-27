@@ -33,8 +33,8 @@ fig-lang = ["plates/fig-lang", "plates-render/fig-lang"]
 plates = { workspace = true }
 # With `templating` and `syntax-highlighting`, unlike `plates` itself: running
 # the render pipeline is the caller's job, and this is the caller. Without the
-# first a body's handlebars would be published as literal text; without the
-# second every fenced block would publish uncoloured. Both are the weight a
+# first a body's template directives would be published as literal text; without
+# the second every fenced block would publish uncoloured. Both are the weight a
 # static site generator is *for* — it is the library crates that have to stay
 # able to decline it.
 plates-render = { workspace = true, features = [

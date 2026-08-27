@@ -9,23 +9,26 @@
 //!
 //! ## Why not handlebars
 //!
-//! The crate already links handlebars for *body* templating, and every caller
-//! that can reach [`crate::site`] enables the `templating` feature — so reusing
-//! it was open. Three things argued against it:
+//! The reason that decides it is that **handlebars-rust has no configurable
+//! delimiters** — `{{` is hardcoded in its grammar. A shell is an HTML
+//! document, which is exactly where inline `<style>` and `<script>` braces
+//! live, and the `braces_that_are_not_slots_pass_through` test below guarantees
+//! that `<style>a{b:c}</style>` and `<script>if(x){{y()}}</script>` survive a
+//! shell verbatim. Handlebars would read `{{y()}}` as an expression, breaking
+//! every existing theme in favour of `\{{`.
 //!
-//! - Handlebars escapes with its own rule (backtick and `=` included), so the
-//!   shell would escape titles differently from [`crate::page::html_escape`],
-//!   which is the one escaping rule the rest of the crate uses.
-//! - A misspelled variable renders empty in non-strict mode and errors on
-//!   *every* absent field in strict mode; neither is "tell me about the typo,
-//!   and only the typo".
-//! - [`crate::html`] is compiled without the `templating` feature, and the shell
-//!   is assembled there. A handlebars shell would either drag the dependency
-//!   into the feature-free build or split page assembly across a feature gate.
+//! Two further reasons used to be listed here and are recorded as *refuted*,
+//! since both are contradicted by this crate's own code: that handlebars
+//! escapes by its own rule (`register_escape_fn` installs one, so
+//! [`crate::page::html_escape`] could have been it), and that a misspelled
+//! variable cannot be reported precisely (`Template::elements` is `pub`, so
+//! walking the compiled AST to validate slot names is a short function).
 //!
-//! So the substitutor here is deliberately small: named slots, no expressions,
-//! no control flow. Anything a shell wants to vary per page it varies by
-//! rendering a different site.
+//! Bodies pay no delimiter cost, because a body is Markdown — which is why
+//! [`crate::template`] spells its values with a directive instead, and why this
+//! module keeps a substitutor of its own rather than sharing one. It is
+//! deliberately small: named slots, no expressions, no control flow. Anything a
+//! shell wants to vary per page it varies by rendering a different site.
 //!
 //! ## Syntax
 //!

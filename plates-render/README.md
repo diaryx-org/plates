@@ -115,6 +115,70 @@ Filtering **fails closed**. A body whose grammar cannot be parsed, a region that
 cannot be accounted for, a marker left standing after the walk: all are errors,
 never a body returned unfiltered.
 
+## Body templates
+
+A template is an ordinary Markdown document. Its block structure is spelled with
+the same generic directives `:::vis` is — the family twig parses and an editor
+edits — and its values with a text directive:
+
+```markdown
+:::each{of=entries as=entry}
+- [:val[entry.title]]({{entry.href}}) — :val[entry.date]
+:::
+```
+
+| | |
+|---|---|
+| `:val[path]` | Insert a value. An absent path is empty; a path naming a list is an error. |
+| `:::each{of=… as=…}` | Repeat the body once per item, binding each to a name. |
+| `:::if{has=… not=…}` | Include the body when every condition holds. `has`/`not` are `prov`'s, read the same way; several attributes are an implicit *and*. |
+| `:::group{as=…}` | `:::each` over the site's own groups. It takes no `by=` — the arrangement the site's view declares is what decides its groups. |
+
+Directive fences nest by length, like code fences: an outer fence must be
+**longer** than the one it contains. That is twig's rule, not one of ours, and it
+is the first thing an author gets wrong.
+
+What a template can name:
+
+| | |
+|---|---|
+| `site` | `title`, `lang`, `base_url` |
+| `page` | this page as an entry |
+| `entries` | the site's pages, in its own order — source order, `nav_order` overriding |
+| `groups` | `{key, entries}` per group, when the arrangement is grouped |
+| `children` | the page's `contents:` links |
+| `parent` | the page's `part_of` link, or null |
+| `breadcrumbs` | the trail from the root down to this page, itself last |
+
+An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
+`description`, `group_keys`, `is_root`. The pre-computed date parts are there
+instead of a filter syntax: a filter language is what turns a template format
+into a template *engine*, and a field that turns out to be wanted is one line.
+
+Every collection is assembled from the sources the render was handed, which are
+already the gate-admitted set — so **a template cannot name a withheld
+document**, because the data holding it was never built.
+
+### Why `{{ }}` survives in link destinations
+
+One position in Markdown cannot hold a node. A link's destination is not
+inline-parsed: twig stores it as a byte run and carries a positional escape
+alphabet for it, which is a settled decision rather than a gap. So
+`[:val[t]](:val[href])` cannot work, and a list of links is the most common thing
+a template produces.
+
+`{{path}}` therefore survives **in a link or image destination and nowhere
+else** — and it is resolved by reading the destination off the AST node, never by
+scanning text. A `{{` in a code block is the contents of a `code_block`, not a
+`link`, so the substitution cannot reach it. A `{{ }}` anywhere else is not a
+template: it publishes as itself and is reported on
+`SiteRender::body_template_errors`, which is also the migration path off the
+Handlebars bodies this replaced.
+
+A body template that will not expand publishes its own source and says so on the
+same channel. It no longer fails silently, which is the discipline the shell
+templates already held to.
+
 ## The shell
 
 A shell template is the outer HTML document a page is wrapped in — everything
@@ -147,10 +211,11 @@ goes. A page may name its own shell with `shell:` in frontmatter; a key the site
 does not carry falls back to the site shell and says why.
 
 The substitutor is deliberately small — named slots, no expressions, no control
-flow. Handlebars was available (this crate already links it for *bodies*) and was
-turned down: it escapes by its own rule rather than the one the rest of the crate
-uses, a misspelled variable is either silently empty or fatal with nothing in
-between, and page assembly is compiled without the `templating` feature.
+flow. Handlebars was turned down, and the reason that decides it is that it has
+no configurable delimiters: a shell is an HTML document, which is exactly where
+inline `<style>` and `<script>` braces live, and `{{y()}}` inside a script would
+become an expression. Bodies pay no such cost, which is why they spell their
+values with a directive and the shell keeps its own substitutor.
 
 ### Layouts
 
@@ -217,7 +282,7 @@ than copied into every island.
 |---|---|
 | `yaml` *(default)* | `---` frontmatter, `registry.yaml` |
 | `json`, `toml`, `fig-lang` | the other metadata dialects |
-| `templating` | Handlebars in bodies, resolved at render time, plus the whole-site entry point (`site::render_site`) |
+| `templating` | Body templates — the directive vocabulary and the context it resolves against — plus the whole-site entry point (`site::render_site`) |
 | `syntax-highlighting` | Colour for fenced code blocks, via `syntect` and 213 Sublime grammars |
 
 Metadata-format features forward to `prov`, which forwards them to `fig`. With a
@@ -225,10 +290,12 @@ format off, its parser is left out of the build and `prov` stops recognizing it,
 so at least one must be on.
 
 `templating` is off by default so a consumer that only needs Markdown, HTML and
-nav does not compile a template engine it will not call. With it on, body
-variables come from frontmatter and raw `{{ }}` syntax is preserved in the file
-and resolved on every view and publish — and when a target audience is supplied,
-`:vis[…]` filtering runs *before* interpolation.
+nav does not carry a context assembler it will not call. It pulls in no template
+*engine*: the structure is twig's directives, which this crate already parses for
+visibility, and the values are a path lookup. A template is left in the file and
+resolved on every view and publish — and when a target audience is supplied,
+`:vis[…]` filtering runs *before* expansion, so a region this audience may not
+see is never expanded at all.
 
 `syntax-highlighting` is off for the same reason and more of it: the grammars
 travel as an embedded dump of about a megabyte. See [Highlighting](#highlighting)
