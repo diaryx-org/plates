@@ -89,6 +89,7 @@ sites:
 | Key | |
 |---|---|
 | `audience` | **Required.** The gate: a site that does not say who it is for is not a site. |
+| `gate_field` | The document field `audience` is compared against. Defaults to `audience`, which is what an archive that never had to think about it wants. |
 | `label` | What a person calls it. Defaults to the name, humanized. |
 | `view` | A prov view, by its key under `views:`. Its arrangement becomes the site's; absent, the gate's whole set arranged by containment. |
 | `index` | The front page, as a link resolved through the spanning relation — so it survives a rename, a move and a retitle. Absent, an index is synthesized from the site's entries. |
@@ -101,6 +102,20 @@ Everything but `audience` has a defensible default, and the defaults are
 `plates::SiteSpec`'s. A misspelled key costs a site one setting and is reported;
 refusing to build the other four sites over it would be a worse answer.
 
+An archive whose disclosure control is spelled something other than `audience` —
+`clearance`, `visibility`, a term in another language — names it per site:
+
+```yaml
+sites:
+  audit:
+    audience: internal
+    gate_field: clearance
+```
+
+The gate is no looser for it. It is still exact after trimming and still closed
+by default, so a document declaring nothing under `clearance` is visible to
+nobody.
+
 ### The fallback, and why it is not a guess
 
 An archive that declares no `sites:` block gets one site per prov `exports:`
@@ -112,6 +127,8 @@ stylesheet — and every one of those has a default.
 
 An export gated on some *other* field is skipped rather than published under a
 rule nothing showed anyone, and named in the warnings so the omission is visible.
+Publishing it takes a `sites:` entry that says `gate_field:` out loud, which is
+the point: the derivation stays the case nobody had to think about.
 
 ## What a build remembers
 

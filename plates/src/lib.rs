@@ -54,9 +54,10 @@
 //!   pages in is not read here, deliberately — that is a vault format's dialect,
 //!   and a [`SiteSpec`] arrives already built. Two applications with different
 //!   config formats can compose the same `SiteSpec` and get the same site.
-//! - **The gate field.** [`plan::AUDIENCE_FIELD`] is fixed to `audience`. A
-//!   vault that names its visibility field something else cannot say so yet;
-//!   this wants to become a [`SiteSpec`] field.
+//! - **Spelling the gate field.** [`SiteSpec::gate_field`] names the field the
+//!   gate is judged on, defaulting to [`plan::AUDIENCE_FIELD`]. Which field a
+//!   vault's disclosure control lives in is a dialect like the rest, so the
+//!   value arrives with the spec rather than being read here.
 //! - **Running the renderer.** This crate hands back sources and attachments.
 //!   Turning them into pages is `plates-render`'s, with the caller choosing when
 //!   and where.

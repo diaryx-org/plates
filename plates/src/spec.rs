@@ -73,6 +73,19 @@ pub struct SiteSpec {
     /// The audience whose declared set bounds this site — the gate's value.
     /// Required: a site that does not say who it is for is not a site.
     pub audience: String,
+    /// The document field the gate reads [`audience`](Self::audience) out of.
+    /// `None` is [`AUDIENCE_FIELD`](crate::AUDIENCE_FIELD).
+    ///
+    /// A vault whose disclosure control is spelled something else — `clearance`,
+    /// `visibility`, a term in another language — says so here rather than being
+    /// unpublishable. It stays a per-site setting because prov's gate is
+    /// per-export: two sites over one vault may legitimately judge different
+    /// fields, and a workspace-wide setting could not express that.
+    ///
+    /// Changing it does not loosen anything. The gate is still exact after
+    /// trimming and still closed by default, so a document that declares nothing
+    /// under the named field is visible to nobody, exactly as before.
+    pub gate_field: Option<String>,
     /// The [`ViewSpec`](prov::ViewSpec) naming this site's arrangement, by its
     /// key under `views`. `None` publishes the gate's whole set, arranged by
     /// containment.
@@ -130,6 +143,17 @@ impl SiteSpec {
             Some(label) => label.clone(),
             None => humanize(&self.name),
         }
+    }
+
+    /// The field this site's gate is judged on, defaulted.
+    ///
+    /// Every reader of [`gate_field`](Self::gate_field) goes through here, so
+    /// the default lives in one place and a site that says nothing is judged on
+    /// [`AUDIENCE_FIELD`](crate::AUDIENCE_FIELD) wherever the question is asked.
+    pub fn gate_field(&self) -> &str {
+        self.gate_field
+            .as_deref()
+            .unwrap_or(crate::plan::AUDIENCE_FIELD)
     }
 }
 
@@ -262,9 +286,9 @@ pub struct SitePlan {
     /// publish preview owes the user a count of it, since "I tagged it `family`
     /// and it isn't on the site" is otherwise unexplainable from the file alone.
     pub outside_view: Vec<PathBuf>,
-    /// Documents held back whose declared audience matches the gate **except
-    /// for case or surrounding space** — `audience: Public` against a `public`
-    /// gate.
+    /// Documents held back whose declared value matches the gate **except for
+    /// case or surrounding space** — `audience: Public` against a `public`
+    /// gate, in whichever field [`SiteSpec::gate_field`] named.
     ///
     /// Empty for every vault that never drifted. Non-empty means the site is
     /// publishing less than its author believes, which is the quiet failure the
@@ -356,6 +380,11 @@ pub fn finish(
 /// Deliberately a *report*, never a fallback. Nothing here puts a document back
 /// in the set — the answer to drift is to fix the document, which is also what
 /// a closed gate vocabulary is for.
+///
+/// No field name is passed because none is needed: prov fills
+/// [`Withheld::declared`](prov::exports::Withheld::declared) from the gate's own
+/// field, so this follows whatever [`SiteSpec::gate_field`] named without being
+/// told.
 pub fn case_drift(gate_value: &str, withheld: &[prov::exports::Withheld]) -> Vec<PathBuf> {
     let wanted = gate_value.trim();
     withheld
@@ -395,6 +424,7 @@ mod tests {
             name: export.name,
             label: export.label,
             audience: export.gate.value,
+            gate_field: None,
             view: export.view,
             index: None,
             shell: None,
@@ -428,6 +458,22 @@ mod tests {
             outside_view: outside_view.into_iter().map(PathBuf::from).collect(),
             withheld: Vec::new(),
         }
+    }
+
+    /// A site that names no field is judged on `audience`; one that names a
+    /// field is judged on that, and the value it compares is untouched. The two
+    /// halves of a gate are independent, which is what lets an archive rename
+    /// its disclosure control without renaming its readerships.
+    #[test]
+    fn a_site_gates_on_the_field_it_names_and_audience_otherwise() {
+        let mut spec = site("letters", " family ");
+        assert_eq!(spec.gate_field(), crate::plan::AUDIENCE_FIELD);
+        assert_eq!(crate::plan::to_export(&spec).gate.field, "audience");
+
+        spec.gate_field = Some("clearance".into());
+        let export = crate::plan::to_export(&spec);
+        assert_eq!(export.gate.field, "clearance");
+        assert_eq!(export.gate.value, "family", "still trimmed, still exact");
     }
 
     #[test]

@@ -30,6 +30,12 @@
 //! is not a site. Everything else has a defensible default, and the defaults are
 //! [`plates::SiteSpec`]'s.
 //!
+//! `gate_field` is the exception worth naming, because it decides what
+//! `audience` is *compared against*: an archive whose disclosure control is
+//! spelled `clearance` writes `gate_field: clearance` and its sites gate on
+//! that. Absent, it is [`plates::AUDIENCE_FIELD`], which is what every archive
+//! that never had to think about it wants.
+//!
 //! # The fallback, and why it is not a guess
 //!
 //! An archive that declares no `sites:` block gets one site per prov `exports:`
@@ -42,7 +48,9 @@
 //!
 //! An export gated on some *other* field is skipped rather than published under
 //! a rule nothing showed anyone, and named in the warnings so the omission is
-//! visible.
+//! visible. Publishing it takes a `sites:` entry that says `gate_field:` out
+//! loud — which is the point: the derivation stays the case nobody had to
+//! think about.
 
 use std::path::Path;
 
@@ -65,6 +73,7 @@ pub const SITES_KEY: &str = "sites";
 pub const SITE_KEYS: &[&str] = &[
     "label",
     "audience",
+    "gate_field",
     "view",
     "index",
     "shell",
@@ -203,6 +212,7 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             name: name.clone(),
             label: text(entry, "label"),
             audience,
+            gate_field: text(entry, "gate_field"),
             view: text(entry, "view"),
             index: text(entry, "index"),
             shell: text(entry, "shell"),
@@ -221,8 +231,9 @@ fn specs_from_exports(exports: &[ExportSpec], warnings: &mut Vec<String>) -> Vec
         if export.gate.field != AUDIENCE_FIELD {
             warnings.push(format!(
                 "export `{}` gates on `{}` rather than `{AUDIENCE_FIELD}`, so no site was \
-                 derived from it — declare one under `{SITES_KEY}` to publish it",
-                export.name, export.gate.field
+                 derived from it — declare one under `{SITES_KEY}` with `gate_field: {}` to \
+                 publish it",
+                export.name, export.gate.field, export.gate.field
             ));
             continue;
         }
@@ -230,6 +241,7 @@ fn specs_from_exports(exports: &[ExportSpec], warnings: &mut Vec<String>) -> Vec
             name: export.name.clone(),
             label: export.label.clone(),
             audience: export.gate.value.clone(),
+            gate_field: None,
             view: export.view.clone(),
             index: None,
             shell: None,
@@ -315,6 +327,7 @@ mod tests {
             Value::Mapping(mapping(&[
                 ("label", s("Field notes")),
                 ("audience", s("public")),
+                ("gate_field", s("clearance")),
                 ("view", s("daily")),
                 ("index", s("[Home](id:7f3a91c)")),
                 ("shell", s(".config/sites/blog/shell.html")),
@@ -336,6 +349,7 @@ mod tests {
                 name: "blog".into(),
                 label: Some("Field notes".into()),
                 audience: "public".into(),
+                gate_field: Some("clearance".into()),
                 view: Some("daily".into()),
                 index: Some("[Home](id:7f3a91c)".into()),
                 shell: Some(".config/sites/blog/shell.html".into()),

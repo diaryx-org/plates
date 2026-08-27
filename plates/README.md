@@ -186,6 +186,10 @@ and `prov` stops recognizing it, so at least one must be on.
   pages in is not read here, deliberately: that is a vault format's dialect, not
   a site's shape. Two applications with different config formats can compose the
   same `SiteSpec` and get the same site.
+- **Spelling the gate field.** `SiteSpec::gate_field` names the field the gate
+  is judged on and defaults to `AUDIENCE_FIELD` — `audience`. Which field a
+  vault's disclosure control lives in is a dialect like the rest, so the value
+  arrives with the spec rather than being read here.
 - **Running the renderer.** This crate hands back sources and attachments.
   Turning them into pages is `plates-render`'s, with the caller choosing when
   and where.
@@ -197,9 +201,6 @@ and `prov` stops recognizing it, so at least one must be on.
 `0.1`, and the API is expected to move before `1.0`. Known limitations, rather
 than surprises:
 
-- The gate field is fixed to `AUDIENCE_FIELD` — `audience`. A vault that names
-  its visibility field something else cannot say so yet; this wants to become a
-  `SiteSpec` field.
 - A page claiming a destination with `serve_at:` does not get its *relative*
   body asset references re-based onto the claimed path. Root-absolute references
   work.

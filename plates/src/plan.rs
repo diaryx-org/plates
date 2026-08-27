@@ -66,18 +66,14 @@ pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
     finish(spec, export, index.as_deref(), index_directory)
 }
 
-/// The field a site's gate is judged on.
+/// The field a site's gate is judged on when it names none.
 ///
-/// prov's gate names its own field, so an export could gate on anything. A site
-/// fixes it to `audience` because that is the field the product treats as a
+/// `audience` is the default because that is the field the product treats as a
 /// disclosure control — closed vocabulary, private by default, surfaced in the
-/// editor as a permission rather than a tag. A vault is free to hand-write an
-/// export gated on something else; prov will honour it, and the layer that reads
-/// the config reports it as a site it does not recognise rather than silently
-/// publishing under a rule the UI never showed anyone.
-///
-/// The one piece of product vocabulary left in this crate. Making it a
-/// [`SiteSpec`] field is what extraction would need.
+/// editor as a permission rather than a tag. It is only a default: prov's gate
+/// names its own field, so [`SiteSpec::gate_field`] carries a vault that spells
+/// its disclosure control something else, and nothing below this line assumes
+/// the name.
 pub const AUDIENCE_FIELD: &str = "audience";
 
 /// The export half of a site's declaration — what prov stores and plans.
@@ -86,7 +82,7 @@ pub fn to_export(spec: &SiteSpec) -> prov::exports::ExportSpec {
         name: spec.name.clone(),
         label: spec.label.clone(),
         gate: prov::exports::Gate {
-            field: AUDIENCE_FIELD.to_string(),
+            field: spec.gate_field().to_string(),
             value: spec.audience.trim().to_string(),
         },
         view: spec.view.clone(),
