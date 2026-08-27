@@ -17,6 +17,7 @@ use crate::frontmatter;
 use indexmap::IndexMap;
 use prov::ContentFormat;
 use prov::Value as YamlValue;
+use prov::views::{Row, Selection};
 use serde_json::Value as JsonValue;
 
 use crate::dates;
@@ -390,6 +391,10 @@ fn collect_context(
     let mut parent_of: HashMap<PathBuf, PathBuf> = HashMap::new();
     let mut sortable: Vec<(i32, PathBuf)> = Vec::new();
     let mut root_title: Option<String> = None;
+    // Kept whole rather than reduced to group keys here, because prov's grouper
+    // takes metadata and answers the grouping question itself — see
+    // [`groups_of`].
+    let mut meta_of: HashMap<PathBuf, YamlValue> = HashMap::new();
 
     for (idx, s) in sources.iter().enumerate() {
         let key = PathBuf::from(links::sanitize_rel_path(&s.path));
@@ -432,6 +437,7 @@ fn collect_context(
             key.clone(),
             entry_value(&s.path, &title, &href, date, &fm, group_keys, s.is_root),
         );
+        meta_of.insert(key.clone(), YamlValue::Mapping(fm.clone()));
 
         // Source order, `nav_order` overriding — the rule `crate::nav` sorts
         // siblings by, restated here so a template listing entries and a nav
@@ -466,7 +472,11 @@ fn collect_context(
     });
 
     Collected {
-        context: template::SiteContext::new(site, entries.clone(), groups_of(&entries)),
+        context: template::SiteContext::new(
+            site,
+            entries.clone(),
+            groups_of(&order, &meta_of, &by_path, &opts.arrangement),
+        ),
         by_path,
         parent_of,
         order,
@@ -503,32 +513,57 @@ fn entry_value(
     })
 }
 
-/// Gather entries into `{key, entries}` records, in first-appearance order.
+/// Gather entries into `{key, entries}` records, ascending by group key.
 ///
-/// Empty when the arrangement is containment, because then no entry carries a
-/// group key and there is nothing to gather — which is also the honest answer
-/// for `:::group` on an ungrouped site: no groups, so no repetitions.
-fn groups_of(entries: &[JsonValue]) -> Vec<JsonValue> {
-    let mut keys: Vec<String> = Vec::new();
-    let mut members: HashMap<String, Vec<JsonValue>> = HashMap::new();
-    for entry in entries {
-        let Some(JsonValue::Array(entry_keys)) = entry.get("group_keys") else {
-            continue;
-        };
-        for key in entry_keys.iter().filter_map(|k| k.as_str()) {
-            if !members.contains_key(key) {
-                keys.push(key.to_string());
-            }
-            members
-                .entry(key.to_string())
-                .or_default()
-                .push(entry.clone());
-        }
-    }
-    keys.into_iter()
-        .map(|key| {
-            let entries = members.remove(&key).unwrap_or_default();
-            serde_json::json!({ "key": key, "entries": entries })
+/// The buckets and their order are prov's, not this crate's: a published site
+/// and the picker over the archive it came from must file a letter about two
+/// people under both their names, and in the same order, or the site reads
+/// differently from the vault. That is the same reasoning that made
+/// [`Grouping`] prov's rather than a copy of it, applied one layer further out
+/// — the grouper is pure, so it costs this crate none of its portability.
+///
+/// Empty when the arrangement is containment, because then nothing is grouped —
+/// which is also the honest answer for `:::group` on an ungrouped site: no
+/// groups, so no repetitions.
+///
+/// prov's `ungrouped` bucket is deliberately dropped rather than appended as a
+/// group of its own: an entry no field gave a key for belongs under no heading,
+/// and `entries` already lists every one of them for a template that wants the
+/// flat set. The synthesized index keeps its own labelled bucket
+/// ([`group_entries`]), which is a *nav* question and answered there.
+fn groups_of(
+    order: &[PathBuf],
+    meta_of: &HashMap<PathBuf, YamlValue>,
+    by_path: &HashMap<PathBuf, JsonValue>,
+    arrangement: &Arrangement,
+) -> Vec<JsonValue> {
+    let Arrangement::Grouped(grouping) = arrangement else {
+        return Vec::new();
+    };
+    // The view name is prov's handle for the selection and nothing here reads
+    // it back; the arrangement arrives without one.
+    let selection = Selection {
+        view: String::new(),
+        rows: order
+            .iter()
+            .filter_map(|key| {
+                Some(Row {
+                    path: key.clone(),
+                    meta: meta_of.get(key)?.clone(),
+                })
+            })
+            .collect(),
+    };
+    prov::views::group(&selection, grouping)
+        .groups
+        .into_iter()
+        .map(|group| {
+            let entries: Vec<JsonValue> = group
+                .rows
+                .iter()
+                .filter_map(|row| by_path.get(&row.path).cloned())
+                .collect();
+            serde_json::json!({ "key": group.key, "entries": entries })
         })
         .collect()
 }
@@ -2583,6 +2618,38 @@ mod tests {
             out.body_template_errors.is_empty(),
             "{:?}",
             out.body_template_errors
+        );
+    }
+
+    /// `groups` comes back in prov's order — ascending by key — however the
+    /// sources happened to be handed over. Source order was the old rule, and
+    /// it made the same archive read two ways depending on which document the
+    /// walk reached first.
+    #[test]
+    fn a_templates_groups_are_ordered_by_key_not_by_arrival() {
+        let index = "---\ntitle: Home\n---\n:::each{of=groups as=g}\n- :val[g.key]\n:::\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("c.md", "---\ntitle: C\npeople: Nan\n---\nC.\n", false),
+            src("a.md", "---\ntitle: A\npeople: Ada\n---\nA.\n", false),
+        ];
+        let opts = SiteOptions {
+            arrangement: Arrangement::Grouped(Grouping::field("people")),
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+        let ada = home.html.find("Ada").expect("an Ada group");
+        let nan = home.html.find("Nan").expect("a Nan group");
+        assert!(
+            ada < nan,
+            "ascending by key, not `Nan` first: {}",
+            home.html
         );
     }
 

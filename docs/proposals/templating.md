@@ -376,3 +376,15 @@ the first draft gave — `PageLayout::parse` treats anything unrecognized as
   today, which is right for containment. A grouped site may want the grain's
   order instead; `groups` already carries the grouping, so this is a question
   about which of the two an ungrouped `:::each{of=entries}` should follow.
+
+  Half of it is settled: `groups` itself is prov's grouping now, so its buckets
+  and their order are `prov_views::group`'s — ascending by key, with the entries
+  inside each in the site's own order. What is left is the flat `entries` list,
+  which still follows the nav.
+
+  It leaves one visible seam. prov groups ascending only, and the *synthesized*
+  index reverses date grains so a calendar reads newest-first. A templated site
+  over a dated view therefore lists its groups oldest-first while its nav lists
+  them newest-first. Reversing in the template is one line, but the two ought
+  not to disagree by default, and choosing which one moves is the open half of
+  this question.
