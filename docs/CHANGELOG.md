@@ -37,6 +37,12 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v0.2.0 — 2026-08-27
+
 ### Breaking
 
 - **visibility** — filter audience regions through the parser, not a scanner ([`ac54f88`](https://github.com/diaryx-org/plates/commit/ac54f88e4db89c8ee414b659c736a7b27f8f9e1f))
@@ -220,7 +226,6 @@ them.
  required `census: &[prov::CensusEntry]` field, the same census `plan_site`
  takes; `&[]` keeps outbound relations empty.
 
-<!-- git-cliff:end -->
 ## v0.1.0 — 2026-08-26
 
 ### Added

@@ -6,7 +6,7 @@ resolver = "2"
 members = ["plates-render", "plates", "plates-cli", "xtask"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # Minimum supported Rust version, enforced by the `msrv` CI job, which reads
 # this very value.
@@ -41,5 +41,5 @@ indexmap = { version = "2.0", features = ["serde"] }
 thiserror = "2.0"
 
 # Internal crates.
-plates-render = { path = "plates-render", version = "0.1.0", default-features = false }
-plates = { path = "plates", version = "0.1.0", default-features = false }
+plates-render = { path = "plates-render", version = "0.2.0", default-features = false }
+plates = { path = "plates", version = "0.2.0", default-features = false }
