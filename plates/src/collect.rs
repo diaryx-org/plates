@@ -404,7 +404,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         // body + the frontmatter `attachments` list, canonicalized against
         // this document's path via `prov::link`, non-`.md`.
         let mut refs: Vec<String> = Vec::new();
-        for raw in extract_local_file_refs(&filtered_body) {
+        for raw in extract_local_file_refs(path, &filtered_body) {
             push_canonical_ref(path, &raw, false, anchor, &page_paths, &mut refs);
         }
         // A frontmatter listing is a *statement of intent*: these bytes ship.
@@ -712,61 +712,132 @@ fn is_local_file_ref(path: &str) -> bool {
     filename.contains('.')
 }
 
-/// Extract local file reference paths from a document body: `(path)` link
-/// targets and HTML `src`/`href`/`srcset` attributes.
-///
-/// Grammar-blind, and already was before there was more than one grammar to be
-/// blind to — which is why an HTML or Djot body needs nothing added here.
-/// Markdown and Djot both spell a link target `(path)`, and the attribute scan
-/// covers an HTML body and the raw-HTML islands the other two can carry.
-fn extract_local_file_refs(body: &str) -> Vec<String> {
-    let mut paths = Vec::new();
-
-    let mut remaining = body;
-    while let Some(paren_pos) = remaining.find('(') {
-        remaining = &remaining[paren_pos + 1..];
-        if let Some(close) = remaining.find(')') {
-            let path = remaining[..close].trim();
-            if is_local_file_ref(path) {
-                paths.push(path.to_string());
-            }
-            remaining = &remaining[close + 1..];
-        } else {
-            break;
-        }
+/// Push `path` if it names a local file and is not already listed. Deduplicating
+/// here is what lets the three scans below overlap freely — a `[a](x.png)` is
+/// seen by both the parser and the paren scan, and one attachment is meant.
+fn push_if_local(paths: &mut Vec<String>, path: &str) {
+    if is_local_file_ref(path) && !paths.iter().any(|seen| seen == path) {
+        paths.push(path.to_string());
     }
+}
 
-    for marker in &["src=\"", "href=\""] {
-        let mut remaining = body;
-        while let Some(pos) = remaining.find(marker) {
-            remaining = &remaining[pos + marker.len()..];
-            if let Some(end) = remaining.find('"') {
-                let path = remaining[..end].trim();
-                if is_local_file_ref(path) {
-                    paths.push(path.to_string());
-                }
-                remaining = &remaining[end + 1..];
+/// The runs of `body` outside `spans` (sorted, not necessarily disjoint), in
+/// source order. Offsets are dropped: every caller here wants the *text* to
+/// scan, never a position in the original.
+fn runs_outside<'a>(body: &'a str, spans: &[std::ops::Range<usize>]) -> Vec<&'a str> {
+    let mut runs = Vec::new();
+    let mut cursor = 0;
+    for span in spans {
+        if cursor < span.start {
+            runs.push(&body[cursor..span.start]);
+        }
+        cursor = cursor.max(span.end);
+    }
+    if cursor < body.len() {
+        runs.push(&body[cursor..]);
+    }
+    runs
+}
+
+/// Whether a span [`prov::code_spans`] reported is one of `twig`'s *raw HTML*
+/// nodes rather than one of its code nodes.
+///
+/// The two arrive under one kind set and want opposite treatment: a fence is
+/// prose about markup, an island is markup, and the attribute scan below exists
+/// for the island. Nothing in prov's API separates them, so they are told apart
+/// by how the span opens — markdown raw HTML opens on `<`, djot raw carries an
+/// `=format` marker on its fence (`` ```=html ``) or after its verbatim span
+/// (`` `…`{=html} ``), and every code node is a bare fence, a bare backtick run,
+/// or an indented line. A misjudgement here can only re-admit a span the scan
+/// used to read anyway, never hide one.
+fn is_raw_html_span(body: &str, span: &std::ops::Range<usize>) -> bool {
+    let text = &body[span.clone()];
+    let after_fence = text.trim_start_matches(['`', '~']);
+    text.starts_with('<')
+        || body[span.end..].starts_with("{=")
+        || (after_fence.len() < text.len() && after_fence.trim_start_matches(' ').starts_with('='))
+}
+
+/// Extract local file reference paths from a document body: link targets and
+/// HTML `src`/`href`/`srcset` attributes.
+///
+/// Code-aware, which is the contract that matters: a `(img/a.png)` shown inside
+/// a fenced block or an inline code span is documentation, not a reference, and
+/// shipping the file it names was a bug. `twig` draws the line — through
+/// [`prov::link::scan_body_links`] for wikilinks and parsed markdown/djot links,
+/// and [`prov::code_spans`] for the two scans prov has no equivalent of.
+///
+/// Those two stay lexical for reasons that are not going away. Twig calls
+/// `![alt](path)` an *Image*, not a Link, so the paren scan is what sees the
+/// commonest attachment there is; and no parser reports HTML attributes, so an
+/// `<img src="…">` island — the whole reason an HTML body needs nothing added
+/// here — is found by looking for the attribute. Both are held to the code mask
+/// instead, which is where grammar-blindness was actually costing something.
+///
+/// An HTML body has no code mask (twig reports no code nodes for it) and no
+/// parsed links, so it is scanned whole, exactly as before.
+fn extract_local_file_refs(doc: &Path, body: &str) -> Vec<String> {
+    let mut paths = Vec::new();
+    let code = prov::ContentFormat::from_extension(doc)
+        .and_then(|format| prov::code_spans(body, format).ok())
+        .unwrap_or_default();
+
+    // Markdown and Djot both spell a link target `(path)`; an image is only ever
+    // spelled that way. Run per non-code run so a `(` in a fence can never pair
+    // with a `)` in the prose after it.
+    for run in runs_outside(body, &code) {
+        let mut remaining = run;
+        while let Some(paren_pos) = remaining.find('(') {
+            remaining = &remaining[paren_pos + 1..];
+            if let Some(close) = remaining.find(')') {
+                push_if_local(&mut paths, remaining[..close].trim());
+                remaining = &remaining[close + 1..];
             } else {
                 break;
             }
         }
     }
 
-    let mut remaining = body;
-    while let Some(pos) = remaining.find("srcset=\"") {
-        remaining = &remaining[pos + "srcset=\"".len()..];
-        if let Some(end) = remaining.find('"') {
-            let srcset = remaining[..end].trim();
-            for candidate in srcset.split(',') {
-                let candidate = candidate.trim();
-                let path = candidate.split_whitespace().next().unwrap_or("").trim();
-                if is_local_file_ref(path) {
-                    paths.push(path.to_string());
+    for found in prov::link::scan_body_links(doc, body) {
+        push_if_local(&mut paths, found.link.target.trim());
+    }
+
+    let attribute_text: Vec<&str> = runs_outside(
+        body,
+        &code
+            .iter()
+            .filter(|span| !is_raw_html_span(body, span))
+            .cloned()
+            .collect::<Vec<_>>(),
+    );
+    for marker in &["src=\"", "href=\""] {
+        for run in &attribute_text {
+            let mut remaining = *run;
+            while let Some(pos) = remaining.find(marker) {
+                remaining = &remaining[pos + marker.len()..];
+                if let Some(end) = remaining.find('"') {
+                    push_if_local(&mut paths, remaining[..end].trim());
+                    remaining = &remaining[end + 1..];
+                } else {
+                    break;
                 }
             }
-            remaining = &remaining[end + 1..];
-        } else {
-            break;
+        }
+    }
+
+    for run in &attribute_text {
+        let mut remaining = *run;
+        while let Some(pos) = remaining.find("srcset=\"") {
+            remaining = &remaining[pos + "srcset=\"".len()..];
+            if let Some(end) = remaining.find('"') {
+                for candidate in remaining[..end].split(',') {
+                    let path = candidate.split_whitespace().next().unwrap_or("");
+                    push_if_local(&mut paths, path);
+                }
+                remaining = &remaining[end + 1..];
+            } else {
+                break;
+            }
         }
     }
 
@@ -838,10 +909,58 @@ mod tests {
     #[test]
     fn extract_refs_from_markdown_and_html() {
         let md = "![a](img/a.png) and <img src=\"b.jpg\"> and [doc](notes/x.md)";
-        let refs = extract_local_file_refs(md);
+        let refs = extract_local_file_refs(Path::new("a.md"), md);
         assert!(refs.contains(&"img/a.png".to_string()));
         assert!(refs.contains(&"b.jpg".to_string()));
         assert!(refs.contains(&"notes/x.md".to_string())); // .md filtered later in caller
+    }
+
+    /// The bug this scan was code-blind to: a document *about* markup names
+    /// files it does not reference, and publishing them shipped bytes nobody
+    /// asked for. The reference beside the fence still has to survive, or the
+    /// fix would be a worse bug than the one it replaces.
+    #[test]
+    fn refs_inside_code_are_documentation_not_references() {
+        let md = "```\n![x](img/fenced.png)\n<img src=\"fenced.jpg\">\n```\n\n\
+                  Inline `(img/inline.png)` and `<img src=\"inline.jpg\">` too.\n\n\
+                  ![real](img/real.png) beside <img src=\"real.jpg\">\n";
+        let refs = extract_local_file_refs(Path::new("a.md"), md);
+        assert_eq!(refs, ["img/real.png", "real.jpg"], "got {refs:?}");
+    }
+
+    /// Djot spells its links and fences the same way, so the same rule holds —
+    /// and its raw-HTML island, which twig reports under the code kinds, is
+    /// still read for attributes.
+    #[test]
+    fn djot_code_is_skipped_and_its_raw_html_island_is_not() {
+        let dj = "```\n[x](img/fenced.png)\n<img src=\"fenced.jpg\">\n```\n\n\
+                  `<img src=\"inline.jpg\">`{=html}\n\n\
+                  ```=html\n<img src=\"block.jpg\">\n```\n\n[real](img/real.png)\n";
+        let refs = extract_local_file_refs(Path::new("a.dj"), dj);
+        assert!(!refs.contains(&"img/fenced.png".to_string()), "{refs:?}");
+        assert!(!refs.contains(&"fenced.jpg".to_string()), "{refs:?}");
+        assert!(refs.contains(&"img/real.png".to_string()), "{refs:?}");
+        assert!(refs.contains(&"inline.jpg".to_string()), "{refs:?}");
+        assert!(refs.contains(&"block.jpg".to_string()), "{refs:?}");
+    }
+
+    /// An HTML body has no fences to be blind to, and twig reports no code nodes
+    /// for it — so the attribute scan reads the whole thing, as it always did.
+    #[test]
+    fn an_html_body_is_still_scanned_whole() {
+        let html = "<img src=\"a.png\"><a href=\"b.pdf\">x</a>\
+                    <img srcset=\"c.png 1x, d.png 2x\">";
+        let refs = extract_local_file_refs(Path::new("a.html"), html);
+        assert_eq!(refs, ["a.png", "b.pdf", "c.png", "d.png"], "got {refs:?}");
+    }
+
+    /// A wikilink is a reference the paren scan can never see. prov's scanner
+    /// reports it, and an Obsidian-dialect vault embeds its images this way.
+    #[test]
+    fn a_wikilinked_file_is_a_reference() {
+        let md = "see ![[img/w.png]] and `[[img/coded.png]]`\n";
+        let refs = extract_local_file_refs(Path::new("a.md"), md);
+        assert_eq!(refs, ["img/w.png"], "got {refs:?}");
     }
 
     #[test]

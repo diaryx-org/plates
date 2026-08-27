@@ -88,11 +88,12 @@ fn render_markup(body: &str, format: ContentFormat) -> String {
 }
 
 /// Pre-process Diaryx's custom syntax (highlights, spoilers, HTML embeds) into
-/// raw HTML before the body is parsed. Skips fenced code blocks and inline code.
+/// raw HTML before the body is parsed. Every stretch the document's own parser
+/// calls code — or raw HTML — is copied through untouched, so a fence showing
+/// `==highlight==` stays a fence showing `==highlight==`.
 ///
-/// Runs for Markdown and Djot, which share backticks for both code spellings,
-/// so the same scanner keeps its hands off code in either. It is deliberately
-/// the *same* syntax in both: someone who switches a vault's `content_format`
+/// Runs for Markdown and Djot. It is deliberately the *same* syntax in both:
+/// someone who switches a vault's `content_format`
 /// should not find that `==highlight==` stopped working. Djot's native
 /// `{=highlight=}` still works too — twig parses it — it just renders a plain
 /// `<mark>` without Diaryx's colour classes.
@@ -108,49 +109,28 @@ pub fn preprocess_custom_syntax(source: &str, format: ContentFormat) -> String {
     let len = bytes.len();
     let mut out = String::with_capacity(len);
     let mut i = 0;
+    // Which stretches of the source are opaque, from twig rather than from a
+    // fence-counter of this crate's own. The hand-rolled version knew only
+    // ``` fences and single backticks, so `~~~`, an indented block, a run of two
+    // backticks and a fence inside a list item all leaked their contents to the
+    // scanners below. Spans are computed once, against the *original* text: the
+    // rewrite only ever appends to `out`, so `i` never stops indexing the source
+    // these offsets were taken from.
+    //
+    // A body twig cannot parse degrades to "nothing is code", matching
+    // [`render_body`], which shows such a body as source anyway.
+    let code = prov::code_spans(source, format).unwrap_or_default();
+    let mut next_code = 0;
 
     while i < len {
-        // Skip fenced code blocks (``` ... ```)
-        if i + 2 < len && bytes[i] == b'`' && bytes[i + 1] == b'`' && bytes[i + 2] == b'`' {
-            let fence_start = i;
-            i += 3;
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            loop {
-                if i >= len {
-                    out.push_str(&markdown[fence_start..]);
-                    return out;
-                }
-                if bytes[i] == b'\n'
-                    && i + 3 < len
-                    && bytes[i + 1] == b'`'
-                    && bytes[i + 2] == b'`'
-                    && bytes[i + 3] == b'`'
-                {
-                    i += 4;
-                    while i < len && bytes[i] != b'\n' {
-                        i += 1;
-                    }
-                    break;
-                }
-                i += 1;
-            }
-            out.push_str(&markdown[fence_start..i]);
-            continue;
+        while next_code < code.len() && code[next_code].end <= i {
+            next_code += 1;
         }
-
-        // Skip inline code (` ... `)
-        if bytes[i] == b'`' {
-            let start = i;
-            i += 1;
-            while i < len && bytes[i] != b'`' {
-                i += 1;
-            }
-            if i < len {
-                i += 1;
-            }
-            out.push_str(&markdown[start..i]);
+        if let Some(span) = code.get(next_code)
+            && span.start <= i
+        {
+            out.push_str(&markdown[i..span.end]);
+            i = span.end;
             continue;
         }
 
@@ -510,6 +490,39 @@ mod tests {
         let input = "```\n==no==\n||no||\n```";
         let out = preprocess(input);
         assert_eq!(out, input);
+    }
+
+    /// The spellings of code a hand-rolled backtick counter never knew: a tilde
+    /// fence, an indented block, a two-backtick inline span, and a fence nested
+    /// in a list item. Each used to have its contents rewritten.
+    #[test]
+    fn every_spelling_of_code_is_untouched() {
+        for input in [
+            "~~~\n==no==\n~~~",
+            "para\n\n    ==no==\n    ![x](i.html)\n\npost",
+            "a ``==no==`` b",
+            "- item\n\n  ```\n  ==no==\n  ```\n",
+        ] {
+            assert_eq!(preprocess(input), input, "input: {input:?}");
+        }
+    }
+
+    /// Djot fences the same way, and the code mask comes from the document's own
+    /// grammar — so this holds for a Djot body without a second scanner.
+    #[test]
+    fn djot_fenced_code_is_untouched() {
+        let input = "```\n==no==\n||no||\n```\n";
+        assert_eq!(
+            preprocess_custom_syntax(input, ContentFormat::Djot),
+            input,
+            "a djot fence is code too"
+        );
+        let out = preprocess_custom_syntax("```\n==no==\n```\n\n==yes==\n", ContentFormat::Djot);
+        assert!(out.contains("```\n==no==\n```"), "fence intact: {out}");
+        assert!(
+            out.contains("highlight-mark"),
+            "prose still rewritten: {out}"
+        );
     }
 
     #[test]
