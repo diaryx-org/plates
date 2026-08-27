@@ -39,6 +39,24 @@ pub struct SourceDoc {
     pub markdown: String,
     /// Whether this is the workspace root/index page (renders to `index.html`).
     pub is_root: bool,
+    /// The documents that link *to* this one, spelled as their own
+    /// [`path`](Self::path)s.
+    ///
+    /// Supplied rather than derived, and not because it would be inconvenient:
+    /// finding them means reading every document in the archive, and this crate
+    /// reads nothing. The caller inverts the archive's links and hands over the
+    /// answer in this render's coordinates.
+    ///
+    /// It is also where the disclosure lives. A path here becomes a titled link
+    /// on the target's page, so a caller must pass **only sources this same
+    /// site admits** — a document the gate held back must not be named by the
+    /// page it happens to link to. A name this render does not recognize is
+    /// dropped rather than published as a dead link, which makes the filter
+    /// belt-and-braces rather than the whole guarantee; the guarantee is the
+    /// caller's.
+    ///
+    /// Empty is the honest answer for a caller that computes none.
+    pub backlinks: Vec<String>,
 }
 
 /// A fully rendered page: its output filename, HTML, and source identifier.
@@ -370,6 +388,10 @@ struct Collected {
     by_path: HashMap<PathBuf, JsonValue>,
     /// Each source's `part_of` target, for walking a trail back to the root.
     parent_of: HashMap<PathBuf, PathBuf>,
+    /// The entry records of the documents linking *to* each source, keyed the
+    /// same way. Resolved against `by_path`, so a name no page in this render
+    /// answers to is already gone.
+    backlinks: HashMap<PathBuf, Vec<JsonValue>>,
     /// Entry records in the site's order, so a breadcrumb walk and `entries`
     /// agree about what an entry is.
     order: Vec<PathBuf>,
@@ -461,6 +483,17 @@ fn collect_context(
         .filter_map(|key| by_path.get(key).cloned())
         .collect();
 
+    // After the loop, because a backlink is an *entry* and the entries do not
+    // all exist until the loop has run — a document is routinely linked to by
+    // one that comes after it.
+    let backlinks = sources
+        .iter()
+        .map(|s| {
+            let key = PathBuf::from(links::sanitize_rel_path(&s.path));
+            (key, inbound_entries(&s.backlinks, &by_path))
+        })
+        .collect();
+
     let site = serde_json::json!({
         "title": opts
             .site_title
@@ -480,7 +513,31 @@ fn collect_context(
         by_path,
         parent_of,
         order,
+        backlinks,
     }
+}
+
+/// The entry records for one page's inbound links.
+///
+/// Sorted by path and deduplicated here rather than trusted from the caller,
+/// because a rendered page is a build artifact and two builds of one archive
+/// have to be the same bytes. The caller counts *link sites* — a document
+/// linking here from both its frontmatter and its prose is two backlinks — and
+/// a reader wants the document once.
+///
+/// A name `by_path` does not answer to is dropped, on the rule
+/// `resolve_link` already follows for a `contents:` entry: a link this render
+/// cannot address is a 404 waiting to be published.
+fn inbound_entries(sources: &[String], by_path: &HashMap<PathBuf, JsonValue>) -> Vec<JsonValue> {
+    let mut keys: Vec<PathBuf> = sources
+        .iter()
+        .map(|path| PathBuf::from(links::sanitize_rel_path(path)))
+        .collect();
+    keys.sort();
+    keys.dedup();
+    keys.iter()
+        .filter_map(|key| by_path.get(key).cloned())
+        .collect()
 }
 
 /// One entry, as a template names it.
@@ -596,6 +653,13 @@ fn page_context_values(
     values.insert(
         "breadcrumbs".into(),
         JsonValue::Array(breadcrumbs_of(&key, collected)),
+    );
+    // Always present, even empty: `:::each{of=backlinks}` over a page nobody
+    // links to should produce nothing, not an error about a name the context
+    // does not hold.
+    values.insert(
+        "backlinks".into(),
+        JsonValue::Array(collected.backlinks.get(&key).cloned().unwrap_or_default()),
     );
     values
 }
@@ -1375,6 +1439,15 @@ mod tests {
             path: path.to_string(),
             markdown: markdown.to_string(),
             is_root,
+            backlinks: Vec::new(),
+        }
+    }
+
+    /// [`src`], told who links to it — the shape the collector hands over.
+    fn linked(path: &str, markdown: &str, backlinks: &[&str]) -> SourceDoc {
+        SourceDoc {
+            backlinks: backlinks.iter().map(|s| (*s).to_string()).collect(),
+            ..src(path, markdown, false)
         }
     }
 
@@ -2675,6 +2748,84 @@ mod tests {
 
         assert!(home.html.contains("Public"), "got {}", home.html);
         assert!(!home.html.contains("Private"), "got {}", home.html);
+    }
+
+    /// A backlink is an entry like any other, so a template addresses it with
+    /// the same fields and links it with the same href.
+    #[test]
+    fn backlinks_are_entries_the_linked_page_can_list() {
+        let body = "---\ntitle: Beta\n---\n:::each{of=backlinks as=b}\n- [:val[b.title]]({{b.href}})\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("a.md", "---\ntitle: Alpha\n---\nSee [Beta](b.md).\n", false),
+            linked("b.md", body, &["a.md"]),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let beta = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "b.html")
+            .unwrap();
+
+        assert!(beta.html.contains("Alpha"), "got {}", beta.html);
+        assert!(beta.html.contains(r#"href="a.html""#), "got {}", beta.html);
+    }
+
+    /// One document, however many times it links here. The collector counts
+    /// link *sites* — a `related:` and a sentence of prose are two — and the
+    /// ordering is by path so two builds of one archive agree.
+    #[test]
+    fn backlinks_name_each_linking_document_once_and_in_path_order() {
+        let body = "---\ntitle: Beta\n---\n:::each{of=backlinks as=b}\n:val[b.path];\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("z.md", "---\ntitle: Zed\n---\nZ.\n", false),
+            src("a.md", "---\ntitle: Alpha\n---\nA.\n", false),
+            linked("b.md", body, &["z.md", "a.md", "a.md"]),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let beta = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "b.html")
+            .unwrap();
+
+        let listed: Vec<&str> = beta
+            .html
+            .split(';')
+            .filter_map(|chunk| ["a.md", "z.md"].into_iter().find(|p| chunk.contains(p)))
+            .collect();
+        assert_eq!(listed, ["a.md", "z.md"], "got {}", beta.html);
+    }
+
+    /// The disclosure this key could have been. A page nobody in this render
+    /// answers for is not named, so a caller that failed to filter its own
+    /// inbound links does not publish the name of a withheld document — and a
+    /// page with no backlinks at all lists nothing rather than failing.
+    #[test]
+    fn a_backlink_to_a_document_outside_this_render_is_not_published() {
+        let body = "---\ntitle: Beta\n---\nLinked from:\n:::each{of=backlinks as=b}\n- :val[b.path]\n:::\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            linked("b.md", body, &["private.md"]),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let beta = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "b.html")
+            .unwrap();
+
+        assert!(beta.html.contains("Linked from"), "got {}", beta.html);
+        assert!(!beta.html.contains("private"), "got {}", beta.html);
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
     }
 
     /// The `{{ }}` migration: a brace outside a link destination publishes as

@@ -21,7 +21,7 @@
 //! `plates_render`. `push_canonical_ref` is where they are reconciled, and a
 //! vault-rooted site anchors at `""`, where the whole question is a no-op.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use prov::{IdIndex, Storage, Workspace};
@@ -83,6 +83,21 @@ pub struct CollectOptions<'a> {
     /// is where the authoritative one lives under `id_storage: both`/
     /// `frontmatter`, or when an imported vault's registry is stale.
     pub id_by_path: &'a HashMap<PathBuf, String>,
+    /// The archive's links, inverted: every document to the documents that link
+    /// to it, workspace-relative. [`prov::Workspace::backlinks`] is where one
+    /// comes from.
+    ///
+    /// The caller's for the reason [`id_by_path`](Self::id_by_path) is: taking
+    /// it means a census of every document in the archive, and a run that
+    /// publishes four sites should pay for that once rather than four times.
+    /// It is the *vault's* map, deliberately — narrowing it to what a site may
+    /// name is this module's job, because only the plan knows which set that
+    /// is, and doing it here is what keeps a withheld document out of
+    /// [`SourceFile::backlinks`].
+    ///
+    /// An empty map is a legitimate answer, and means no page learns who links
+    /// to it.
+    pub backlinks: &'a BTreeMap<PathBuf, Vec<prov::Backlink>>,
     /// What each attachment hashed to last time. See [`crate::digest`].
     pub digests: &'a dyn DigestMemo,
     /// How an attachment's bytes are digested when the memo does not recognize
@@ -371,18 +386,8 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             format!("---\n{yaml}---\n{filtered_body}")
         };
 
-        // The collected source keeps its own grammar's extension, normalized
-        // to the canonical spelling (`.markdown` → `.md`, `.djot` → `.dj`,
-        // `.htm` → `.html`). It is load-bearing rather than cosmetic:
-        // `plates_render` reads a body's format off its extension — so
-        // flattening every source to `.md`, as this did when markdown was the
-        // only grammar, would hand the renderer a Djot body and tell it to parse
-        // it as Markdown.
-        let source_ext = prov::ContentFormat::from_extension(path)
-            .unwrap_or(prov::ContentFormat::Markdown)
-            .extension();
         let rebased = rebase(path, anchor);
-        let source_rel_path = sanitize_rel_path(&rebased, source_ext);
+        let source_rel_path = collected_source_path(path, anchor);
         // The same destination rule `plates_render` renders by, applied here
         // because a caller needs the address before there is a render to read it
         // off. A `serve_at:` claim is **not** rebased onto
@@ -440,6 +445,11 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             dest_path,
             id,
             is_index: is_root,
+            backlinks: site_backlinks(
+                opts.backlinks.get(path).map_or(&[][..], Vec::as_slice),
+                &page_paths,
+                anchor,
+            ),
         });
     }
 
@@ -450,6 +460,56 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         // directory; nothing collected here can supply one.
         verbatim_front_page: false,
     })
+}
+
+/// Where a document's collected *source* publishes, in site coordinates:
+/// rebased onto the anchor, sanitized, and keeping its own grammar's extension
+/// normalized to the canonical spelling (`.markdown` → `.md`, `.djot` → `.dj`,
+/// `.htm` → `.html`).
+///
+/// The extension is load-bearing rather than cosmetic: `plates_render` reads a
+/// body's format off it — so flattening every source to `.md`, as this did when
+/// markdown was the only grammar, would hand the renderer a Djot body and tell
+/// it to parse it as Markdown.
+///
+/// Named once because two things depend on giving one document one name: the
+/// source it is collected as, and every [`SourceFile::backlinks`] entry that
+/// points at it. A second spelling of this rule is a link that resolves in one
+/// place and not the other.
+fn collected_source_path(path: &Path, anchor: &Path) -> String {
+    let ext = prov::ContentFormat::from_extension(path)
+        .unwrap_or(prov::ContentFormat::Markdown)
+        .extension();
+    sanitize_rel_path(&rebase(path, anchor), ext)
+}
+
+/// The inbound links one document may publish: the archive's, narrowed to the
+/// documents this site admits, in this site's coordinates.
+///
+/// **`admitted` is the disclosure control.** The map handed in is the vault's
+/// whole inverted census, so a private note linking to a public one is in it,
+/// and a page that listed its inbound links unfiltered would name that note by
+/// path and — once the render resolves it — by title. Intersecting with the
+/// plan's own set is what stops it, and it is done here rather than downstream
+/// because this is the last layer that knows which documents the gate refused.
+///
+/// prov counts *link sites* — a document that names this one in `related:` and
+/// again in a sentence appears twice — and a reader wants the document once, so
+/// the result is deduplicated. Sorted, because a rendered page is a build
+/// artifact and two builds of one archive have to agree.
+fn site_backlinks(
+    inbound: &[prov::Backlink],
+    admitted: &HashSet<&Path>,
+    anchor: &Path,
+) -> Vec<String> {
+    let mut out: Vec<String> = inbound
+        .iter()
+        .filter(|link| admitted.contains(link.source.as_path()))
+        .map(|link| collected_source_path(&link.source, anchor))
+        .collect();
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// The destination a document's frontmatter `serve_at:` claims, or `None` when
@@ -838,5 +898,104 @@ mod tests {
             &mut out,
         );
         assert!(out.is_empty());
+    }
+
+    /// A workspace in memory, so the collector can be run against a real
+    /// [`prov::Workspace`] — a census, a graph and all — without this crate
+    /// growing a dev-dependency or touching a disk.
+    fn vault(docs: &[(&str, &str)]) -> Workspace<prov::InMemoryFs> {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in docs {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        Workspace::builder(fs).root("/vault").build()
+    }
+
+    fn collected_backlinks(
+        ws: &Workspace<prov::InMemoryFs>,
+        admitted: &[&str],
+    ) -> HashMap<String, Vec<String>> {
+        let backlinks = prov::block_on(ws.backlinks("index.md")).unwrap();
+        let docs: Vec<(PathBuf, bool)> = admitted
+            .iter()
+            .map(|p| (PathBuf::from(p), *p == "index.md"))
+            .collect();
+        let site = prov::block_on(collect_documents(
+            ws,
+            &docs,
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &backlinks,
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+            },
+        ))
+        .unwrap();
+        site.sources
+            .into_iter()
+            .map(|s| (s.source_rel_path, s.backlinks))
+            .collect()
+    }
+
+    /// Both halves of prov's census reach the collected source: a frontmatter
+    /// relation and a link written in prose are two inbound references to one
+    /// document, and the document is named once for them.
+    #[test]
+    fn a_relation_and_a_body_link_are_one_backlink() {
+        let ws = vault(&[
+            ("index.md", "---\ncontents:\n- a.md\n- b.md\n---\nHome.\n"),
+            (
+                "a.md",
+                "---\ntitle: Alpha\npart_of: index.md\nrelated:\n- b.md\n---\nAnd again in [prose](b.md).\n",
+            ),
+            ("b.md", "---\ntitle: Beta\npart_of: index.md\n---\nB.\n"),
+        ]);
+
+        let backlinks = collected_backlinks(&ws, &["index.md", "a.md", "b.md"]);
+
+        assert_eq!(
+            backlinks["b.md"],
+            ["a.md", "index.md"],
+            "the relation and the prose link name a.md once; index.md's \
+             `contents:` is an inbound reference like any other"
+        );
+    }
+
+    /// The disclosure control. prov's map is the *vault's*, so a document the
+    /// gate refused is in it and links out of it — and the page it links to
+    /// must not name it, by path or by anything the render would resolve from
+    /// one.
+    #[test]
+    fn a_linker_this_site_does_not_admit_is_not_named() {
+        let ws = vault(&[
+            (
+                "index.md",
+                "---\ncontents:\n- b.md\n- private.md\n---\nHome.\n",
+            ),
+            ("b.md", "---\ntitle: Beta\npart_of: index.md\n---\nB.\n"),
+            (
+                "private.md",
+                "---\ntitle: Secret\npart_of: index.md\n---\nSee [Beta](b.md).\n",
+            ),
+        ]);
+
+        // The census sees private.md — it is reachable — which is the point:
+        // the filter is doing work rather than agreeing with an empty map.
+        let census = prov::block_on(ws.backlinks("index.md")).unwrap();
+        assert!(
+            census[Path::new("b.md")]
+                .iter()
+                .any(|l| l.source == Path::new("private.md")),
+            "{census:?}"
+        );
+
+        let backlinks = collected_backlinks(&ws, &["index.md", "b.md"]);
+
+        assert_eq!(backlinks["b.md"], ["index.md"], "{backlinks:?}");
     }
 }

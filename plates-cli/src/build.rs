@@ -130,15 +130,22 @@ pub fn build_sites(
     // parsed once rather than once per site.
     let _scope = ws.read_scope();
     let id_by_path = session.id_by_path(&ws);
-    // Every link in the archive, resolved against the archive — one walk for the
-    // whole run, since the answer does not depend on which site is asking. It is
-    // what lets a build tell a link to an unpublished page (the gate working,
-    // and nothing to fix) from a link to nothing at all.
+    // Every link in the archive, resolved against the archive — walked once for
+    // the whole run, since the answer does not depend on which site is asking.
+    // The census is what lets a build tell a link to an unpublished page (the
+    // gate working, and nothing to fix) from a link to nothing at all; its
+    // inversion is each page's backlinks, which collection narrows to a site's
+    // own admitted set. The second call re-iterates the read scope's memo, not
+    // the disk.
     //
-    // An archive this cannot be read from is one no site can be planned from
+    // An archive whose census cannot be read is one no site can be planned from
     // either, so the planner below says so with the whole build's exit code; a
-    // report is never the thing that stops one.
+    // report is never the thing that stops one. Backlinks are different: they
+    // land in published pages, and shipping them silently empty is worse than
+    // stopping.
     let census = block_on(ws.census(&session.root_doc)).unwrap_or_default();
+    let backlinks = block_on(ws.backlinks(&session.root_doc))
+        .map_err(|e| format!("cannot read this archive's links: {e}"))?;
 
     let mut built = Vec::new();
     let mut known = Vec::new();
@@ -165,6 +172,7 @@ pub fn build_sites(
                 strip_keys: STRIP_KEYS,
                 stamp: &NoStamp,
                 id_by_path: &id_by_path,
+                backlinks: &backlinks,
                 digests: &UnreadAttachments,
                 digest: no_digest,
             },
@@ -252,6 +260,9 @@ fn assemble(
             path: source.source_rel_path.clone(),
             markdown: source.source_markdown.clone(),
             is_root: source.is_index,
+            // Already narrowed to this site by collection, which is the layer
+            // that knows what the gate refused.
+            backlinks: source.backlinks.clone(),
         })
         .collect();
 

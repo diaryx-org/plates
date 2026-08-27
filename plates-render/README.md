@@ -149,6 +149,7 @@ What a template can name:
 | `children` | the page's `contents:` links |
 | `parent` | the page's `part_of` link, or null |
 | `breadcrumbs` | the trail from the root down to this page, itself last |
+| `backlinks` | the entries that link *to* this page, by path, each named once |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
 `description`, `group_keys`, `is_root`. The pre-computed date parts are there
@@ -158,6 +159,13 @@ into a template *engine*, and a field that turns out to be wanted is one line.
 Every collection is assembled from the sources the render was handed, which are
 already the gate-admitted set — so **a template cannot name a withheld
 document**, because the data holding it was never built.
+
+`backlinks` is the exception that proves it, and the one field a caller has to
+be careful with. This crate reads nothing, so it cannot find what links to a
+page; the names arrive on `SourceDoc::backlinks` from a caller that inverted the
+archive's links, and **that caller must narrow them to the same site**. A name
+no source in this render answers to is dropped rather than published as a dead
+link, which is a second line of defence and not the first one.
 
 ### Why `{{ }}` survives in link destinations
 

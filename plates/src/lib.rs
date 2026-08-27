@@ -32,6 +32,10 @@
 //!   that an index need not be among the entries but must be admitted by the
 //!   gate, and [`IndexDirectory`] — a manifest node fronting a site with a whole
 //!   covered directory, rebased onto the site root.
+//! - **Backlinks.** prov's inverted census is about the *vault*, so a document
+//!   the gate refused links out of it. Narrowing it to what a site may name is
+//!   here, because this is the last layer that knows which documents were
+//!   refused. See [`SourceFile::backlinks`].
 //! - **The theme.** Reading a declaration's shell and stylesheet into *text*,
 //!   because the renderer cannot open a file.
 //! - **The link report.** Which of a site's links lead nowhere, told apart from

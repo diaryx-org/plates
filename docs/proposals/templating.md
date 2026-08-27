@@ -240,6 +240,7 @@ turns out to be wanted is one line of context; a filter grammar is permanent.
 | `children` | the current page's `contents:` links |
 | `parent` | the current page's `part_of` link, or null |
 | `breadcrumbs` | root-to-here trail, this page last |
+| `backlinks` | the entries that link *to* this page, by path |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
 `description`, `group_keys`, `is_root`. Frontmatter keys are also addressable
@@ -257,9 +258,26 @@ because the data was never assembled — a property of *where* the context is
 built rather than of a check, and tested as such
 (`a_template_cannot_reach_a_withheld_document`).
 
-`backlinks` joins this list when prov's `graph().backlinks_to()` is wired up;
-it is named here so the context has a place for it rather than growing an
-inconsistent one later.
+`backlinks` is the one name in that table the render layer cannot answer for
+itself. Finding what links to a page means reading every document in the
+archive, and `plates-render` reads nothing — so `plates` inverts prov's census
+once per build, hands each collected source the list on `SourceFile::backlinks`,
+and the context assembler resolves those names against the entries it already
+built.
+
+Which puts the gate somewhere new, and worth saying out loud. `entries` is safe
+because it *is* the render set; `backlinks` arrives from outside it, and prov's
+map is the vault's — a document the gate refused links out of it like any other.
+So collection intersects the map with the set the plan admits before a name
+crosses the boundary (`a_linker_this_site_does_not_admit_is_not_named`), and the
+assembler drops a name no entry answers to
+(`a_backlink_to_a_document_outside_this_render_is_not_published`). The first is
+the guarantee; the second is what stops a caller's mistake becoming a dead link.
+
+prov counts link *sites*, so a document naming this one in a relation and again
+in a sentence is two inbound references. A reader wants the document once, and
+the list is deduplicated and sorted by path — a rendered page is a build
+artifact, and two builds of one archive have to be the same bytes.
 
 ## The shell is unchanged
 

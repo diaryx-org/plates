@@ -135,6 +135,7 @@ let collected = collect_site(
         strip_keys: &["publish"],
         stamp: &NoStamp,
         id_by_path: &HashMap::new(),
+        backlinks: &workspace.backlinks(root_doc).await?,
         digests: &NoDigests,
         digest: sha256_hex,
     },
@@ -169,6 +170,17 @@ from the same one, and none of them opens the workspace again.
 `plates::plates_render` — so a downstream caller names one `prov` and one
 `plates_render` rather than resolving two versions of the `Workspace` it is
 about to hand back.
+
+### Who links here
+
+`CollectOptions::backlinks` is prov's inverted census — the whole vault's, taken
+once per run because a document reached by two sites should be censused once.
+Narrowing it is this crate's, and it is a disclosure control rather than
+tidiness: a document the gate refused links out of that map like any other, and
+`SourceFile::backlinks` is published as a titled link on the page it points at.
+So collection intersects the map with the set the plan admits, spells what
+survives in the same coordinates as `SourceFile::source_rel_path`, and names
+each linking document once however many times it links.
 
 ### Not reading what you already know
 

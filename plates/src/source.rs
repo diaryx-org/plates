@@ -29,6 +29,21 @@ pub struct SourceFile {
     pub id: Option<String>,
     /// Whether this is the site's front page.
     pub is_index: bool,
+    /// The [`source_rel_path`](Self::source_rel_path)s of the documents that
+    /// link to this one, sorted and each named once.
+    ///
+    /// **Narrowed to this site**, which is the field's whole discipline: the
+    /// archive's inverted link map is about the vault, and a document the gate
+    /// held back is in it. Publishing one of those names on the page it links
+    /// to would disclose the document by its path and its title, so collection
+    /// intersects the map with the set the plan admits before writing anything
+    /// here. See [`CollectOptions::backlinks`](crate::CollectOptions::backlinks).
+    ///
+    /// Site coordinates, not the vault's: rebased onto the anchor and sanitized
+    /// exactly as [`source_rel_path`](Self::source_rel_path) is, so the render
+    /// layer can match a name here against the source that carries it without
+    /// a second convention to keep in step.
+    pub backlinks: Vec<String>,
 }
 
 /// A file a site ships verbatim: an image a body references, an `attachments:`
