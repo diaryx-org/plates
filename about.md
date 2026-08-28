@@ -80,10 +80,10 @@ one place along it.
 | --- | --- | --- | --- |
 | `contents` | documents contained by this one | many | `part_of` |
 | `part_of` | the document that contains this one | one | `contents` |
+| `links` | arbitrary cross-references to other documents | many | `link_of` |
+| `link_of` | documents that cross-reference this one | many | `links` |
 | `front_page` | the page that greets a reader of this audience | one | `fronts` |
 | `fronts` | audiences this document greets | many | `front_page` |
-| `link_of` | documents that cross-reference this one | many | `links` |
-| `links` | arbitrary cross-references to other documents | many | `link_of` |
 
 Both halves of a pair are kept in step: if A lists B under one, B names A
 under its opposite. If you edit one half by hand and not the other,
@@ -91,7 +91,7 @@ nothing is lost — the pair is simply inconsistent until someone repairs
 it.
 
 `part_of` holds exactly one target, which is what makes the spine a tree
-with a single top. `front_page`, `fronts`, `link_of` and `links` are laid
+with a single top. `links`, `link_of`, `front_page` and `fronts` are laid
 over that tree and may point anywhere; follow them for meaning, never to
 discover what is here.
 
@@ -154,9 +154,9 @@ already depend on them:
 - **`content_hash`** — a checksum. Changing it by hand asserts something
   about the bytes that may not be true.
 
-The relation fields — `contents`, `part_of`, `front_page`, `fronts`,
-`link_of` and `links` — are meant to be edited by hand. That is the whole
-point of keeping them in the files.
+The relation fields — `contents`, `part_of`, `links`, `link_of`,
+`front_page` and `fronts` — are meant to be edited by hand. That is the
+whole point of keeping them in the files.
 
 ---
 

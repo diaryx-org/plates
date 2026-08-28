@@ -17,24 +17,7 @@ recycle_bin: true
 history: off
 about: structure
 workspace_id: plates
-spanning: contents
 relations:
-  contents:
-    means: documents contained by this one
-    cardinality: many
-    inverse: part_of
-  part_of:
-    means: the document that contains this one
-    cardinality: one
-    inverse: contents
-  links:
-    means: arbitrary cross-references to other documents
-    cardinality: many
-    inverse: link_of
-  link_of:
-    means: documents that cross-reference this one
-    cardinality: many
-    inverse: links
   front_page:
     means: the page that greets a reader of this audience
     cardinality: one

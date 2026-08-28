@@ -490,6 +490,8 @@ dependencies = [
 [[package]]
 name = "prov"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cae6743ee3dc315e905252c6be9e37993631a105c4b0979a3a2a780dabd05b80"
 dependencies = [
  "fig",
  "fig-schema",
@@ -507,6 +509,8 @@ dependencies = [
 [[package]]
 name = "prov-config"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b868c1086f8aa82a86c27fff942223ed2da2c8919730280f1d06a26bd494087e"
 dependencies = [
  "fig",
  "fig-schema",
@@ -520,6 +524,8 @@ dependencies = [
 [[package]]
 name = "prov-exports"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31d289043e7eb246f57f73054d3a5e87069ff16f62306f9f408f546ef1701181"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -528,6 +534,8 @@ dependencies = [
 [[package]]
 name = "prov-graph"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3f00e8c977f4c569719a1f7097b569daed8c3a0f6f2264b0c62739d7f7b6802"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -541,6 +549,8 @@ dependencies = [
 [[package]]
 name = "prov-store"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08b82c87a012ac65ca6bdc0576c3b85c87249f9118f2cfce0642be4b89919be8"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -550,6 +560,8 @@ dependencies = [
 [[package]]
 name = "prov-views"
 version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e5be4eba3743e2ceed86b79b32530f8ed6aaac63ce439590310dd41e33f0da92"
 dependencies = [
  "prov-graph",
 ]

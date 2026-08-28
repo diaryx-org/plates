@@ -272,16 +272,15 @@ how prov's own config nests under `prov:` in a document, and costs a line.
 
 `front_page:` stays at top level and is exempt on principle rather than by
 exception: it is not payload but a **relation**, and a declared relation is its
-own namespace registration. In prov 0.10 declaring one is all-or-nothing — a
-`relations:` block replaces the `contents`/`part_of` preset rather than
-extending it — so the edge costs restating the whole vocabulary, which is what
-this repository's own `prov.yaml` now does: `front_page`/`fronts` declared
-beside the four defaults, both halves authored, and a broken front page is a
-`prov check` finding here exactly as §4 promised. An archive that does not want
-to spell out its vocabulary carries `front_page` as an ordinary field and gets
-plates' resolution without prov's lint — an additive way to extend the preset
-would make the edge cost one stanza instead of seven, and is worth lifting in
-prov.
+own namespace registration. In prov 0.10 a `relations:` block **overlays** the
+`contents`/`part_of` preset rather than replacing it, so the edge costs exactly
+one pair — which is all this repository's own `prov.yaml` declares:
+`front_page`/`fronts`, both halves authored, and a broken front page is a `prov
+check` finding here exactly as §4 promised. (That overlay semantics was itself
+lifted into prov by this work; an early draft of the block silently took the
+spanning tree with it, which is the failure the preset-as-base rule now closes.)
+An archive that declares nothing carries `front_page` as an ordinary field and
+still gets plates' resolution — just not prov's lint.
 
 The keys plates reads inside `site:` are `plates::TERM_SITE_KEYS`, and one that
 is not costs the site a setting and a warning.
