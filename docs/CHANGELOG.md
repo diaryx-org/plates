@@ -41,6 +41,22 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.3.0 — 2026-08-27
+
+### Added
+
+- **sites** — a site is an export ([`7a71460`](https://github.com/diaryx-org/plates/commit/7a71460e3235fbad0492701608489c47b5a138ec))
+
+### Behavioural changes
+
+- an export whose gate names a field other than
+  `audience` now becomes a site (it was previously skipped with a
+  warning; its set is still exactly what its gate admits). A `sites:`
+  block still builds but warns it is deprecated, naming its replacement.
+  A page declaring `lang:` in frontmatter now renders with that language
+  tag instead of the site's.
+
+
 ## v0.2.0 — 2026-08-27
 
 ### Breaking
