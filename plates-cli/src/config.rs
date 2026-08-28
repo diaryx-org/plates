@@ -1,20 +1,36 @@
-//! The `sites:` vocabulary — how *this* application spells a site declaration.
+//! Which sites an archive declares — read from prov's own `exports:`, plus the
+//! deprecated `sites:` block that used to be the spelling.
 //!
-//! [`plates::SiteSpec`] arrives at the library already built, on purpose: which
-//! block an archive declares its sites in is a dialect, not a site's shape, and
-//! two applications over the same archive format should be able to disagree
-//! about the spelling and still produce the same website. So the spelling lives
-//! here, in the binary, and is the one thing in this workspace that a different
-//! host would replace wholesale.
-//!
-//! # Where it is read from
-//!
-//! The same two surfaces prov reads its own config from, in the same order —
-//! the root document's frontmatter first, then the config document the root
-//! links to, which wins:
+//! **A site is an export.** prov's `exports.<name>` is already a named, gated
+//! set of documents that may leave the archive, which is the whole of what a
+//! site needs to exist; what it lacks is only the render-facing half — a front
+//! page, a shell, a stylesheet — and that half is written on the **term node**
+//! of the gate field's vocabulary, where [`plates::read_term_config`] reads it.
+//! Neither surface is plates' invention, so an archive says how its sites are
+//! spelled and this binary declares no config vocabulary of its own.
 //!
 //! ```yaml
-//! # In the config document, beside prov's own `views:` and `exports:`.
+//! # The config document, or the root's own `prov:` block.
+//! exports:
+//!   blog:
+//!     label: Field notes
+//!     gate: { field: audience, value: public }
+//!     view: daily
+//! fields:
+//!   audience:
+//!     values: closed
+//!     vocabulary: '[Audiences](/vocab/audiences.md)'
+//!     reify: true
+//! ```
+//!
+//! A gate on some field other than [`plates::AUDIENCE_FIELD`] is not a special
+//! case here and never was one: reading exports directly, `gate.field:
+//! clearance` *is* the gate, and the site carries it in
+//! [`plates::SiteSpec::gate_field`].
+//!
+//! # The deprecated dialect
+//!
+//! ```yaml
 //! sites:
 //!   blog:
 //!     label: Field notes
@@ -22,47 +38,31 @@
 //!     view: daily
 //!     index: '[Home](id:7f3a91c)'
 //!     shell: .config/sites/blog/shell.html
-//!     stylesheet: .config/sites/blog/style.css
-//!     lang: en
 //! ```
 //!
-//! `audience` is the only required key: a site that does not say who it is for
-//! is not a site. Everything else has a defensible default, and the defaults are
-//! [`plates::SiteSpec`]'s.
-//!
-//! `gate_field` is the exception worth naming, because it decides what
-//! `audience` is *compared against*: an archive whose disclosure control is
-//! spelled `clearance` writes `gate_field: clearance` and its sites gate on
-//! that. Absent, it is [`plates::AUDIENCE_FIELD`], which is what every archive
-//! that never had to think about it wants.
-//!
-//! # The fallback, and why it is not a guess
-//!
-//! An archive that declares no `sites:` block gets one site per prov `exports:`
-//! entry whose gate is on the [`plates::AUDIENCE_FIELD`] — same name, same
-//! label, same view, same gate value. That is not plates inventing a site: an
-//! export already *is* a named, closed set of documents that may leave the
-//! archive, which is the whole of what a site needs to exist. What it lacks is
-//! only the render-facing half — a front page, a shell, a stylesheet — and every
-//! one of those has a default.
-//!
-//! An export gated on some *other* field is skipped rather than published under
-//! a rule nothing showed anyone, and named in the warnings so the omission is
-//! visible. Publishing it takes a `sites:` entry that says `gate_field:` out
-//! loud — which is the point: the derivation stays the case nobody had to
-//! think about.
+//! This was the spelling when the argument for it was that a site's declaration
+//! is a dialect a different host could replace wholesale. It reads from the same
+//! two surfaces prov reads its own config from, in the same order — the root
+//! document's frontmatter first, then the config document the root links to,
+//! which wins — and when it is present it still wins outright over `exports:`,
+//! block for block, so an archive that has not migrated builds exactly what it
+//! built before. What it also does now is say so: every site it declares is
+//! named alongside the export and term node that replace it. plates 0.3 removes
+//! it, along with [`SITES_KEY`], [`SITE_KEYS`] and [`Source`] itself.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use plates::prov::meta::{Mapping, Value};
 use plates::prov::{Document, ExportSpec};
+use plates::term::{text, text_list};
 use plates::{AUDIENCE_FIELD, SiteSpec};
 
-/// The top-level key a site declaration lives under.
+/// The top-level key the **deprecated** site declaration lives under.
 ///
 /// Deliberately far enough from every prov config axis that prov's own
 /// near-miss lint reads it as a key belonging to someone else rather than as a
-/// typo of one of its own.
+/// typo of one of its own. Still stripped from every collected document
+/// ([`crate::build`]) for as long as an archive may carry one.
 pub const SITES_KEY: &str = "sites";
 
 /// The keys valid inside one `sites.<name>` entry.
@@ -102,9 +102,10 @@ pub struct Sites {
 /// Which surface a site list was read off.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
-    /// A `sites:` block, declared by hand.
+    /// A `sites:` block — the deprecated dialect, still authoritative where one
+    /// exists.
     Declared,
-    /// Derived from prov's own `exports:`, because no `sites:` block exists.
+    /// prov's own `exports:` — the ordinary path.
     Exports,
     /// Neither — the archive declares nothing to publish.
     #[default]
@@ -115,9 +116,13 @@ pub enum Source {
 ///
 /// `root_dir` is the workspace root, `root_doc` the root document relative to
 /// it, and `config_doc` the config document the root links to (relative to the
-/// root) when there is one. The precedence — root frontmatter first, config
-/// document over it — is prov's own, restated here so a reader who knows where
-/// `views:` goes already knows where `sites:` goes.
+/// root) when there is one. `exports` is prov's own, already layered by prov's
+/// precedence.
+///
+/// A `sites:` block on either surface wins outright over `exports:` and is
+/// deprecated where it wins; the precedence *between* the two surfaces — root
+/// frontmatter first, config document over it — is prov's own, restated here so
+/// a reader who knows where `views:` goes already knows where `sites:` went.
 pub fn read_sites(
     root_dir: &Path,
     root_doc: &Path,
@@ -125,7 +130,7 @@ pub fn read_sites(
     exports: &[ExportSpec],
 ) -> Sites {
     let mut warnings = Vec::new();
-    let mut block: Option<Mapping> = None;
+    let mut block: Option<(PathBuf, Mapping)> = None;
 
     for rel in [Some(root_doc), config_doc].into_iter().flatten() {
         let Some(meta) = read_meta(root_dir, rel) else {
@@ -139,7 +144,7 @@ pub fn read_sites(
             // half-overridden site declaration is a site nobody wrote, and
             // "the config document decides" is a rule someone can hold in
             // their head.
-            Some(map) => block = Some(map.clone()),
+            Some(map) => block = Some((rel.to_path_buf(), map.clone())),
             None => warnings.push(format!(
                 "{}: `{SITES_KEY}` is not a mapping of site names, so it was ignored",
                 rel.display()
@@ -148,8 +153,11 @@ pub fn read_sites(
     }
 
     match block {
-        Some(map) => {
+        Some((rel, map)) => {
             let specs = specs_from(&map, &mut warnings);
+            for spec in &specs {
+                warnings.push(deprecation(&rel, spec));
+            }
             Sites {
                 specs,
                 source: Source::Declared,
@@ -157,7 +165,7 @@ pub fn read_sites(
             }
         }
         None => {
-            let specs = specs_from_exports(exports, &mut warnings);
+            let specs = specs_from_exports(exports);
             let source = if specs.is_empty() {
                 Source::None
             } else {
@@ -170,6 +178,27 @@ pub fn read_sites(
             }
         }
     }
+}
+
+/// What to say about one site a `sites:` block declares: that it still builds,
+/// what replaces it, and when it stops.
+///
+/// Per site rather than per block, because the replacement is per site — a
+/// different export entry and a different term node each time — and a
+/// deprecation notice nobody can act on without first working out the mapping
+/// themselves is a notice that gets ignored until the version that removes the
+/// thing.
+fn deprecation(rel: &Path, spec: &SiteSpec) -> String {
+    format!(
+        "{}: `{SITES_KEY}` is deprecated and stops working in plates 0.3 — site `{name}` is \
+         `exports.{name}` with `gate: {{field: {field}, value: {audience}}}`, and its front \
+         page, shell, stylesheet, lang and syntaxes belong on the `{audience}` term node of \
+         the `{field}` field's vocabulary (`front_page:` and a `site:` mapping)",
+        rel.display(),
+        name = spec.name,
+        field = spec.gate_field(),
+        audience = spec.audience,
+    )
 }
 
 /// One document's metadata, or `None` if it could not be read or parsed.
@@ -224,69 +253,32 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
     specs
 }
 
-/// A site per `exports:` entry, for an archive that declares no `sites:` block.
-fn specs_from_exports(exports: &[ExportSpec], warnings: &mut Vec<String>) -> Vec<SiteSpec> {
-    let mut specs = Vec::new();
-    for export in exports {
-        if export.gate.field != AUDIENCE_FIELD {
-            warnings.push(format!(
-                "export `{}` gates on `{}` rather than `{AUDIENCE_FIELD}`, so no site was \
-                 derived from it — declare one under `{SITES_KEY}` with `gate_field: {}` to \
-                 publish it",
-                export.name, export.gate.field, export.gate.field
-            ));
-            continue;
-        }
-        specs.push(SiteSpec {
+/// A site per `exports:` entry — every entry, whatever it gates on.
+///
+/// The render-facing half is left empty here on purpose: it is written on the
+/// gate value's term node, and reading one needs a workspace with an id index,
+/// which this pass does not have and the build does ([`plates::read_term_config`],
+/// folded in by [`crate::build::build_sites`]).
+fn specs_from_exports(exports: &[ExportSpec]) -> Vec<SiteSpec> {
+    exports
+        .iter()
+        .map(|export| SiteSpec {
             name: export.name.clone(),
             label: export.label.clone(),
             audience: export.gate.value.clone(),
-            gate_field: None,
+            // `None` for the default field rather than its name spelled out, so
+            // that a spec says what the archive said: `gate_field()` supplies
+            // `audience` wherever the question is asked, and a spec carrying the
+            // string would be indistinguishable from one whose archive named it.
+            gate_field: (export.gate.field != AUDIENCE_FIELD).then(|| export.gate.field.clone()),
             view: export.view.clone(),
             index: None,
             shell: None,
             stylesheet: None,
             lang: None,
             syntaxes: Vec::new(),
-        });
-    }
-    specs
-}
-
-/// A non-empty string setting, trimmed. An empty one is treated as absent,
-/// because `shell:` with nothing after it is how a declaration says "not this
-/// one" while leaving the key in place to remember it existed.
-fn text(entry: &Mapping, key: &str) -> Option<String> {
-    entry
-        .get(key)
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|s| !s.is_empty())
-        .map(str::to_string)
-}
-
-/// A list-of-paths setting: a sequence, or a bare scalar for the one-item case.
-///
-/// Both spellings because `syntaxes: .config/sites/blog/wat.sublime-syntax` is
-/// what someone with one grammar writes, and making them punctuate it as a
-/// list to be understood is a paper cut with no purpose. Entries that are
-/// empty, blank or not strings are dropped on the same reasoning as [`text`]:
-/// a key left in place with nothing under it is a declaration remembering
-/// something used to be there.
-fn text_list(entry: &Mapping, key: &str) -> Vec<String> {
-    let Some(value) = entry.get(key) else {
-        return Vec::new();
-    };
-    match value.as_sequence() {
-        Some(items) => items
-            .iter()
-            .filter_map(Value::as_str)
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(str::to_string)
-            .collect(),
-        None => text(entry, key).into_iter().collect(),
-    }
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -360,25 +352,6 @@ mod tests {
         );
     }
 
-    /// One grammar needs no list punctuation around it.
-    #[test]
-    fn a_lone_syntax_may_be_written_as_a_scalar() {
-        let entry = mapping(&[("syntaxes", s(" a.sublime-syntax "))]);
-        assert_eq!(text_list(&entry, "syntaxes"), vec!["a.sublime-syntax"]);
-    }
-
-    /// The same rule `text` applies, applied per entry: a key left in place
-    /// with nothing under it declares nothing.
-    #[test]
-    fn blank_syntax_entries_are_dropped() {
-        let entry = mapping(&[(
-            "syntaxes",
-            Value::Sequence(vec![s("  "), s("real.sublime-syntax"), Value::Null]),
-        )]);
-        assert_eq!(text_list(&entry, "syntaxes"), vec!["real.sublime-syntax"]);
-        assert!(text_list(&mapping(&[]), "syntaxes").is_empty());
-    }
-
     /// A gate is not a setting with a default. A site missing one is dropped
     /// and named, never published to whoever the first audience happens to be.
     #[test]
@@ -424,33 +397,50 @@ mod tests {
         );
     }
 
-    /// An export is already a named, gated set that may leave the archive.
-    /// Deriving a site from one adds no disclosure — only a shell it does not
-    /// have.
+    /// An export is already a named, gated set that may leave the archive, so
+    /// every export is a site — including one gated on another field. That is
+    /// not a special case being tolerated: read from `exports:`, `gate.field:
+    /// clearance` *is* the gate, and it travels with the spec.
     #[test]
-    fn exports_become_sites_when_nothing_declares_one() {
-        let mut warnings = Vec::new();
-        let specs = specs_from_exports(
-            &[
-                export("blog", AUDIENCE_FIELD, "public"),
-                export("audit", "clearance", "internal"),
-            ],
-            &mut warnings,
-        );
+    fn every_export_becomes_a_site_carrying_its_own_gate() {
+        let specs = specs_from_exports(&[
+            export("blog", AUDIENCE_FIELD, "public"),
+            export("audit", "clearance", "internal"),
+        ]);
 
-        assert_eq!(specs.len(), 1);
+        assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].audience, "public");
-        assert!(
-            warnings.iter().any(|w| w.contains("audit")),
-            "an export gated on another field is skipped and said out loud: {warnings:?}"
+        assert_eq!(
+            specs[0].gate_field, None,
+            "the default field is left unsaid, so the spec says what the archive said"
         );
+        assert_eq!(specs[1].audience, "internal");
+        assert_eq!(specs[1].gate_field.as_deref(), Some("clearance"));
+        assert_eq!(specs[1].gate_field(), "clearance");
     }
 
-    /// `shell:` with nothing after it is a declaration remembering that the key
-    /// exists, not a request for a template named "".
+    /// A deprecation nobody can act on is one that gets ignored until the
+    /// release that removes the thing, so the notice names both halves of the
+    /// replacement and the version.
     #[test]
-    fn an_empty_setting_reads_as_absent() {
-        let entry = mapping(&[("shell", s("   "))]);
-        assert_eq!(text(&entry, "shell"), None);
+    fn a_declared_site_is_told_what_replaces_it() {
+        let mut warnings = Vec::new();
+        let block = mapping(&[(
+            "blog",
+            Value::Mapping(mapping(&[
+                ("audience", s("public")),
+                ("gate_field", s("clearance")),
+            ])),
+        )]);
+
+        let specs = specs_from(&block, &mut warnings);
+        let notice = deprecation(Path::new("prov.yaml"), &specs[0]);
+
+        assert!(notice.contains("prov.yaml"), "{notice}");
+        assert!(notice.contains("exports.blog"), "{notice}");
+        assert!(notice.contains("field: clearance"), "{notice}");
+        assert!(notice.contains("value: public"), "{notice}");
+        assert!(notice.contains("term node"), "{notice}");
+        assert!(notice.contains("0.3"), "{notice}");
     }
 }

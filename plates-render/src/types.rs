@@ -182,6 +182,17 @@ pub struct PublishedPage {
     /// that does not name one — and every `bare`/`verbatim` page, which take no
     /// shell at all and so are never recorded as wanting one.
     pub shell: Option<String>,
+    /// The language *this page* is written in (from frontmatter `lang`), as a
+    /// BCP 47 tag. `None` takes the site's
+    /// ([`SiteOptions::lang`](crate::site::SiteOptions::lang)), which is the
+    /// answer for every page in an archive that is written in one language.
+    ///
+    /// An archive is not obliged to be. A letter quoted in full, a page of
+    /// translations, an entry someone wrote in their first language: each is a
+    /// document whose `<html lang="…">` is a fact about the document, and a
+    /// site-wide tag makes it a lie that screen readers and search engines both
+    /// act on.
+    pub lang: Option<String>,
     /// Override title shown in navigation (from frontmatter `nav_title`)
     pub nav_title: Option<String>,
     /// Sort order among siblings in navigation (from frontmatter `nav_order`)

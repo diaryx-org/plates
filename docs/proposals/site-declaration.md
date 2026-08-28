@@ -1,7 +1,7 @@
 ---
 title: 'Proposal: a site is an export'
 part_of: '[plates](/README.md)'
-status: proposed
+status: implemented
 author: adammharris
 created: 2026-08-27
 audience: public
@@ -253,3 +253,63 @@ from the site's entries exactly as it is today when `index:` is absent.
 - **`label`.** An export has one and so does a term node. The export's wins, on
   the grounds that the site's name is the site's, but this is worth a second
   look — the term is where a reader-facing name would naturally be written.
+
+## Amendments
+
+What shipped, and where it differs from the design above.
+
+### The render keys are namespaced under `site:`
+
+A term node carries them as one mapping — `site: {shell, stylesheet, lang,
+syntaxes}` — rather than as the bare top-level keys the example in §3 writes.
+
+Tier-3 payload is unnamespaced by nature: a term node's frontmatter is the
+author's, and prov carries every key on it without claiming any. So a bare
+`shell:` is plates' by convention only. It collides with a field the archive
+already had, and with the second consumer that wants one — and the collision is
+silent, because neither side is wrong. One obviously-someone's-block key mirrors
+how prov's own config nests under `prov:` in a document, and costs a line.
+
+`front_page:` stays at top level and is exempt on principle rather than by
+exception: it is not payload but a **relation**, and a declared relation is its
+own namespace registration. In prov 0.10 declaring one is all-or-nothing — a
+`relations:` block replaces the `contents`/`part_of` preset rather than
+extending it — so the edge costs restating the whole vocabulary, which is what
+this repository's own `prov.yaml` now does: `front_page`/`fronts` declared
+beside the four defaults, both halves authored, and a broken front page is a
+`prov check` finding here exactly as §4 promised. An archive that does not want
+to spell out its vocabulary carries `front_page` as an ordinary field and gets
+plates' resolution without prov's lint — an additive way to extend the preset
+would make the edge cost one stanza instead of seven, and is worth lifting in
+prov.
+
+The keys plates reads inside `site:` are `plates::TERM_SITE_KEYS`, and one that
+is not costs the site a setting and a warning.
+
+### 0.2 ships exports-as-primary; `sites:` is deprecated, not deleted
+
+The migration in §"Migration" is split. **0.2** — this change — makes `exports:`
+the ordinary path, deletes the rule that skipped an export gated on some field
+other than `audience`, and reads the term node. A `sites:` block still wins
+outright where one exists, and every site it declares now names the export entry
+and the term node that replace it, and the version it stops working in.
+
+**0.3** removes the block, `SITES_KEY`, `SITE_KEYS`, `read_sites`, `specs_from`
+and the `Source` distinction.
+
+Two smaller resolutions, both as proposed: the export's `label` wins, and a term
+node's own body is not the front page.
+
+### The prerequisite landed in prov 0.10.0
+
+`reify` is implemented rather than merely parsed. What plates reads it through is
+`Workspace::reified_term_path(root_doc, pointer, term)` — term value in, the path
+of the node declaring it out, with the term key `term:` falling back to `title:`
+and a retired term still returning its path. `Workspace::load_reified_vocabulary`
+is the membership half, and `check` no longer reports `MalformedStore` for a
+reified vocabulary's markdown index node.
+
+Front-page links are resolved against the **term node**, which is where they are
+written — `front_page: '[Home](daily.md)'` on `vocab/public.md` means
+`vocab/daily.md` — and travel to the planner in prov's root-absolute spelling, so
+one resolution happens rather than two that could disagree.

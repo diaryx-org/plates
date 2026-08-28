@@ -19,8 +19,8 @@ command is `plates`.
 
 This is the application layer, and the only one in
 [the workspace](https://github.com/diaryx-org/plates) allowed to have the
-opinions a library must not: **where a build lands, what a site declaration is
-spelled like, and when to build**. What a site *is* lives in
+opinions a library must not: **where a build lands, when to build, and how loudly
+to say what went wrong**. What a site *is* lives in
 [`plates`](https://github.com/diaryx-org/plates/tree/main/plates); what a page
 *looks like* lives in
 [`plates-render`](https://github.com/diaryx-org/plates/tree/main/plates-render).
@@ -62,73 +62,125 @@ become a second copy of the site.
 
 ## Declaring a site
 
-`plates` takes a `SiteSpec` already built and never reads a config vocabulary —
-which block an archive declares its sites in is a dialect, not a site's shape.
-The spelling below is this crate's, and lives here alone, so two applications
-over one archive format can disagree about it and still produce the same website.
+**A site is an export.** prov's `exports.<name>` is already a named, gated set of
+documents that may leave the archive, which is the whole of what a site needs to
+exist. The render-facing half it cannot carry — a front page, a shell, a
+stylesheet, a language, extra grammars — is written on the **term node** of the
+gate field's vocabulary, which is where a value that is a document keeps what is
+true of it.
 
-It is read from the same two surfaces prov reads its own config from, in the same
-order: the root document's frontmatter first, then the config document the root
-links to, which wins. So a declaration sits beside prov's own `views:` and
-`exports:`:
+So plates declares no config vocabulary of its own. What a site is, this archive
+answers.
 
 ```yaml
-sites:
-  blog:
-    label: Field notes           # what a reader sees; defaults to the name, humanized
-    audience: public             # the gate — the only required key
-    view: daily                  # a prov view, for the arrangement; default is containment
-    index: '[Home](id:7f3a91c)'  # the front page, as a link that survives a rename
-    shell: .config/sites/blog/shell.html
-    stylesheet: .config/sites/blog/style.css
-    lang: en
-    syntaxes:                    # grammars for languages the built-in 213 miss
-      - .config/sites/blog/wat.sublime-syntax
+# The config document, or the root's own `prov:` block.
+exports:
+  docs:
+    label: plates                 # what a reader sees; defaults to the name, humanized
+    gate:
+      field: audience             # the document field the gate judges
+      value: public               # the value that admits a document
+    view: daily                   # a prov view, for the arrangement; default is containment
+fields:
+  audience:
+    values: closed                # an unknown value is a `prov check` finding
+    vocabulary: '[Audiences](/vocab/audiences.md)'
+    reify: true                   # each term is a node, not a row
+```
+
+| Export key | |
+|---|---|
+| `gate` | **Required**, both halves. `field` is the document field judged and `value` is what admits a document; prov offers no default for either. A gate on `clearance` is not a special case, it is the gate. |
+| `label` | What a person calls the site. Defaults to the name, humanized. |
+| `view` | A prov view, by its key under `views:`. Its arrangement becomes the site's; absent, the gate's whole set arranged by containment. |
+
+The entry's *name* is the site's path segment in every published URL —
+deliberately not the gate value, since the honest name for a readership is
+routinely one its members should never read off a URL.
+
+### The term node
+
+`reify: true` makes the vocabulary an index node whose `contents:` are the terms,
+each an ordinary document with a body, a stable id and backlinks. The term whose
+`term:` (or, absent that, `title:`) is the gate's value is the one plates reads:
+
+```yaml
+# vocab/public.md
+---
+title: Public
+term: public
+part_of: '[Audiences](/vocab/audiences.md)'
+front_page: '[Home](id:7f3a91c)'
+site:
+  shell: .config/sites/docs/shell.html
+  stylesheet: .config/sites/docs/style.css
+  lang: en
+  syntaxes:                       # grammars for languages the built-in 213 miss
+    - .config/sites/docs/wat.sublime-syntax
+---
+
+Anyone; safe to publish. Everything here has left the archive on purpose.
 ```
 
 | Key | |
 |---|---|
-| `audience` | **Required.** The gate: a site that does not say who it is for is not a site. |
-| `gate_field` | The document field `audience` is compared against. Defaults to `audience`, which is what an archive that never had to think about it wants. |
-| `label` | What a person calls it. Defaults to the name, humanized. |
-| `view` | A prov view, by its key under `views:`. Its arrangement becomes the site's; absent, the gate's whole set arranged by containment. |
-| `index` | The front page, as a link resolved through the spanning relation — so it survives a rename, a move and a retitle. Absent, an index is synthesized from the site's entries. |
-| `shell` | An HTML file with named slots, as an archive-relative path. `.config/sites/<name>/` is the recommended home, not a requirement. |
-| `stylesheet` | A CSS file that *replaces* the built-in sheet rather than layering over it. |
-| `lang` | BCP 47, for every page's `<html lang="…">`. Defaults to `en`. |
-| `syntaxes` | `.sublime-syntax` files for languages the built-in grammars do not cover, as archive-relative paths. A list, or a bare path for the one-item case. |
+| `front_page` | The page that greets a reader, as a link resolved **relative to the term node** — through prov's link layer, so it survives a rename, a move and a retitle. Absent, an index is synthesized from the site's entries. |
+| `site.shell` | An HTML file with named slots, as an archive-relative path. `.config/sites/<name>/` is the recommended home, not a requirement. |
+| `site.stylesheet` | A CSS file that *replaces* the built-in sheet rather than layering over it. |
+| `site.lang` | BCP 47, for every page's `<html lang="…">`. Defaults to `en`, and a page carrying its own `lang:` overrides it for that page. |
+| `site.syntaxes` | `.sublime-syntax` files for languages the built-in grammars do not cover, as archive-relative paths. A list, or a bare path for the one-item case. |
 
-Everything but `audience` has a defensible default, and the defaults are
-`plates::SiteSpec`'s. A misspelled key costs a site one setting and is reported;
-refusing to build the other four sites over it would be a worse answer.
+Every one of them has a defensible default, and the defaults are
+`plates::SiteSpec`'s. A key inside `site:` that plates does not read costs the
+site one setting and is reported; refusing to build the other four sites over it
+would be a worse answer.
 
-An archive whose disclosure control is spelled something other than `audience` —
-`clearance`, `visibility`, a term in another language — names it per site:
+The render keys are nested under `site:` rather than written bare because a term
+node's frontmatter is the author's: a top-level `shell:` is claimed by convention
+only, and collides with a field the archive already had or with the next tool
+that wants one. `front_page:` is exempt because it is not payload — it is a
+relation, and a declared relation is its own registration.
+
+A term node declaring no `audience:` of its own is published to nobody, which is
+the default and the right one: an archive that wants its audiences described on
+its own site opts in per term, deliberately.
+
+An archive that declares no vocabulary at all keeps working throughout — every
+render key takes its default and the front page is synthesized from the site's
+entries.
+
+### The deprecated `sites:` block
+
+Until plates 0.2 a site was declared in a top-level `sites:` block, on the
+argument that a site's spelling is a dialect a different host could replace
+wholesale:
 
 ```yaml
 sites:
-  audit:
-    audience: internal
-    gate_field: clearance
+  blog:
+    label: Field notes
+    audience: public
+    gate_field: clearance        # the field `audience` is compared against
+    view: daily
+    index: '[Home](id:7f3a91c)'
+    shell: .config/sites/blog/shell.html
+    stylesheet: .config/sites/blog/style.css
+    lang: en
+    syntaxes:
+      - .config/sites/blog/wat.sublime-syntax
 ```
 
-The gate is no looser for it. It is still exact after trimming and still closed
-by default, so a document declaring nothing under `clearance` is visible to
-nobody.
+It is read from the same two surfaces prov reads its own config from, in the same
+order: the root document's frontmatter first, then the config document the root
+links to, which wins. Where it exists it still wins outright over `exports:`,
+block for block — an archive that has not migrated builds exactly what it built
+before — and every site it declares is named in a warning alongside the export
+entry and the term node that replace it. **plates 0.3 removes it.**
 
-### The fallback, and why it is not a guess
-
-An archive that declares no `sites:` block gets one site per prov `exports:`
-entry gated on `audience` — same name, same label, same view, same gate value.
-That is not plates inventing a site: an export already *is* a named, closed set
-of documents that may leave the archive, which is the whole of what a site needs
-to exist. What it lacks is only the render-facing half — a front page, a shell, a
-stylesheet — and every one of those has a default.
-
-An export gated on some *other* field is skipped rather than published under a
-rule nothing showed anyone, and named in the warnings so the omission is visible.
-Publishing it takes a `sites:` entry that says `gate_field:` out loud, which is
-the point: the derivation stays the case nobody had to think about.
+Migrating one site is two moves: `audience`/`gate_field` become
+`exports.<name>.gate.value`/`.field`, and `index`/`shell`/`stylesheet`/`lang`/
+`syntaxes` become `front_page:` and `site:` on the term node. `label` and `view`
+keep their names and meanings under `exports.<name>`.
 
 ## What a build remembers
 

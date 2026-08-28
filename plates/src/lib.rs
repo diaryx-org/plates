@@ -48,6 +48,11 @@
 //!   navigation from it.
 //! - **The theme.** Reading a declaration's shell and stylesheet into *text*,
 //!   because the renderer cannot open a file.
+//! - **The term node.** When a gate's field declares a reified vocabulary, its
+//!   value is a document, and that document is where a site's front page and
+//!   render settings are written. Reading them is [`term`] — no dialect of ours,
+//!   only prov's `fields:`, prov's spanning relation and the two keys prov
+//!   declines to interpret.
 //! - **The link report.** Which of a site's links lead nowhere, told apart from
 //!   the ones that lead somewhere this site does not publish — a render cannot
 //!   tell those apart, and demotes both to the same unclickable span. See
@@ -68,10 +73,13 @@
 //!
 //! # What a caller still owns
 //!
-//! - **The config vocabulary.** Which block a vault declares its sites and front
-//!   pages in is not read here, deliberately — that is a vault format's dialect,
-//!   and a [`SiteSpec`] arrives already built. Two applications with different
-//!   config formats can compose the same `SiteSpec` and get the same site.
+//! - **The config vocabulary.** Which block a vault declares its sites in is not
+//!   read here, deliberately — that is a vault format's dialect, and a
+//!   [`SiteSpec`] arrives already built. Two applications with different config
+//!   formats can compose the same `SiteSpec` and get the same site. [`term`] is
+//!   not an exception to this: it reads the archive's own `fields:`, which is
+//!   prov's vocabulary rather than anyone's dialect, and a caller that wants
+//!   none of it never calls it.
 //! - **Spelling the gate field.** [`SiteSpec::gate_field`] names the field the
 //!   gate is judged on, defaulting to [`plan::AUDIENCE_FIELD`]. Which field a
 //!   vault's disclosure control lives in is a dialect like the rest, so the
@@ -87,6 +95,7 @@ pub mod links;
 pub mod plan;
 pub mod source;
 pub mod spec;
+pub mod term;
 pub mod theme;
 
 pub use collect::{
@@ -102,6 +111,9 @@ pub use spec::{
     FRONT_PAGE, IndexDirectory, SITE_ASSETS_DIR, SitePlan, SiteSpec, VisibleDoc, case_drift,
     finish, humanize,
 };
+// `text`/`text_list` stay behind the module path: they are settings-reading
+// helpers a caller shares with this crate, not names the crate is about.
+pub use term::{FRONT_PAGE_KEY, TERM_SITE_KEY, TERM_SITE_KEYS, TermConfig, read_term_config};
 pub use theme::{DEFAULT_LANG, SiteTheme, arrangement_for, read_page_shells, read_theme};
 
 /// Re-export both layers below, so a downstream caller names one `prov` and one

@@ -979,7 +979,11 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 nav: &nav,
                 seo_meta: &seo,
                 feed_links: &feeds,
-                lang: &opts.lang,
+                // The page's own language when it declared one, and the site's
+                // otherwise — the same shape as its own shell above, for the
+                // same reason: what is true of one document is written in that
+                // document.
+                lang: p.lang.as_deref().unwrap_or(&opts.lang),
                 template: shell,
             },
         );
@@ -1219,6 +1223,14 @@ fn build_page(
                 .map(String::from),
             PageLayout::Bare | PageLayout::Verbatim => None,
         },
+        // Unlike `shell`, read for every layout that writes a document at all:
+        // a `bare` page still gets an `<html lang>` from this crate, and the
+        // language it is in is a fact about the document rather than a request
+        // for a frame.
+        lang: frontmatter::get_string(fm, "lang")
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+            .map(String::from),
         nav_title: frontmatter::get_string(fm, "nav_title").map(String::from),
         nav_order,
         hide_from_nav: fm
@@ -1339,6 +1351,9 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         scripts: Vec::new(),
         layout: PageLayout::default(),
         shell: None,
+        // No frontmatter to declare one: a synthesized index is the site
+        // speaking about itself, so it is in the site's language.
+        lang: None,
         nav_title: None,
         nav_order: None,
         hide_from_nav: false,
@@ -2806,6 +2821,90 @@ mod tests {
             .find(|p| p.dest_filename == "poster.html")
             .expect("the claimed destination");
         assert!(page.html.contains(r#"<body class="poster">"#));
+    }
+
+    // ── per-page `lang:` ────────────────────────────────────────────────────
+
+    /// The language a document is in is a fact about the document, so the site's
+    /// tag is a default rather than an answer — and a page that says otherwise
+    /// is published in what it said, without disturbing the pages that did not.
+    #[test]
+    fn a_page_may_declare_its_own_language() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/letter.md\"\n---\nHi.\n";
+        let letter = "---\ntitle: Letter\npart_of: \"/index.md\"\nlang: '  cy  '\n---\nBore da.\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("letter.md", letter, false),
+        ];
+
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                lang: "en".to_string(),
+                ..SiteOptions::default()
+            },
+        );
+
+        let page = |name: &str| {
+            out.pages
+                .iter()
+                .find(|p| p.dest_filename == name)
+                .unwrap()
+                .html
+                .clone()
+        };
+        assert!(page("letter.html").contains(r#"<html lang="cy">"#));
+        assert!(
+            page("index.html").contains(r#"<html lang="en">"#),
+            "and the site's own tag is untouched by the page that declared one"
+        );
+    }
+
+    /// `lang:` with nothing after it is a key left in place, not a claim that
+    /// the page is in no language at all — which is what `<html lang="">` says.
+    #[test]
+    fn a_blank_page_language_reads_as_absent() {
+        let sources = vec![src(
+            "index.md",
+            "---\ntitle: Home\nlang: '   '\n---\nHi.\n",
+            true,
+        )];
+
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                lang: "en".to_string(),
+                ..SiteOptions::default()
+            },
+        );
+
+        assert!(out.pages[0].html.contains(r#"<html lang="en">"#));
+    }
+
+    /// A synthesized index has no frontmatter to declare one, and nothing to
+    /// inherit from either: it is the site speaking about itself.
+    #[test]
+    fn a_synthesized_index_keeps_the_sites_language() {
+        let sources = vec![src(
+            "letter.md",
+            "---\ntitle: Letter\nlang: cy\n---\nBore da.\n",
+            false,
+        )];
+
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                lang: "en".to_string(),
+                ..SiteOptions::default()
+            },
+        );
+
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .expect("a synthesized front page");
+        assert!(home.html.contains(r#"<html lang="en">"#), "{}", home.html);
     }
 
     #[test]

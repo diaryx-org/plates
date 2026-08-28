@@ -1,6 +1,6 @@
 ---
 title: How this workspace is organized
-generated_by: prov 0.6.2
+generated_by: prov 0.10.0
 ---
 
 # How this workspace is organized
@@ -72,16 +72,18 @@ here is simply broken — worth noting, not a reason to stop reading.
 
 ## How the files relate to each other
 
-Four relations are used here. Follow **`contents`** from `README.md` to
+Six relations are used here. Follow **`contents`** from `README.md` to
 reach every document; that is the spine, and every file sits at exactly
 one place along it.
 
 | relation | means | how many | its opposite |
 | --- | --- | --- | --- |
-| `contents` | — | many | `part_of` |
-| `part_of` | — | one | `contents` |
-| `links` | — | many | `link_of` |
-| `link_of` | — | many | `links` |
+| `contents` | documents contained by this one | many | `part_of` |
+| `part_of` | the document that contains this one | one | `contents` |
+| `front_page` | the page that greets a reader of this audience | one | `fronts` |
+| `fronts` | audiences this document greets | many | `front_page` |
+| `link_of` | documents that cross-reference this one | many | `links` |
+| `links` | arbitrary cross-references to other documents | many | `link_of` |
 
 Both halves of a pair are kept in step: if A lists B under one, B names A
 under its opposite. If you edit one half by hand and not the other,
@@ -89,8 +91,25 @@ nothing is lost — the pair is simply inconsistent until someone repairs
 it.
 
 `part_of` holds exactly one target, which is what makes the spine a tree
-with a single top. `links` and `link_of` are laid over that tree and may
-point anywhere; follow them for meaning, never to discover what is here.
+with a single top. `front_page`, `fronts`, `link_of` and `links` are laid
+over that tree and may point anywhere; follow them for meaning, never to
+discover what is here.
+
+## Fields with fixed vocabularies
+
+One field does not hold free text. Its permitted values are listed in
+files of their own.
+
+| field | rule | values listed in |
+| --- | --- | --- |
+| `audience` | **closed** — every value must appear in the list | `/vocab/audiences.md` |
+
+A closed field is worth taking seriously: a value not on the list is an
+error rather than a new category.
+
+Where the list is itself a document in this directory, each permitted
+value is a page of its own: follow the list's entries to read what a value
+means and to see what refers to it.
 
 ## Files that are not part of the tree
 
@@ -135,9 +154,9 @@ already depend on them:
 - **`content_hash`** — a checksum. Changing it by hand asserts something
   about the bytes that may not be true.
 
-The relation fields — `contents`, `part_of`, `links` and `link_of` — are
-meant to be edited by hand. That is the whole point of keeping them in the
-files.
+The relation fields — `contents`, `part_of`, `front_page`, `fronts`,
+`link_of` and `links` — are meant to be edited by hand. That is the whole
+point of keeping them in the files.
 
 ---
 

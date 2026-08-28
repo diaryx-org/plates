@@ -20,13 +20,14 @@ use std::path::{Path, PathBuf};
 
 use plates::prov::block_on;
 use plates::{
-    CollectOptions, DigestMemo, NoStamp, SiteTheme, collect_site, plan_site, read_page_shells,
-    read_theme,
+    CollectOptions, DigestMemo, NoStamp, SiteSpec, SiteTheme, TermConfig, collect_site, plan_site,
+    read_page_shells, read_term_config, read_theme,
 };
 use plates_render::SiteStyle;
 use plates_render::html::Generator;
 use plates_render::site::{SiteOptions, SourceDoc, humanize_name, render_site};
 
+use crate::config::Source;
 use crate::session::Session;
 
 /// Frontmatter keys stripped from every collected document.
@@ -156,6 +157,35 @@ pub fn build_sites(
             continue;
         }
 
+        // The render-facing half of the declaration, read off the term node the
+        // site's gate value names. It is folded in *here*, rather than where the
+        // rest of the declaration is read, because reaching a term node takes an
+        // open workspace with its id index loaded — `front_page:` may be an
+        // `id:` link, and the term node itself is found by walking the archive's
+        // spanning relation.
+        //
+        // Only for a site derived from an export. A `sites:` block wins whole or
+        // not at all: half a declaration from a block and half from a term node
+        // is a site nobody wrote, which is what the whole-block rule exists to
+        // prevent.
+        let (spec, term_warnings) = match session.source {
+            Source::Declared => (spec.clone(), Vec::new()),
+            _ => with_term_config(
+                spec,
+                block_on(read_term_config(
+                    &ws,
+                    &session.root_doc,
+                    &session.config.fields,
+                    spec.gate_field(),
+                    // The value the gate compares, trimmed as prov trims it, so
+                    // the term node found here is the term node the gate judged
+                    // against.
+                    spec.audience.trim(),
+                )),
+            ),
+        };
+        let spec = &spec;
+
         let plan = block_on(plan_site(
             &ws,
             spec,
@@ -191,7 +221,8 @@ pub fn build_sites(
         // only in case. Empty for every archive that never drifted; non-empty
         // means the site is publishing less than its author believes, which is
         // exactly the kind of failure that is invisible from the file alone.
-        let mut warnings = theme.warnings.clone();
+        let mut warnings = term_warnings;
+        warnings.extend(theme.warnings.iter().cloned());
         if !plan.case_drift.is_empty() {
             warnings.push(format!(
                 "{} document(s) declare an audience matching {:?} only in case, so the gate \
@@ -237,6 +268,28 @@ pub fn build_sites(
     }
 
     Ok(built)
+}
+
+/// A site's declaration with the term node's half folded in, and whatever the
+/// term node said that could not be used.
+///
+/// A fill rather than an override, and it can be nothing else: a spec derived
+/// from an export carries `None` — and an empty `syntaxes` — in exactly these
+/// five fields, because an export has no way to say any of them. The one field
+/// both surfaces could claim is `label`, and the export's wins, so it is not
+/// here.
+fn with_term_config(spec: &SiteSpec, term: TermConfig) -> (SiteSpec, Vec<String>) {
+    (
+        SiteSpec {
+            index: term.index,
+            shell: term.shell,
+            stylesheet: term.stylesheet,
+            lang: term.lang,
+            syntaxes: term.syntaxes,
+            ..spec.clone()
+        },
+        term.warnings,
+    )
 }
 
 /// Whether a `--site` filter admits this site.

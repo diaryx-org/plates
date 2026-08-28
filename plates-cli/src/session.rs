@@ -167,9 +167,9 @@ impl Session {
     pub fn nothing_to_publish(&self) -> String {
         match self.source {
             Source::None => format!(
-                "this archive declares no sites and no exports, so there is nothing to \
-                 render\n  (declare one under `{}` in {})",
-                config::SITES_KEY,
+                "this archive declares no exports, so there is nothing to render\n  \
+                 (declare one under `exports:` in {}: a name, a `label`, and a `gate` \
+                 naming the field and value that admit a document)",
                 self.root_doc.display()
             ),
             _ => "this archive declares no sites to render".to_string(),

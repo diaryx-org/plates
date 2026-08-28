@@ -708,6 +708,7 @@ mod tests {
             scripts: vec![],
             layout: PageLayout::default(),
             shell: None,
+            lang: None,
             nav_title: None,
             nav_order: None,
             hide_from_nav: false,

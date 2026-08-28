@@ -65,6 +65,14 @@ and what the other two crates do, is
   because the renderer cannot open a file. A missing one is reported in
   `SiteTheme::warnings` and ignored — a vault that cannot publish because a
   theme file was renamed has paid its existence for its styling.
+- **The term node.** When a gate's field declares a *reified* vocabulary
+  (`fields.<field>.vocabulary` with `reify: true`), its value is a document, and
+  that document is where a site's front page and render settings are written:
+  `front_page:` at top level, `shell`/`stylesheet`/`lang`/`syntaxes` under
+  `site:`. `term::read_term_config` reads them — no dialect of ours, only prov's
+  `fields:`, prov's spanning relation and the two keys prov declines to
+  interpret. An archive with no vocabulary gets `TermConfig::default` and no
+  complaint.
 - **The link report.** A render demotes every link it cannot publish to the same
   unclickable span, which is right for the page and useless as a report: a link
   to a page the gate holds back is the gate working, and a link to a renamed
@@ -227,10 +235,12 @@ and `prov` stops recognizing it, so at least one must be on.
 
 ## What a caller still owns
 
-- **The config vocabulary.** Which block a vault declares its sites and front
-  pages in is not read here, deliberately: that is a vault format's dialect, not
-  a site's shape. Two applications with different config formats can compose the
-  same `SiteSpec` and get the same site.
+- **The config vocabulary.** Which block a vault declares its sites in is not
+  read here, deliberately: that is a vault format's dialect, not a site's shape.
+  Two applications with different config formats can compose the same `SiteSpec`
+  and get the same site. `term` is not an exception — it reads the archive's own
+  `fields:`, which is prov's vocabulary rather than anyone's dialect, and a
+  caller that wants none of it never calls it.
 - **Spelling the gate field.** `SiteSpec::gate_field` names the field the gate
   is judged on and defaults to `AUDIENCE_FIELD` — `audience`. Which field a
   vault's disclosure control lives in is a dialect like the rest, so the value

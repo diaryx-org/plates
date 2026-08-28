@@ -17,8 +17,40 @@ recycle_bin: true
 history: off
 about: structure
 workspace_id: plates
-sites:
+spanning: contents
+relations:
+  contents:
+    means: documents contained by this one
+    cardinality: many
+    inverse: part_of
+  part_of:
+    means: the document that contains this one
+    cardinality: one
+    inverse: contents
+  links:
+    means: arbitrary cross-references to other documents
+    cardinality: many
+    inverse: link_of
+  link_of:
+    means: documents that cross-reference this one
+    cardinality: many
+    inverse: links
+  front_page:
+    means: the page that greets a reader of this audience
+    cardinality: one
+    inverse: fronts
+  fronts:
+    means: audiences this document greets
+    cardinality: many
+    inverse: front_page
+fields:
+  audience:
+    values: closed
+    vocabulary: '[Audiences](/vocab/audiences.md)'
+    reify: true
+exports:
   docs:
     label: plates
-    audience: public
-    index: '[plates](/README.md)'
+    gate:
+      field: audience
+      value: public
