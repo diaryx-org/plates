@@ -37,7 +37,27 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last tag._
+### Breaking
+
+- **sites** — a site holds back the pages its own archive calls drafts ([`5f811dd`](https://github.com/diaryx-org/plates/commit/5f811dda41e32af33a97d14b609494ffccaa9b5a))
+
+### Behavioural changes
+
+- `SiteSpec` has a new `hold: Option<String>` field and
+  `SitePlan` a new `held: Vec<VisibleDoc>`. Struct literals of either must
+  name them; a spec with `hold: None` plans exactly as it did.
+
+- `Error` has a new variant, `SiteIndexHeld`, carrying the
+  hold's field name. An exhaustive match must add an arm.
+
+- a site over an export that declares `hold:` publishes
+  less than its gate admits — the documents declaring `true` under that
+  field leave `SitePlan::entries` for `SitePlan::held`, and a front page
+  among them is refused. An archive that declares no hold is unchanged.
+
+- the `prov` floor is now 0.11. Planning the same archive
+  against 0.10 publishes the drafts it says to hold, so this is a floor
+  rather than a preference.
 
 <!-- git-cliff:end -->
 
