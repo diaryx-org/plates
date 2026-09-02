@@ -37,6 +37,12 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v0.4.0 — 2026-09-02
+
 ### Breaking
 
 - **sites** — a site holds back the pages its own archive calls drafts ([`5f811dd`](https://github.com/diaryx-org/plates/commit/5f811dda41e32af33a97d14b609494ffccaa9b5a))
@@ -59,7 +65,6 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
   against 0.10 publishes the drafts it says to hold, so this is a floor
   rather than a preference.
 
-<!-- git-cliff:end -->
 
 ## v0.3.0 — 2026-08-27
 
