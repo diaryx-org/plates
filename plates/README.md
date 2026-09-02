@@ -241,6 +241,12 @@ and `prov` stops recognizing it, so at least one must be on.
   and get the same site. `term` is not an exception — it reads the archive's own
   `fields:`, which is prov's vocabulary rather than anyone's dialect, and a
   caller that wants none of it never calls it.
+- **Holding drafts back.** `SiteSpec::hold` names the field a document says
+  *not yet* in, and prov's export applies it: a page the gate admits that
+  declares `true` under it lands in `SitePlan::held` instead of on the site. It
+  only ever narrows, so naming a field cannot publish anything. Which word a
+  vault uses is its dialect, so it arrives with the spec like the gate field
+  does; a spec that names none holds nothing.
 - **Spelling the gate field.** `SiteSpec::gate_field` names the field the gate
   is judged on and defaults to `AUDIENCE_FIELD` — `audience`. Which field a
   vault's disclosure control lives in is a dialect like the rest, so the value
@@ -262,8 +268,8 @@ than surprises:
 - An attachment whose file has vanished is skipped rather than raised: refusing
   to build the site over one missing photograph is the wrong trade for every
   caller. Errors here are site *declaration* problems — a front page that
-  resolves to nothing, an index nobody may read, two documents claiming one
-  address.
+  resolves to nothing, an index nobody may read, a front page still marked a
+  draft, two documents claiming one address.
 
 ## License
 

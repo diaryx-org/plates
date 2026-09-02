@@ -34,8 +34,12 @@ authors = ["Adam Harris"]
 # vocabulary is loaded rather than merely parsed: `Workspace::reified_term_path`
 # is the seam `plates::term` reads a site's render config through, and before it
 # a `fields.audience.vocabulary` pointing at an index node made `check` report a
-# `MalformedStore` that was not one.
-prov = { version = "0.10", default-features = false }
+# `MalformedStore` that was not one. 0.11 is where an export may declare a
+# `hold`: `SiteSpec::hold` is exactly prov's, and a site over an archive that
+# declares one publishes less than its gate admits — a floor rather than a
+# preference for the fourth time, since planning the same archive against 0.10
+# would publish the drafts it says to hold.
+prov = { version = "0.11", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.

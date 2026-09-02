@@ -61,6 +61,28 @@ pub enum Error {
         path: PathBuf,
     },
 
+    /// A site's `index:` resolves to a document its own hold is keeping back:
+    /// the front page is a draft.
+    ///
+    /// Separate from [`SiteIndexNotVisible`](Self::SiteIndexNotVisible)
+    /// because nothing is mistagged and no audience is wrong — the gate
+    /// admitted the page, and its author said `draft: true` about it. The two
+    /// send someone to different files, so they are two errors.
+    ///
+    /// Still an error rather than a synthesized index, for the reason that one
+    /// is: a site whose front page quietly vanished is a site that publishes
+    /// looking fine. Unlike the gate's, this one clears itself — the fix is to
+    /// finish the page, or to take the `hold` off the export.
+    #[error("site {site:?} is fronted by {path}, which declares {field}: true and is held back")]
+    SiteIndexHeld {
+        /// The site's name, as declared under `exports`.
+        site: String,
+        /// The field the site's `hold` names.
+        field: String,
+        /// The resolved path of the declared index.
+        path: PathBuf,
+    },
+
     /// A site's `index:` resolves to a manifest node whose covered directory
     /// holds no `index.html`.
     ///

@@ -80,6 +80,7 @@ exports:
     gate:
       field: audience             # the document field the gate judges
       value: public               # the value that admits a document
+    hold: draft                   # a page declaring `draft: true` waits; absent, nothing waits
     view: daily                   # a prov view, for the arrangement; default is containment
 fields:
   audience:
@@ -91,6 +92,7 @@ fields:
 | Export key | |
 |---|---|
 | `gate` | **Required**, both halves. `field` is the document field judged and `value` is what admits a document; prov offers no default for either. A gate on `clearance` is not a special case, it is the gate. |
+| `hold` | A document field the site reads a *not yet* out of. A page the gate admits that declares `true` under it stays off the site and is reported as held; absent, nothing is held. |
 | `label` | What a person calls the site. Defaults to the name, humanized. |
 | `view` | A prov view, by its key under `views:`. Its arrangement becomes the site's; absent, the gate's whole set arranged by containment. |
 
@@ -180,7 +182,9 @@ entry and the term node that replace it. **plates 0.3 removes it.**
 Migrating one site is two moves: `audience`/`gate_field` become
 `exports.<name>.gate.value`/`.field`, and `index`/`shell`/`stylesheet`/`lang`/
 `syntaxes` become `front_page:` and `site:` on the term node. `label` and `view`
-keep their names and meanings under `exports.<name>`.
+keep their names and meanings under `exports.<name>`. `hold` has no `sites:`
+spelling and will not get one — the block is frozen at what it read the day it
+was deprecated, so a site that wants to hold its drafts back migrates.
 
 ## What a build remembers
 

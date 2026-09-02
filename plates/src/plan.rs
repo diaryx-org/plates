@@ -93,6 +93,7 @@ pub fn to_export(spec: &SiteSpec) -> prov::exports::ExportSpec {
             field: spec.gate_field().to_string(),
             value: spec.audience.trim().to_string(),
         },
+        hold: spec.hold.clone(),
         view: spec.view.clone(),
     }
 }

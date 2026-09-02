@@ -242,6 +242,11 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             label: text(entry, "label"),
             audience,
             gate_field: text(entry, "gate_field"),
+            // Not a key of this dialect, and not becoming one: `sites:` is
+            // frozen at what it read the day it was deprecated, so a vault that
+            // wants a hold gets it by migrating to `exports:` — which is the
+            // move every deprecation warning here already asks for.
+            hold: None,
             view: text(entry, "view"),
             index: text(entry, "index"),
             shell: text(entry, "shell"),
@@ -271,6 +276,7 @@ fn specs_from_exports(exports: &[ExportSpec]) -> Vec<SiteSpec> {
             // `audience` wherever the question is asked, and a spec carrying the
             // string would be indistinguishable from one whose archive named it.
             gate_field: (export.gate.field != AUDIENCE_FIELD).then(|| export.gate.field.clone()),
+            hold: export.hold.clone(),
             view: export.view.clone(),
             index: None,
             shell: None,
@@ -294,6 +300,7 @@ mod tests {
                 field: field.to_string(),
                 value: value.to_string(),
             },
+            hold: None,
             view: None,
         }
     }
@@ -342,6 +349,7 @@ mod tests {
                 label: Some("Field notes".into()),
                 audience: "public".into(),
                 gate_field: Some("clearance".into()),
+                hold: None,
                 view: Some("daily".into()),
                 index: Some("[Home](id:7f3a91c)".into()),
                 shell: Some(".config/sites/blog/shell.html".into()),
@@ -417,6 +425,22 @@ mod tests {
         assert_eq!(specs[1].audience, "internal");
         assert_eq!(specs[1].gate_field.as_deref(), Some("clearance"));
         assert_eq!(specs[1].gate_field(), "clearance");
+    }
+
+    /// The other half of the export an archive declares. A hold is a bound the
+    /// author wrote on what leaves, so dropping it on the way to a site would
+    /// publish drafts a `prov exports` preview says are being held — the two
+    /// tools disagreeing about one archive's own declaration.
+    #[test]
+    fn an_exports_hold_reaches_the_site() {
+        let held = ExportSpec {
+            hold: Some("draft".into()),
+            ..export("blog", AUDIENCE_FIELD, "public")
+        };
+        let specs = specs_from_exports(&[export("audit", AUDIENCE_FIELD, "public"), held]);
+
+        assert_eq!(specs[0].hold, None);
+        assert_eq!(specs[1].hold.as_deref(), Some("draft"));
     }
 
     /// A deprecation nobody can act on is one that gets ignored until the

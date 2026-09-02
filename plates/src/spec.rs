@@ -88,6 +88,24 @@ pub struct SiteSpec {
     /// trimming and still closed by default, so a document that declares nothing
     /// under the named field is visible to nobody, exactly as before.
     pub gate_field: Option<String>,
+    /// The document field this site reads a *not yet* out of — prov's
+    /// [`hold`](prov::exports::ExportSpec::hold). A document the gate admits
+    /// that declares `true` under this field is held: off the site, and named
+    /// in [`SitePlan::held`] rather than lost among the documents the gate
+    /// refused.
+    ///
+    /// `None` is a site with no hold, which is every site declared before the
+    /// key existed: the gate alone decides, exactly as before.
+    ///
+    /// Per-site for the reason [`gate_field`](Self::gate_field) is: a hold is
+    /// per-export in prov, and two sites over one vault may legitimately hold
+    /// on different words — a vault whose drafts are `draft:` to its readers
+    /// and `embargoed:` to its editors cannot say that once.
+    ///
+    /// It only ever narrows. A held document is one the gate already admitted,
+    /// so naming a field here can take a page off the site and can never put
+    /// one on it.
+    pub hold: Option<String>,
     /// The [`ViewSpec`](prov::ViewSpec) naming this site's arrangement, by its
     /// key under `views`. `None` publishes the gate's whole set, arranged by
     /// containment.
@@ -283,6 +301,18 @@ pub struct SitePlan {
     /// whose front page is an empty rendering of a body-less node, which is why
     /// the render and collection layers both branch on it.
     pub index_directory: Option<IndexDirectory>,
+    /// Documents the gate admits that this site's own hold kept back — the
+    /// drafts. Empty for a site that names no [`hold`](SiteSpec::hold).
+    ///
+    /// Carried as [`VisibleDoc`]s, declared values and all, because these are
+    /// the documents that *would* publish: the site's pending set, not
+    /// strangers to it. A caller previewing a publish is expected to show them
+    /// as such — they are the one group here whose absence has a date on it.
+    ///
+    /// Disjoint from [`outside_view`](Self::outside_view): prov applies the
+    /// hold before the view, so a draft the view would also have scoped out is
+    /// reported once, here.
+    pub held: Vec<VisibleDoc>,
     /// Documents the gate admits that this site's view scoped out. Not an
     /// error — it is the difference between a site and its audience, and a
     /// publish preview owes the user a count of it, since "I tagged it `family`
@@ -306,9 +336,10 @@ pub struct SitePlan {
     pub link_diagnostics: Vec<LinkDiagnostic>,
 }
 
-/// Finish a prov export plan into a site plan: attach the front page, name the
-/// documents the exact-match gate held back that a case-insensitive rule would
-/// have let through, and name the links its pages write that lead nowhere.
+/// Finish a prov export plan into a site plan: attach the front page, carry
+/// through the documents the site's hold kept back, name the documents the
+/// exact-match gate held back that a case-insensitive rule would have let
+/// through, and name the links its pages write that lead nowhere.
 ///
 /// `index` is `spec.index` already resolved to a path by the caller, and
 /// `index_directory` is what that path turned out to cover when it was a
@@ -341,6 +372,31 @@ pub fn finish(
             declared: doc.declared,
         })
         .collect();
+    let held: Vec<VisibleDoc> = export
+        .held
+        .into_iter()
+        .map(|doc| VisibleDoc {
+            path: doc.path,
+            title: doc.title,
+            declared: doc.declared,
+        })
+        .collect();
+
+    // A front page the site's own *hold* keeps back is its own error, told
+    // apart from the gate's below because the cause and the fix are different:
+    // nothing is mistagged and no audience is wrong — the author wrote
+    // `draft: true` on the page the site opens with. Checked first because a
+    // held document is in neither of the two sets the gate check consults, so
+    // falling through would report a draft as a disclosure problem.
+    if let (Some(field), Some(path)) = (spec.hold.as_deref(), index)
+        && held.iter().any(|doc| doc.path.as_path() == path)
+    {
+        return Err(Error::SiteIndexHeld {
+            site: spec.name.clone(),
+            field: field.to_string(),
+            path: path.to_path_buf(),
+        });
+    }
 
     // A front page the *gate* holds back is a configuration error, not a cue to
     // quietly synthesize one: the site would publish with its intended front
@@ -387,6 +443,7 @@ pub fn finish(
         entries,
         index,
         index_directory,
+        held,
         outside_view: export.outside_view,
         case_drift: case_drift(&spec.audience, &export.withheld),
         link_diagnostics,
@@ -440,6 +497,7 @@ mod tests {
                 field: crate::plan::AUDIENCE_FIELD.to_string(),
                 value: audience.to_string(),
             },
+            hold: None,
             view: None,
         }
     }
@@ -451,6 +509,7 @@ mod tests {
             label: export.label,
             audience: export.gate.value,
             gate_field: None,
+            hold: export.hold,
             view: export.view,
             index: None,
             shell: None,
@@ -473,6 +532,7 @@ mod tests {
             export: "letters".into(),
             entries,
             outside_view: Vec::new(),
+            held: Vec::new(),
             withheld,
         }
     }
@@ -482,7 +542,25 @@ mod tests {
             export: "letters".into(),
             entries,
             outside_view: outside_view.into_iter().map(PathBuf::from).collect(),
+            held: Vec::new(),
             withheld: Vec::new(),
+        }
+    }
+
+    fn plan_holding(entries: Vec<ExportDoc>, held: Vec<&str>) -> ExportPlan {
+        ExportPlan {
+            export: "letters".into(),
+            entries,
+            outside_view: Vec::new(),
+            held: held.into_iter().map(entry).collect(),
+            withheld: Vec::new(),
+        }
+    }
+
+    fn holding(name: &str, audience: &str, field: &str) -> SiteSpec {
+        SiteSpec {
+            hold: Some(field.to_string()),
+            ..site(name, audience)
         }
     }
 
@@ -552,6 +630,75 @@ mod tests {
         .unwrap_err();
         assert!(
             matches!(err, Error::SiteIndexNotVisible { ref path, .. } if path == Path::new("index.md")),
+            "got {err:?}"
+        );
+    }
+
+    /// A site's hold is prov's, spelled the site's way: the field reaches the
+    /// export untouched, and a site that names none exports none — which is
+    /// what keeps every site declared before the key existed planning exactly
+    /// as it did.
+    #[test]
+    fn a_sites_hold_is_the_exports_hold() {
+        assert_eq!(
+            crate::plan::to_export(&site("letters", "family")).hold,
+            None
+        );
+        assert_eq!(
+            crate::plan::to_export(&holding("letters", "family", "draft")).hold,
+            Some("draft".into())
+        );
+    }
+
+    /// A held document is the site's pending set, not a stranger to it: it is
+    /// off the entries and named with its title and its declared audience, so a
+    /// preview can say *this one is coming* rather than leaving the author to
+    /// work out why a page they tagged is missing.
+    #[test]
+    fn held_documents_are_carried_through_and_kept_off_the_entries() {
+        let plan = finish(
+            &holding("letters", "family", "draft"),
+            plan_holding(vec![entry("trip.md")], vec!["half-written.md"]),
+            None,
+            None,
+            &[],
+        )
+        .expect("a plan");
+        assert_eq!(
+            plan.entries.iter().map(|d| &d.path).collect::<Vec<_>>(),
+            vec![Path::new("trip.md")]
+        );
+        assert_eq!(
+            plan.held,
+            vec![VisibleDoc {
+                path: PathBuf::from("half-written.md"),
+                title: None,
+                declared: vec!["family".into()],
+            }]
+        );
+    }
+
+    /// A front page its author called a draft is its own error, not the gate's.
+    /// The two are one `SiteIndexNotVisible` away from being told to check the
+    /// audience of a page whose audience is perfectly correct, and the fix —
+    /// finish the page — is nowhere near the file that message would send them
+    /// to.
+    #[test]
+    fn a_front_page_the_hold_keeps_back_is_its_own_error() {
+        let err = finish(
+            &holding("letters", "family", "draft"),
+            plan_holding(vec![entry("trip.md")], vec!["index.md"]),
+            Some(Path::new("index.md")),
+            None,
+            &[],
+        )
+        .unwrap_err();
+        assert!(
+            matches!(
+                err,
+                Error::SiteIndexHeld { ref field, ref path, .. }
+                    if field == "draft" && path == Path::new("index.md")
+            ),
             "got {err:?}"
         );
     }
