@@ -62,10 +62,9 @@
 //! [`TermConfig::warnings`] carries only what the term node *did* say and this
 //! pass could not use.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
-use prov::config::FieldSpec;
+use prov::config::WorkspaceConfig;
 use prov::link::{Link, LinkStyle};
 use prov::meta::{Mapping, Value};
 use prov::{IdIndex, Storage, Target, Workspace};
@@ -130,8 +129,10 @@ pub struct TermConfig {
 
 /// Read the render config a site's gate value carries on its term node.
 ///
-/// `fields` is prov's own `fields:` declaration
-/// ([`WorkspaceConfig::fields`](prov::config::WorkspaceConfig::fields)), and
+/// `config` is the workspace's own, and the gate field's declaration is read
+/// from it with [`WorkspaceConfig::field`] — the one governing the whole
+/// workspace, never a declaration scoped `under:` an index, because a site is
+/// gated as a whole and there is no one document to ask which scope it is in.
 /// `gate_field`/`gate_value` are the site's gate —
 /// [`SiteSpec::gate_field`](crate::SiteSpec::gate_field) and
 /// [`SiteSpec::audience`](crate::SiteSpec::audience). An archive that declares
@@ -153,11 +154,11 @@ pub struct TermConfig {
 pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
     ws: &Workspace<FS, Id, Ix>,
     root_doc: &Path,
-    fields: &BTreeMap<String, FieldSpec>,
+    config: &WorkspaceConfig,
     gate_field: &str,
     gate_value: &str,
 ) -> TermConfig {
-    let Some(spec) = fields.get(gate_field) else {
+    let Some(spec) = config.field(gate_field) else {
         return TermConfig::default();
     };
     // `reify` is the load-bearing half. A flat vocabulary's terms are rows in a
