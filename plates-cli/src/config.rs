@@ -253,6 +253,10 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             stylesheet: text(entry, "stylesheet"),
             lang: text(entry, "lang"),
             syntaxes: text_list(entry, "syntaxes"),
+            // Frozen, like `hold` above: the frame is a `site:` key on the
+            // term node, which is where this dialect's replacement lives.
+            header: None,
+            footer: None,
         });
     }
     specs
@@ -283,6 +287,8 @@ fn specs_from_exports(exports: &[ExportSpec]) -> Vec<SiteSpec> {
             stylesheet: None,
             lang: None,
             syntaxes: Vec::new(),
+            header: None,
+            footer: None,
         })
         .collect()
 }
@@ -356,6 +362,8 @@ mod tests {
                 stylesheet: Some(".config/sites/blog/style.css".into()),
                 lang: Some("fr".into()),
                 syntaxes: vec![".config/sites/blog/wat.sublime-syntax".into()],
+                header: None,
+                footer: None,
             }]
         );
     }

@@ -1,13 +1,37 @@
 ---
 title: 'Proposal: the site frame'
 part_of: '[plates](/README.md)'
-status: proposed
+status: implemented
 author: adammharris
 created: 2026-09-11
+updated: 2026-09-11
 audience: public
 ---
 
 # The site frame
+
+## Status
+
+Implemented, all four steps at once — they share the one restructuring of the
+render pipeline that reads every source's metadata before it renders any body,
+which is what lets a body's `prev`/`next` be the pager's. Three things landed
+differently from the text below:
+
+- **The outline is a fixed rail at `≥ 88rem`**, not 80: that is the width at
+  which a 12rem rail fits beside the 44rem measure and the 16rem sidebar with
+  the margins the layout already leaves. Below it the `<details>` is written
+  `open` — a reader with scripting off gets everything — and the built-in script
+  closes it, so a long outline does not push the prose down a phone.
+- **`headings` in a body's own context costs a second expansion**, since a
+  page's headings are not known until its template has run. Only a body that
+  names `headings` pays it.
+- **A destination `href` survives link rewriting.** `[x]({{e.href}})` had
+  always been resolved as a *source* path, found nowhere, and stripped to an
+  unpublished span — the header and footer examples below would have rendered
+  every link inert. A source path is still tried first, then a destination.
+
+The pager reads the forest continuously, as the nav does. A per-page `header:`
+is still not designed.
 
 ## Summary
 

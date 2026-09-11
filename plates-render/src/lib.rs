@@ -23,6 +23,7 @@ pub mod appearance;
 pub mod body;
 pub mod dates;
 pub mod frontmatter;
+pub mod headings;
 pub mod html;
 mod links;
 pub mod nav;
@@ -43,13 +44,16 @@ pub use appearance::{
 #[cfg(feature = "syntax-highlighting")]
 pub use body::render_body_with;
 pub use body::{preprocess_custom_syntax, render_body};
+pub use headings::{anchor_headings, render_toc};
 pub use html::{
     Generator, HtmlRenderer, ISLAND_CHILD_SCRIPT, ISLAND_CHILD_SCRIPT_FILENAME, PageContext,
     SiteStyle,
 };
 pub use links::{percent_decode, root_prefix, transform_links};
-pub use nav::{build_site_nav_tree, forest_roots, nav_for_page};
+pub use nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
 pub use shell::{ShellError, ShellSlots, ShellTemplate};
 #[cfg(feature = "syntax-highlighting")]
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
-pub use types::{Arrangement, Grain, Grouping, LinkEdge, OutlineNode, PageLayout, serve_at_dest};
+pub use types::{
+    Arrangement, Grain, Grouping, Heading, LinkEdge, OutlineNode, PageLayout, serve_at_dest,
+};

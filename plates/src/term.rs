@@ -18,6 +18,8 @@
 //! site:
 //!   shell: .config/sites/docs/shell.html
 //!   stylesheet: .config/sites/docs/style.css
+//!   header: .config/sites/docs/header.md
+//!   footer: .config/sites/docs/footer.md
 //!   lang: en
 //! ---
 //! ```
@@ -86,7 +88,14 @@ pub const TERM_SITE_KEY: &str = "site";
 /// invisible by design, and a listing of what *is* read is where that silence
 /// gets broken. `label` is deliberately absent — the site's name is the site's,
 /// and it comes from the export.
-pub const TERM_SITE_KEYS: &[&str] = &["shell", "stylesheet", "lang", "syntaxes"];
+pub const TERM_SITE_KEYS: &[&str] = &[
+    "shell",
+    "stylesheet",
+    "lang",
+    "syntaxes",
+    "header",
+    "footer",
+];
 
 /// What a term node contributes to the site gated on it.
 ///
@@ -109,6 +118,10 @@ pub struct TermConfig {
     pub lang: Option<String>,
     /// Extra grammars, as vault-relative paths, in declaration order.
     pub syntaxes: Vec<String>,
+    /// The site's header document, as a vault-relative path.
+    pub header: Option<String>,
+    /// The site's footer document, as a vault-relative path.
+    pub footer: Option<String>,
     /// What the term node said that this pass could not use, in the words of
     /// whoever has to fix it. Never fatal — a misspelled key costs a site one
     /// setting.
@@ -216,6 +229,8 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
         stylesheet: text(&site, "stylesheet"),
         lang: text(&site, "lang"),
         syntaxes: text_list(&site, "syntaxes"),
+        header: text(&site, "header"),
+        footer: text(&site, "footer"),
         warnings,
     }
 }

@@ -482,6 +482,45 @@ pub fn nav_for_page(
     }
 }
 
+/// The tree's reading order: every page the nav holds, depth-first, in the
+/// order the sidebar lists them.
+///
+/// A tree-shaped site is a book, and this is the order its pages are read
+/// in — the front page, then its subtree, then each forest root in the order
+/// [`build_site_nav_tree`] placed them. One sequence, continuous across the
+/// seam between the front page's subtree and the orphans, because the nav
+/// lists them continuously and the pager should agree with the sidebar. A
+/// `hide_from_nav` page is not in it, so it is in no sequence.
+pub fn reading_order(tree: &[SiteNavNode]) -> Vec<NavLink> {
+    fn walk(nodes: &[SiteNavNode], into: &mut Vec<NavLink>) {
+        for node in nodes {
+            into.push(NavLink {
+                href: node.href.clone(),
+                title: node.title.clone(),
+            });
+            walk(&node.children, into);
+        }
+    }
+    let mut out = Vec::new();
+    walk(tree, &mut out);
+    out
+}
+
+/// The page before and after `dest` in a [`reading_order`] — `None` at either
+/// end, and both `None` for a page the order does not hold.
+pub fn neighbours<'o>(
+    order: &'o [NavLink],
+    dest: &str,
+) -> (Option<&'o NavLink>, Option<&'o NavLink>) {
+    let Some(at) = order.iter().position(|link| link.href == dest) else {
+        return (None, None);
+    };
+    (
+        at.checked_sub(1).and_then(|i| order.get(i)),
+        order.get(at + 1),
+    )
+}
+
 /// Push the trail from a tree root down to `target` onto `into`, target last.
 /// `false` — and `into` untouched — when no root reaches it.
 fn trail_to(nodes: &[SiteNavNode], target: &str, into: &mut Vec<NavLink>) -> bool {
@@ -538,6 +577,8 @@ mod tests {
             hide_from_feed: false,
             id: None,
             source_markdown: String::new(),
+            headings: vec![],
+            toc: true,
         }
     }
 

@@ -152,11 +152,18 @@ What a template can name:
 | `backlinks` | the entries that link *to* this page, by path, each named once |
 | `relations` | the relation edges this page writes, keyed by relation name |
 | `inbound` | the pages that name this one, keyed by the relation they name it in |
+| `prev`, `next` | the page before and after this one in the nav's reading order, or null |
+| `headings` | this page's own headings, `{level, id, text}`, with the ids the anchors got |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
 `description`, `group_keys`, `is_root`. The pre-computed date parts are there
 instead of a filter syntax: a filter language is what turns a template format
 into a template *engine*, and a field that turns out to be wanted is one line.
+
+`headings` is the one key a body cannot know before its own template has run —
+a template that generates its headings should still get them listed — so a body
+that names it is expanded twice: once to find out what its headings are, and
+once more with them in scope. Every other page pays nothing.
 
 Every collection is assembled from the sources the render was handed, which are
 already the gate-admitted set — so **a template cannot name a withheld
@@ -189,7 +196,9 @@ a template produces.
 
 `{{path}}` therefore survives **in a link or image destination and nowhere
 else** — and it is resolved by reading the destination off the AST node, never by
-scanning text. A `{{` in a code block is the contents of a `code_block`, not a
+scanning text. The `href` an entry carries is a *destination*
+(`notes/entry.html`), and the link rewrite knows it as one: it is rebased to the
+page's depth like any other, rather than resolved as a source path and stripped. A `{{` in a code block is the contents of a `code_block`, not a
 `link`, so the substitution cannot reach it. A `{{ }}` anywhere else is not a
 template: it publishes as itself and is reported on
 `SiteRender::body_template_errors`, which is also the migration path off the
@@ -219,16 +228,67 @@ script or a CSS block is left alone.
 | `document_title` | text | `"Entry - Site"`, or the site's name on the front page |
 | `site_title` | text | the site's name on its own |
 | `body_class` | text | `has-site-nav`, or empty — write it inside `class="…"` |
+| `root_prefix` | text | `../` per level of depth, for a template's own `href="{{root_prefix}}index.html"` |
 | `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's `styles:` |
-| `site_nav` | raw | the navigation sidebar, empty when the site has no tree |
+| `site_nav` | raw | the mobile bar and the sidebar — masthead and tree — empty when the site has no tree |
 | `breadcrumbs` | raw | the breadcrumb trail |
+| `toc` | raw | the page's outline, "On this page", or empty |
+| `site_header` | raw | the site's header document, rendered for this page |
 | `content` | raw | the rendered body, links already rewritten |
-| `footer` | raw | the built-in attribution footer |
+| `pager` | raw | links to the previous and next page in reading order |
+| `site_footer` | raw | the site's footer document, rendered for this page |
+| `footer` | raw | the built-in attribution line |
 | `scripts` | raw | the built-in interactivity script, then the page's `scripts:` |
 
 `<title>` is not part of `head`, so a template decides where its own title tag
 goes. A page may name its own shell with `shell:` in frontmatter; a key the site
 does not carry falls back to the site shell and says why.
+
+### The frame
+
+Every heading in a body leaves the render with an `id` — `prov::link::slug` of
+its text, so a site render and a single-file render agree on what `## Status`
+is called, numbered `-2`, `-3` when a page repeats one — and a link to itself,
+inside the heading so the text is what a screen reader reads first. An `id` the
+body already carries is kept. The headings are data before they are markup:
+`toc` is the `h2`–`h3` ones as a nested list (empty when there are fewer than
+two, or the page says `toc: false`), and `headings` is the whole list for a
+template that wants its outline spelled its own way. The pass runs on the
+rendered HTML, so it covers all three grammars with one implementation.
+
+The sidebar starts with a masthead — the site's name, linking home — and the
+tree starts at the front page's children, so an entry sits at the depth it has.
+A node with children is a `<details>` disclosure, written `open` on the current
+page's ancestors and on its own node and closed elsewhere: the whole tree is in
+the HTML, crawlable and correct with scripting off, and which sections are open
+is a function of which page this is rather than state kept anywhere. The link
+is the summary's content, so the title navigates and the chevron opens. Below
+the content, `pager` links the previous and next page in the tree's reading
+order — the depth-first order the sidebar lists, continuous across the seam
+between the front page's subtree and the orphans — with `rel="prev"`/`"next"`
+for a reader mode to read the sequence off. A `hide_from_nav` page is in no
+sequence.
+
+`site_header` and `site_footer` are **documents**, not shell partials:
+`SiteOptions::header`/`footer` take a Markdown, Djot or HTML file's text and
+path, and each is rendered *per page* through the same pipeline a body is —
+template expansion against that page's context, `:vis` filtering for the
+site's audience, twig, link rewriting to the page's depth. A footer is then
+one line in the archive's own vocabulary:
+
+```markdown
+© :val[site.title] · [Source](https://github.com/diaryx-org/plates) · MIT or Apache-2.0
+```
+
+A partial was refused for the reason Handlebars was: the shell substitutor is
+named slots and nothing else, and a partial would be HTML — a thing an editor
+over the archive cannot edit and the gate cannot filter. A frame document is
+not an entry; the caller that plans the site keeps it out of the render set,
+and its own metadata block is stripped and otherwise unread.
+
+The built-in shell writes a skip link first in `<body>`, `<main id="content">`,
+a mobile bar whose button says `Menu` and keeps `aria-expanded` true, closes
+the drawer on Escape, and opens the sidebar scrolled to the reader's place.
 
 The substitutor is deliberately small — named slots, no expressions, no control
 flow. Handlebars was turned down, and the reason that decides it is that it has
