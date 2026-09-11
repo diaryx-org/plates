@@ -9,9 +9,7 @@ contents:
 - '[plates-cli](/plates-cli/README.md)'
 - '[Kitchen sink](/docs/kitchen-sink.md)'
 - '[Changelog](/docs/CHANGELOG.md)'
-- '[Proposal: the plates template format](/docs/proposals/templating.md)'
-- '[Proposal: a site is an export](/docs/proposals/site-declaration.md)'
-- '[Proposal: the site frame](/docs/proposals/site-frame.md)'
+- '[Proposals](/docs/proposals/proposals.md)'
 - '[Tasks](/docs/tasks/tasks.md)'
 - '[Audiences](/vocab/audiences.md)'
 fronts:
