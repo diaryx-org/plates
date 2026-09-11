@@ -175,7 +175,7 @@ pub fn build_sites(
                 block_on(read_term_config(
                     &ws,
                     &session.root_doc,
-                    &session.config.fields,
+                    &session.config,
                     spec.gate_field(),
                     // The value the gate compares, trimmed as prov trims it, so
                     // the term node found here is the term node the gate judged
