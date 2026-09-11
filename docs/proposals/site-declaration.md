@@ -1,6 +1,6 @@
 ---
 title: 'Proposal: a site is an export'
-part_of: '[plates](/README.md)'
+part_of: '[Proposals](/docs/proposals/proposals.md)'
 status: implemented
 author: adammharris
 created: 2026-08-27

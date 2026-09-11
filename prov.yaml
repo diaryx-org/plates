@@ -10,7 +10,7 @@ references:
   target: path
   label: false
 id_storage: both
-updated: ''
+updated: updated
 identity: lazy
 fixity: attachments
 recycle_bin: true
@@ -31,9 +31,40 @@ fields:
     values: closed
     vocabulary: '[Audiences](/vocab/audiences.md)'
     reify: true
+  status:
+  - under: '[[Tasks]]'
+    values: closed
+    vocabulary: '[Task statuses](/vocab/task-statuses.yaml)'
+    default: open
+  - under: '[[Proposals]]'
+    values: closed
+    vocabulary: '[Proposal statuses](/vocab/proposal-statuses.yaml)'
+    default: draft
+  created:
+    type: datetime
+  updated:
+    type: datetime
 exports:
   docs:
     label: plates
     gate:
       field: audience
       value: public
+created: created
+views:
+  open-tasks:
+    label: Open tasks
+    group: status
+    under: '[[Tasks]]'
+    where:
+      not:
+        equals: { status: [done, dropped] }
+  proposals:
+    label: Proposals
+    group: status
+    under: '[[Proposals]]'
+    where: { has: status }
+  work:
+    label: All work
+    group: status
+    where: { has: status }
