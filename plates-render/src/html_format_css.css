@@ -40,11 +40,11 @@
     --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
     --line-height-tight: 1.25;
     --sidebar-width: 16rem;
-    /* How far down anything under the fixed nav toggle has to start. The button
-       is 0.75rem from the top and a little over 2.3rem tall, so this clears it
-       with room to spare. The drawer and the page both read it, because the
-       button floats over both and a change to its size must move both. Only
-       consulted below the nav breakpoint, where the button is shown. */
+    /* How far down anything under the fixed mobile bar has to start. The bar
+       is a little under 3.5rem tall, so this clears it with room to spare. The
+       drawer and the page both read it, because the bar sits over both and a
+       change to its size must move both. Only consulted below the nav
+       breakpoint, where the bar is shown. */
     --nav-toggle-clear: 4.5rem;
     --page-pad-x: 1.5rem;
     --radius: 0.5rem;
@@ -193,6 +193,28 @@ a:hover {
    whichever element that turns out to be. */
 .content > :first-child {
     margin-top: 0;
+}
+
+/* The link every heading carries to itself (`plates_render::headings`).
+   Invisible until the heading is hovered or the link itself focused, so a
+   page reads as prose and a reader who wants the anchor can still find it
+   with a mouse or by tabbing. */
+.heading-anchor {
+    margin-left: 0.35em;
+    font-weight: 400;
+    text-decoration: none;
+    color: var(--text-muted);
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.content :is(h1, h2, h3, h4, h5, h6):hover > .heading-anchor,
+.heading-anchor:focus-visible {
+    opacity: 1;
+}
+
+.heading-anchor:hover {
+    color: var(--accent);
 }
 
 .content p {
@@ -383,31 +405,102 @@ a:hover {
     margin-bottom: 0.5rem;
 }
 
-/* ── Layout misc ── */
+/* ── The outline ──
+ *
+ * Two things wear `nav.toc`: the single-file render's table of contents, with
+ * an `<h2>` and a flat list, and a site page's "On this page" block, a
+ * `<details>` over a nested list of the page's own headings. Below the rail
+ * breakpoint the page's outline is a box above the content, closed by the
+ * built-in script so a long outline does not push the prose down; at width it
+ * moves out to the right-hand margin and stays put while the page scrolls.
+ */
 
 nav.toc {
     border: 1px solid var(--border);
-    padding: 1.25rem 1.5rem;
+    padding: 1rem 1.25rem;
     border-radius: var(--radius);
     margin-bottom: 2.5rem;
+    font-size: 0.875rem;
+    line-height: 1.5;
 }
 
-nav.toc h2 {
+nav.toc h2,
+nav.toc summary {
     margin: 0 0 0.5rem;
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    font-weight: 600;
     letter-spacing: 0.06em;
     text-transform: uppercase;
     color: var(--text-muted);
 }
 
+nav.toc summary {
+    cursor: pointer;
+    list-style: none;
+}
+
+nav.toc summary::-webkit-details-marker {
+    display: none;
+}
+
+nav.toc details:not([open]) > summary {
+    margin-bottom: 0;
+}
+
 nav.toc ul {
     margin: 0;
-    padding-left: 1.25rem;
+    padding-left: 1.1rem;
 }
 
 nav.toc li {
-    margin: 0.35rem 0;
+    margin: 0.3rem 0;
 }
+
+nav.toc a {
+    color: var(--text-muted);
+    text-decoration: none;
+}
+
+nav.toc a:hover {
+    color: var(--accent);
+    text-decoration: underline;
+}
+
+/* At width the outline is a rail in the right-hand margin, fixed so it stays
+   beside the reader as the page scrolls. 88rem is where a 12rem rail fits
+   beside a 44rem measure and a 16rem sidebar with the margins the layout
+   already leaves; a narrower window keeps the box above the content. */
+@media (min-width: 88rem) {
+    .site-content nav.toc {
+        position: fixed;
+        top: 2.5rem;
+        right: 1.25rem;
+        width: 12rem;
+        max-height: calc(100dvh - 5rem);
+        overflow-y: auto;
+        margin: 0;
+        padding: 0;
+        border: none;
+        border-left: 1px solid var(--divider-color);
+        border-radius: 0;
+        padding-left: 1rem;
+    }
+
+    .site-content nav.toc summary {
+        pointer-events: none;
+    }
+
+    .site-content nav.toc ul {
+        padding-left: 0;
+        list-style: none;
+    }
+
+    .site-content nav.toc ul ul {
+        padding-left: 0.75rem;
+    }
+}
+
+/* ── Layout misc ── */
 
 hr,
 .content hr {
@@ -429,7 +522,51 @@ footer {
 }
 
 footer p {
+    margin: 0.5rem 0;
+}
+
+/* The site's own header and footer documents, and the attribution line. An
+   empty element is one the site declared nothing for, and it costs no space. */
+.site-header:empty,
+.site-footer:empty {
+    display: none;
+}
+
+.site-header {
+    margin-bottom: 2rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--divider-color);
+    color: var(--text-muted);
+    font-size: 0.9rem;
+}
+
+.site-header > :first-child,
+.site-footer > :first-child {
+    margin-top: 0;
+}
+
+.site-header > :last-child,
+.site-footer > :last-child {
+    margin-bottom: 0;
+}
+
+/* A list in the header is a row of links, which is what a header's list is. */
+.site-header ul {
+    list-style: none;
     margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1.25rem;
+}
+
+.site-footer ul {
+    padding-left: 1.25rem;
+}
+
+.site-footer .generator {
+    margin-top: 1rem;
+    font-size: 0.8rem;
 }
 
 footer a {
@@ -442,25 +579,92 @@ footer a:hover {
     text-decoration-color: currentColor;
 }
 
+/* ── Skip link ──
+ *
+ * The first thing in the body: off-screen until focused, so a keyboard reader
+ * can step past the sidebar to `#content` in one tab.
+ */
+
+.skip-link {
+    position: absolute;
+    top: 0.5rem;
+    left: 0.5rem;
+    z-index: 1020;
+    padding: 0.5rem 0.75rem;
+    background: var(--bg);
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    transform: translateY(-200%);
+}
+
+.skip-link:focus {
+    transform: none;
+}
+
 /* ── Site navigation sidebar ── */
 
-.nav-toggle {
+/* The mobile bar: the menu button and the masthead, shown only below the nav
+   breakpoint, where it is the spelling of the sidebar's own masthead. */
+.site-bar {
     display: none;
     position: fixed;
-    top: 0.75rem;
-    left: 0.75rem;
+    top: 0;
+    left: 0;
+    right: 0;
     z-index: 1010;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.6rem var(--page-pad-x);
     background: var(--surface-bg);
-    border: 1px solid var(--surface-border);
-    border-radius: var(--radius);
-    padding: 0.5rem 0.75rem;
-    font-size: 1.25rem;
-    cursor: pointer;
-    color: var(--text);
-    box-shadow: var(--surface-shadow);
+    border-bottom: 1px solid var(--surface-border);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
-    line-height: 1;
+}
+
+.nav-toggle {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.35rem 0.7rem;
+    font: inherit;
+    font-size: 0.875rem;
+    font-weight: 500;
+    cursor: pointer;
+    color: var(--text);
+    line-height: 1.2;
+}
+
+.nav-toggle[aria-expanded="true"] {
+    background: var(--_accent-tint);
+    border-color: var(--_accent-rule);
+    color: var(--accent);
+}
+
+/* The site's name, linking home. In the sidebar it heads the tree; in the
+   mobile bar it sits beside the button. */
+.site-masthead {
+    display: block;
+    font-weight: 650;
+    font-size: 1rem;
+    letter-spacing: -0.011em;
+    color: var(--text);
+    text-decoration: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.site-masthead:hover {
+    color: var(--accent);
+}
+
+.site-nav > .site-masthead {
+    margin: 0 0.55rem 1rem;
+}
+
+.site-masthead[aria-current] {
+    color: var(--accent);
 }
 
 .site-nav {
@@ -528,15 +732,96 @@ body.has-site-nav {
     color: var(--text);
 }
 
-.nav-current > a {
+.nav-current > a,
+.nav-current > details > summary > a {
     background: var(--_accent-tint);
     color: var(--accent);
     font-weight: 600;
 }
 
-.nav-ancestor > a {
+.nav-ancestor > a,
+.nav-ancestor > details > summary > a {
     color: var(--text);
     font-weight: 500;
+}
+
+/* A section is a disclosure: the link is the summary's content and the
+   chevron beside it is the summary itself, so the title navigates and the
+   chevron opens. The user-agent marker is replaced because it sits before the
+   text and reads as a bullet. */
+.nav-section > details > summary {
+    display: flex;
+    align-items: center;
+    list-style: none;
+    cursor: pointer;
+}
+
+.nav-section > details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.nav-section > details > summary > a {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.nav-section > details > summary::after {
+    content: "";
+    flex: 0 0 auto;
+    width: 0.45em;
+    height: 0.45em;
+    margin: 0 0.6rem 0 0.4rem;
+    border-right: 1.5px solid var(--text-muted);
+    border-bottom: 1.5px solid var(--text-muted);
+    transform: rotate(-45deg);
+    transition: transform 0.15s;
+    opacity: 0.7;
+}
+
+.nav-section > details[open] > summary::after {
+    transform: rotate(45deg);
+}
+
+.nav-section > details > summary:hover::after {
+    opacity: 1;
+    border-color: var(--text);
+}
+
+/* ── Pager ── */
+
+.pager {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-top: 3rem;
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--divider-color);
+    font-size: 0.9rem;
+}
+
+.pager a {
+    display: block;
+    max-width: 48%;
+    text-decoration: none;
+    font-weight: 550;
+}
+
+.pager a:hover {
+    text-decoration: underline;
+}
+
+.pager a span {
+    display: block;
+    font-size: 0.75rem;
+    font-weight: 500;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.pager-next {
+    margin-left: auto;
+    text-align: right;
 }
 
 /* ── Breadcrumbs (single parent link, and the full trail) ── */
@@ -569,13 +854,13 @@ body.has-site-nav {
 /* ── Responsive ── */
 
 @media (max-width: 60rem) {
-    .nav-toggle {
-        display: block;
+    .site-bar {
+        display: flex;
     }
 
-    /* The drawer slides out *underneath* the toggle, so its own first item
-       needs the same clearance the page gets: at the desktop padding the root
-       entry sat behind the button. */
+    /* The drawer slides out *underneath* the bar, so its own first item
+       needs the same clearance the page gets; and the bar already names the
+       site, so the drawer's own masthead is redundant there. */
     .site-nav {
         padding-top: var(--nav-toggle-clear);
         transform: translateX(-100%);
@@ -583,13 +868,17 @@ body.has-site-nav {
         box-shadow: none;
     }
 
+    .site-nav > .site-masthead {
+        display: none;
+    }
+
     .site-nav.is-open {
         transform: translateX(0);
         box-shadow: 4px 0 16px rgba(0, 0, 0, 0.1);
     }
 
-    /* Clear the fixed toggle button, which would otherwise sit on top of the
-       first heading. */
+    /* Clear the fixed bar, which would otherwise sit on top of the first
+       heading. */
     body.has-site-nav {
         padding-left: var(--page-pad-x);
         padding-top: var(--nav-toggle-clear);
@@ -632,7 +921,9 @@ body.has-site-nav {
         --text-muted: #444;
     }
 
-    .site-nav, .nav-toggle { display: none; }
+    .site-nav, .site-bar, .skip-link, .pager, nav.toc { display: none; }
+
+    .heading-anchor { display: none; }
 
     body.has-site-nav {
         padding-left: 0;

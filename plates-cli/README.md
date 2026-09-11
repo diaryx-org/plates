@@ -116,6 +116,8 @@ front_page: '[Home](id:7f3a91c)'
 site:
   shell: .config/sites/docs/shell.html
   stylesheet: .config/sites/docs/style.css
+  header: .config/sites/docs/header.md
+  footer: .config/sites/docs/footer.md
   lang: en
   syntaxes:                       # grammars for languages the built-in 213 miss
     - .config/sites/docs/wat.sublime-syntax
@@ -129,6 +131,8 @@ Anyone; safe to publish. Everything here has left the archive on purpose.
 | `front_page` | The page that greets a reader, as a link resolved **relative to the term node** — through prov's link layer, so it survives a rename, a move and a retitle. Absent, an index is synthesized from the site's entries. |
 | `site.shell` | An HTML file with named slots, as an archive-relative path. `.config/sites/<name>/` is the recommended home, not a requirement. |
 | `site.stylesheet` | A CSS file that *replaces* the built-in sheet rather than layering over it. |
+| `site.header` | A document — Markdown, Djot or HTML — rendered above every page's content, through the same pipeline a body is: templated against the page's context, `:vis`-filtered for the audience, links rewritten to the page's depth. Not an entry: it never publishes as a page. |
+| `site.footer` | The same, below every page's content and before the attribution line. `© :val[site.title] · [Source](https://…)` is a whole footer. |
 | `site.lang` | BCP 47, for every page's `<html lang="…">`. Defaults to `en`, and a page carrying its own `lang:` overrides it for that page. |
 | `site.syntaxes` | `.sublime-syntax` files for languages the built-in grammars do not cover, as archive-relative paths. A list, or a bare path for the one-item case. |
 

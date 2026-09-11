@@ -275,7 +275,7 @@ pub fn build_sites(
 ///
 /// A fill rather than an override, and it can be nothing else: a spec derived
 /// from an export carries `None` — and an empty `syntaxes` — in exactly these
-/// five fields, because an export has no way to say any of them. The one field
+/// seven fields, because an export has no way to say any of them. The one field
 /// both surfaces could claim is `label`, and the export's wins, so it is not
 /// here.
 fn with_term_config(spec: &SiteSpec, term: TermConfig) -> (SiteSpec, Vec<String>) {
@@ -286,6 +286,8 @@ fn with_term_config(spec: &SiteSpec, term: TermConfig) -> (SiteSpec, Vec<String>
             stylesheet: term.stylesheet,
             lang: term.lang,
             syntaxes: term.syntaxes,
+            header: term.header,
+            footer: term.footer,
             ..spec.clone()
         },
         term.warnings,
@@ -365,6 +367,8 @@ fn assemble(
                 .iter()
                 .map(|(path, text)| (path.clone(), text.clone()))
                 .collect(),
+            header: theme.header.clone(),
+            footer: theme.footer.clone(),
         },
     );
 

@@ -86,8 +86,28 @@ pub fn title_to_anchor(title: &str) -> String {
     prov::link::slug(title)
 }
 
-/// Render the full site navigation sidebar.
-pub fn render_site_nav(nav: &SiteNavigation, root_prefix: &str) -> String {
+/// Render the site navigation: the mobile bar, then the sidebar.
+///
+/// `site_title` names the masthead — the link home at the top of the sidebar,
+/// which is where a site's name goes on every other site. The front page
+/// leaves the tree for it: when the tree's one root is the front page
+/// (`index.html`, the destination this crate gives every root), the list
+/// starts at its children, so an entry sits at the depth it has rather than
+/// one deeper. A rootless forest lists as it is, under a masthead that still
+/// links to `index.html`, which is where a supplied or synthesized front page
+/// lands.
+///
+/// A node with children is a disclosure — `<details>` around a `<summary>`
+/// holding the link — written `open` on the current page's ancestors and on
+/// the current page's own node, and closed everywhere else. The whole tree is
+/// still in the HTML: crawlable, printable, searchable with the browser's
+/// find, and correct with scripting off. No state is stored anywhere; which
+/// sections are open is a function of which page this is.
+///
+/// The link and the disclosure are separate targets: the `<a>` is the
+/// summary's content, so activating it navigates, and the rest of the summary
+/// — the chevron the stylesheet draws — toggles.
+pub fn render_site_nav(nav: &SiteNavigation, site_title: &str, root_prefix: &str) -> String {
     if nav.tree.is_empty() {
         return String::new();
     }
@@ -96,6 +116,9 @@ pub fn render_site_nav(nav: &SiteNavigation, root_prefix: &str) -> String {
         let mut html = String::from("<ul class=\"nav-list\">");
         for node in nodes {
             let mut classes = Vec::new();
+            if !node.children.is_empty() {
+                classes.push("nav-section");
+            }
             if node.is_current {
                 classes.push("nav-current");
             }
@@ -115,34 +138,100 @@ pub fn render_site_nav(nav: &SiteNavigation, root_prefix: &str) -> String {
                 ""
             };
 
-            html.push_str(&format!(
-                r#"<li{class}><a href="{prefix}{href}"{aria}>{title}</a>"#,
-                class = class_attr,
+            let link = format!(
+                r#"<a href="{prefix}{href}"{aria}>{title}</a>"#,
                 prefix = prefix,
                 href = html_escape(&node.href),
                 aria = aria,
                 title = html_escape(&node.title),
-            ));
+            );
 
-            if !node.children.is_empty() {
-                html.push_str(&render_nodes(&node.children, prefix));
+            if node.children.is_empty() {
+                html.push_str(&format!("<li{class_attr}>{link}</li>"));
+            } else {
+                let open = if node.is_current || node.is_ancestor_of_current {
+                    " open"
+                } else {
+                    ""
+                };
+                html.push_str(&format!(
+                    "<li{class_attr}><details{open}><summary>{link}</summary>{children}</details></li>",
+                    children = render_nodes(&node.children, prefix),
+                ));
             }
-
-            html.push_str("</li>");
         }
         html.push_str("</ul>");
         html
     }
 
-    let nav_list = render_nodes(&nav.tree, root_prefix);
+    // The front page is the masthead, not a row: its children are the top of
+    // the list. A forest — no root, or a supplied front page this crate never
+    // saw — lists as it stands.
+    let (on_front_page, top): (bool, &[SiteNavNode]) = match nav.tree.as_slice() {
+        [root] if root.href == FRONT_PAGE_DEST => (root.is_current, &root.children),
+        forest => (false, forest),
+    };
+    let masthead_aria = if on_front_page {
+        r#" aria-current="page""#
+    } else {
+        ""
+    };
+    let masthead = format!(
+        r#"<a class="site-masthead" href="{prefix}{FRONT_PAGE_DEST}"{aria}>{title}</a>"#,
+        prefix = root_prefix,
+        aria = masthead_aria,
+        title = html_escape(site_title),
+    );
+    let nav_list = if top.is_empty() {
+        String::new()
+    } else {
+        format!("\n{}", render_nodes(top, root_prefix))
+    };
 
     format!(
-        r#"<button class="nav-toggle" aria-label="Toggle navigation" aria-expanded="false">&#9776;</button>
-<nav class="site-nav" aria-label="Site navigation">
-{nav_list}
+        r#"<header class="site-bar">
+    <button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false">Menu</button>
+    {masthead}
+</header>
+<nav class="site-nav" id="site-nav" aria-label="Site navigation">
+{masthead}{nav_list}
 </nav>"#,
-        nav_list = nav_list,
     )
+}
+
+/// Where the site's front page lands, which is the one destination this crate
+/// decides for itself (`site::dest_for`): the masthead links to it, and a
+/// tree rooted there is a tree whose root is the front page.
+const FRONT_PAGE_DEST: &str = "index.html";
+
+/// The pager: links to the page before and after `current` in the nav's
+/// reading order, or nothing for a page that has neither.
+///
+/// `rel="prev"`/`rel="next"` are what a reader mode and a search engine read a
+/// sequence off. The order is [`crate::nav::reading_order`]'s — the depth-first
+/// order the sidebar lists — so a page's "next" is the row below it.
+pub fn render_pager(order: &[NavLink], current: &str, root_prefix: &str) -> String {
+    let (prev, next) = crate::nav::neighbours(order, current);
+    if prev.is_none() && next.is_none() {
+        return String::new();
+    }
+    let link = |rel: &str, label: &str, target: &NavLink| {
+        format!(
+            r#"<a class="pager-{rel}" rel="{rel}" href="{prefix}{href}"><span>{label}</span> {title}</a>"#,
+            prefix = root_prefix,
+            href = html_escape(&target.href),
+            title = html_escape(&target.title),
+        )
+    };
+    let mut out = String::from(r#"<nav class="pager" aria-label="Pager">"#);
+    if let Some(prev) = prev {
+        out.push_str(&link("prev", "Previous", prev));
+    }
+    if let Some(next) = next {
+        out.push_str(&link("next", "Next", next));
+    }
+    out.push_str("</nav>");
+    out
 }
 
 /// Render full breadcrumb trail from root to current page.
@@ -592,7 +681,7 @@ fn xml_escape(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{NavLink, PageLayout};
+    use crate::types::{NavLink, PageLayout, SiteNavNode};
     use std::path::PathBuf;
 
     fn make_page(dest: &str, title: &str, is_root: bool) -> PublishedPage {
@@ -623,6 +712,8 @@ mod tests {
             hide_from_feed: false,
             id: None,
             source_markdown: String::new(),
+            headings: vec![],
+            toc: true,
         }
     }
 
@@ -918,6 +1009,189 @@ mod tests {
         let rss = generate_rss_feed(&pages, "Site", "https://ex.com", "", "");
         assert!(rss.contains(r#"href="https://ex.com/other.html""#));
         assert!(rss.contains(r#"src="https://ex.com/_attachments/a.jpg""#));
+    }
+
+    // ── The sidebar ─────────────────────────────────────────────────────────
+
+    fn nav_node(href: &str, children: Vec<SiteNavNode>) -> SiteNavNode {
+        SiteNavNode {
+            title: href.trim_end_matches(".html").to_string(),
+            href: href.to_string(),
+            is_current: false,
+            is_ancestor_of_current: false,
+            children,
+        }
+    }
+
+    /// A tree rooted at the front page, with the reader on `b/leaf.html`.
+    fn rooted_nav() -> SiteNavigation {
+        let mut leaf = nav_node("b/leaf.html", vec![]);
+        leaf.is_current = true;
+        let mut b = nav_node("b.html", vec![leaf]);
+        b.is_ancestor_of_current = true;
+        let c = nav_node("c.html", vec![nav_node("c/kid.html", vec![])]);
+        let mut root = nav_node("index.html", vec![nav_node("a.html", vec![]), b, c]);
+        root.is_ancestor_of_current = true;
+        SiteNavigation {
+            tree: vec![root],
+            breadcrumbs: vec![],
+        }
+    }
+
+    /// The front page is the masthead, not the first row: the list starts at
+    /// its children, so an entry sits at the depth it has.
+    #[test]
+    fn the_front_page_leaves_the_tree_for_the_masthead() {
+        let html = render_site_nav(&rooted_nav(), "My Site", "../");
+        assert!(
+            html.contains(r#"<a class="site-masthead" href="../index.html">My Site</a>"#),
+            "got {html}"
+        );
+        assert!(
+            html.starts_with(r#"<header class="site-bar">"#),
+            "the bar comes first: {html}"
+        );
+        assert!(
+            html.contains(r#"<nav class="site-nav" id="site-nav" aria-label="Site navigation">"#),
+            "got {html}"
+        );
+        // The root's children are the top of the list, and `index.html` is
+        // not a row anywhere in it.
+        assert!(html.contains(r#"<ul class="nav-list"><li><a href="../a.html">a</a></li>"#));
+        assert_eq!(
+            html.matches("index.html").count(),
+            2,
+            "bar and sidebar mastheads only"
+        );
+        assert!(
+            html.contains(r#"<button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false">Menu</button>"#),
+            "got {html}"
+        );
+    }
+
+    /// The masthead is the current page on the front page, and nothing else
+    /// is.
+    #[test]
+    fn the_masthead_is_current_on_the_front_page() {
+        let mut nav = rooted_nav();
+        nav.tree[0].is_current = true;
+        nav.tree[0].is_ancestor_of_current = false;
+        let html = render_site_nav(&nav, "My Site", "");
+        assert!(
+            html.contains(
+                r#"<a class="site-masthead" href="index.html" aria-current="page">My Site</a>"#
+            ),
+            "got {html}"
+        );
+        let elsewhere = render_site_nav(&rooted_nav(), "My Site", "../");
+        assert!(!elsewhere.contains(r#"site-masthead" href="../index.html" aria-current"#));
+    }
+
+    /// A node with children is a disclosure, open on the current page's
+    /// branch and closed elsewhere — and the link is the summary's content, so
+    /// the title navigates and the chevron opens.
+    #[test]
+    fn sections_are_disclosures_open_along_the_current_branch() {
+        let html = render_site_nav(&rooted_nav(), "My Site", "../");
+        assert!(
+            html.contains(
+                r#"<li class="nav-section nav-ancestor"><details open><summary><a href="../b.html">b</a></summary><ul class="nav-list"><li class="nav-current"><a href="../b/leaf.html" aria-current="page">b/leaf</a></li></ul></details></li>"#
+            ),
+            "the ancestor is open: {html}"
+        );
+        assert!(
+            html.contains(
+                r#"<li class="nav-section"><details><summary><a href="../c.html">c</a></summary>"#
+            ),
+            "the other section is closed: {html}"
+        );
+    }
+
+    /// The current page's own section is open too, so a reader landing on a
+    /// section's page sees what is under it.
+    #[test]
+    fn the_current_sections_own_disclosure_is_open() {
+        let mut nav = rooted_nav();
+        let root = &mut nav.tree[0];
+        root.children[1].children[0].is_current = false;
+        root.children[1].is_ancestor_of_current = false;
+        root.children[1].is_current = true;
+        let html = render_site_nav(&nav, "My Site", "");
+        assert!(
+            html.contains(
+                r#"<li class="nav-section nav-current"><details open><summary><a href="b.html" aria-current="page">b</a></summary>"#
+            ),
+            "got {html}"
+        );
+    }
+
+    /// A rootless forest lists as it stands, under a masthead that still
+    /// links home — and a lone forest root is not mistaken for a front page.
+    #[test]
+    fn a_forest_lists_under_the_masthead() {
+        let nav = SiteNavigation {
+            tree: vec![nav_node(
+                "daily.html",
+                vec![nav_node("daily/mon.html", vec![])],
+            )],
+            breadcrumbs: vec![],
+        };
+        let html = render_site_nav(&nav, "Notes", "");
+        assert!(html.contains(r#"<a class="site-masthead" href="index.html">Notes</a>"#));
+        assert!(
+            html.contains(r#"<summary><a href="daily.html">daily</a></summary>"#),
+            "the forest root is a row: {html}"
+        );
+    }
+
+    #[test]
+    fn an_empty_tree_renders_no_nav_at_all() {
+        let nav = SiteNavigation {
+            tree: vec![],
+            breadcrumbs: vec![],
+        };
+        assert_eq!(render_site_nav(&nav, "My Site", ""), "");
+    }
+
+    // ── The pager ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn the_pager_links_the_neighbours_in_reading_order() {
+        let order = crate::nav::reading_order(&rooted_nav().tree);
+        let hrefs: Vec<&str> = order.iter().map(|l| l.href.as_str()).collect();
+        assert_eq!(
+            hrefs,
+            [
+                "index.html",
+                "a.html",
+                "b.html",
+                "b/leaf.html",
+                "c.html",
+                "c/kid.html"
+            ]
+        );
+
+        let middle = render_pager(&order, "b/leaf.html", "../");
+        assert_eq!(
+            middle,
+            r#"<nav class="pager" aria-label="Pager"><a class="pager-prev" rel="prev" href="../b.html"><span>Previous</span> b</a><a class="pager-next" rel="next" href="../c.html"><span>Next</span> c</a></nav>"#
+        );
+        let first = render_pager(&order, "index.html", "");
+        assert!(!first.contains("pager-prev"), "{first}");
+        assert!(first.contains(r#"rel="next" href="a.html""#), "{first}");
+        let last = render_pager(&order, "c/kid.html", "../");
+        assert!(last.contains(r#"rel="prev" href="../c.html""#), "{last}");
+        assert!(!last.contains("pager-next"), "{last}");
+    }
+
+    /// A page the nav does not hold is in no sequence, and a site of one page
+    /// has nowhere to go.
+    #[test]
+    fn a_page_outside_the_order_gets_no_pager() {
+        let order = crate::nav::reading_order(&rooted_nav().tree);
+        assert_eq!(render_pager(&order, "hidden.html", ""), "");
+        let alone = crate::nav::reading_order(&[nav_node("index.html", vec![])]);
+        assert_eq!(render_pager(&alone, "index.html", ""), "");
     }
 
     #[test]

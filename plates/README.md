@@ -61,15 +61,17 @@ and what the other two crates do, is
   and is what `plates-render` builds a site's navigation from, because reading a
   vault's `spanning:` needs a vault and the renderer has none. Walked from
   `CollectOptions::spanning_root`; naming no root collects no outline.
-- **The theme.** Reading a declaration's shell and stylesheet into *text*,
-  because the renderer cannot open a file. A missing one is reported in
-  `SiteTheme::warnings` and ignored — a vault that cannot publish because a
-  theme file was renamed has paid its existence for its styling.
+- **The theme.** Reading a declaration's shell, stylesheet, header and footer
+  into *text*, because the renderer cannot open a file. A missing one is
+  reported in `SiteTheme::warnings` and ignored — a vault that cannot publish
+  because a theme file was renamed has paid its existence for its styling. A
+  header or footer document is kept out of the plan's entries by
+  `spec::finish`: it frames every page and is not one.
 - **The term node.** When a gate's field declares a *reified* vocabulary
   (`fields.<field>.vocabulary` with `reify: true`), its value is a document, and
   that document is where a site's front page and render settings are written:
-  `front_page:` at top level, `shell`/`stylesheet`/`lang`/`syntaxes` under
-  `site:`. `term::read_term_config` reads them — no dialect of ours, only prov's
+  `front_page:` at top level, `shell`/`stylesheet`/`header`/`footer`/`lang`/
+  `syntaxes` under `site:`. `term::read_term_config` reads them — no dialect of ours, only prov's
   `fields:`, prov's spanning relation and the two keys prov declines to
   interpret. An archive with no vocabulary gets `TermConfig::default` and no
   complaint.
