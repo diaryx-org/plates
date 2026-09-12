@@ -11,6 +11,7 @@ contents:
 - '[Changelog](/docs/CHANGELOG.md)'
 - '[Proposal: the plates template format](/docs/proposals/templating.md)'
 - '[Proposal: a site is an export](/docs/proposals/site-declaration.md)'
+- '[Proposal: the site frame](/docs/proposals/site-frame.md)'
 - '[Audiences](/vocab/audiences.md)'
 fronts:
 - '[Public](/vocab/public.md)'

@@ -154,6 +154,22 @@ pub struct SiteSpec {
     /// where two grammars claim one extension the later wins.
     /// [`SITE_ASSETS_DIR`] is the recommended home, not a rule.
     pub syntaxes: Vec<String>,
+    /// The site's header, as a **vault-relative path** to a document —
+    /// Markdown, Djot or HTML — rendered above every page's content through
+    /// the same pipeline a body is: templating against the page's context,
+    /// `:vis` filtering for the site's audience, link rewriting to the page's
+    /// depth. `None` writes nothing there.
+    ///
+    /// A document rather than a shell partial, so that a masthead, a tagline
+    /// or a row of links is written in the vocabulary the archive already has
+    /// and needs no new template syntax. It is **not an entry**: a document
+    /// named here is kept out of the site's render set even when the gate
+    /// admits it, so it never publishes as a page of its own and never appears
+    /// in the nav. [`SITE_ASSETS_DIR`] is the recommended home.
+    pub header: Option<String>,
+    /// The site's footer, on exactly [`header`](Self::header)'s terms —
+    /// rendered below every page's content, before the attribution line.
+    pub footer: Option<String>,
 }
 
 impl SiteSpec {
@@ -363,9 +379,20 @@ pub fn finish(
     index_directory: Option<IndexDirectory>,
     census: &[CensusEntry],
 ) -> Result<SitePlan> {
+    // The site's frame is not an entry. A header or footer document the gate
+    // happens to admit — it sits in a walked directory and its author tagged
+    // it — would otherwise publish as a page, appear in the nav, and be the
+    // one page on the site whose content is printed twice.
+    let is_frame = |path: &Path| {
+        [spec.header.as_deref(), spec.footer.as_deref()]
+            .into_iter()
+            .flatten()
+            .any(|frame| Path::new(frame.trim()) == path)
+    };
     let entries: Vec<VisibleDoc> = export
         .entries
         .into_iter()
+        .filter(|doc| !is_frame(&doc.path))
         .map(|doc| VisibleDoc {
             path: doc.path,
             title: doc.title,
@@ -516,6 +543,8 @@ mod tests {
             stylesheet: None,
             lang: None,
             syntaxes: Vec::new(),
+            header: None,
+            footer: None,
         }
     }
 
@@ -535,6 +564,36 @@ mod tests {
             held: Vec::new(),
             withheld,
         }
+    }
+
+    /// The site's header and footer are documents, and a document the gate
+    /// admits would otherwise be an entry: a page of its own, a row in the
+    /// nav, and the one page whose content is printed twice.
+    #[test]
+    fn a_frame_document_is_not_an_entry() {
+        let spec = SiteSpec {
+            header: Some(".config/sites/docs/header.md".into()),
+            footer: Some(" .config/sites/docs/footer.md ".into()),
+            ..site("docs", "family")
+        };
+        let plan = finish(
+            &spec,
+            plan_of(
+                vec![
+                    entry("index.md"),
+                    entry(".config/sites/docs/header.md"),
+                    entry(".config/sites/docs/footer.md"),
+                    entry("about.md"),
+                ],
+                Vec::new(),
+            ),
+            None,
+            None,
+            &[],
+        )
+        .unwrap();
+        let paths: Vec<&Path> = plan.entries.iter().map(|d| d.path.as_path()).collect();
+        assert_eq!(paths, [Path::new("index.md"), Path::new("about.md")]);
     }
 
     fn plan_scoping_out(entries: Vec<ExportDoc>, outside_view: Vec<&str>) -> ExportPlan {

@@ -1,7 +1,8 @@
 //! A site's *render-facing* declaration: the shell it is wrapped in, the
-//! stylesheet it wears, the grammars it highlights code with, the language it
-//! is written in, and how it is arranged — resolved from the vault, and carried
-//! to whoever does the rendering.
+//! stylesheet it wears, the header and footer that frame every page, the
+//! grammars it highlights code with, the language it is written in, and how it
+//! is arranged — resolved from the vault, and carried to whoever does the
+//! rendering.
 //!
 //! # Why this is a separate pass
 //!
@@ -21,6 +22,7 @@
 use std::collections::{BTreeMap, HashSet};
 
 use plates_render::Arrangement;
+use plates_render::site::FrameDoc;
 use prov::{IdIndex, Storage, ViewSpec, Workspace};
 
 use crate::source::SourceFile;
@@ -63,6 +65,13 @@ pub struct SiteTheme {
     pub syntaxes: Vec<(String, String)>,
     /// How the site is arranged, from the view it declares.
     pub arrangement: Arrangement,
+    /// The header document named by [`SiteSpec::header`] — its path and its
+    /// **text**, for the reason [`template`](Self::template) is a text. The
+    /// path travels with it because its extension decides the grammar and its
+    /// relative links resolve against it.
+    pub header: Option<FrameDoc>,
+    /// The footer document named by [`SiteSpec::footer`], on the same terms.
+    pub footer: Option<FrameDoc>,
     /// Files the declaration named that could not be read, as messages for
     /// whoever wrote the declaration.
     ///
@@ -91,6 +100,8 @@ impl Default for SiteTheme {
             syntaxes: Vec::new(),
             lang: DEFAULT_LANG.to_string(),
             arrangement: Arrangement::default(),
+            header: None,
+            footer: None,
             warnings: Vec::new(),
         }
     }
@@ -124,6 +135,31 @@ pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
         }
     }
 
+    // Read as text like the shell, not walked like a document: a frame is
+    // rendered against each page rather than being one.
+    let header = read_asset(ws, spec, "header", spec.header.as_deref(), &mut warnings)
+        .await
+        .map(|source| FrameDoc {
+            path: spec
+                .header
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            source,
+        });
+    let footer = read_asset(ws, spec, "footer", spec.footer.as_deref(), &mut warnings)
+        .await
+        .map(|source| FrameDoc {
+            path: spec
+                .footer
+                .as_deref()
+                .unwrap_or_default()
+                .trim()
+                .to_string(),
+            source,
+        });
+
     SiteTheme {
         title: spec.display_label(),
         template,
@@ -140,6 +176,8 @@ pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
             .unwrap_or(DEFAULT_LANG)
             .to_string(),
         arrangement: arrangement_for(spec, views),
+        header,
+        footer,
         warnings,
     }
 }
