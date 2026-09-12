@@ -12,6 +12,7 @@ contents:
 - '[Proposal: the plates template format](/docs/proposals/templating.md)'
 - '[Proposal: a site is an export](/docs/proposals/site-declaration.md)'
 - '[Proposal: the site frame](/docs/proposals/site-frame.md)'
+- '[Tasks](/docs/tasks/tasks.md)'
 - '[Audiences](/vocab/audiences.md)'
 fronts:
 - '[Public](/vocab/public.md)'
