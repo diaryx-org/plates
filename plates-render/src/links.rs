@@ -2,7 +2,7 @@
 //! internal `.md` links to their published `.html` targets, and absolutizing a
 //! rendered body for consumers that read it away from the site.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 /// Compute the relative prefix to get from a page back to the site root.
@@ -30,6 +30,14 @@ pub fn root_prefix(dest_filename: &str) -> String {
 /// visibility, or simply missing) is stripped: the `<a>` becomes a
 /// `<span class="unpublished-link">` that keeps the link text but isn't
 /// clickable, so the page never points at something that 404s.
+///
+/// One more spelling is a link and not a stranger: an href that is already a
+/// page's **destination** (`notes/entry.html`, as site-root-relative as the
+/// map's values are). That is what a template writes when it reads `href` off
+/// an entry — `[:val[e.title]]({{e.href}})` — and it is rebased to the page's
+/// depth rather than resolved as a source path and stripped. A source path is
+/// tried first, so a hand-written link to an `.html` document the vault
+/// holds still means that document.
 ///
 /// Everything that is *not* a document link — an image, a PDF, an HTML
 /// attachment's island `<iframe>` — is then put through
@@ -75,6 +83,9 @@ fn rewrite_document_links(
         .strip_prefix(workspace_dir)
         .unwrap_or(current_path);
 
+    // The destinations this render writes, for the template case above.
+    let destinations: HashSet<&str> = path_to_filename.values().map(String::as_str).collect();
+
     let mut result = String::with_capacity(html.len());
     let mut remaining = html;
 
@@ -103,7 +114,7 @@ fn rewrite_document_links(
                 result.push_str(open_tag);
                 remaining = tail;
             }
-            Some((canonical, suffix)) => {
+            Some((canonical, written, suffix)) => {
                 // Anchors can't nest, so the next `</a>` closes this one.
                 let Some(close) = tail.find("</a>") else {
                     result.push_str(open_tag);
@@ -120,6 +131,16 @@ fn rewrite_document_links(
                         result.push_str(&replace_href(
                             open_tag,
                             &format!("{prefix}{html_path}{suffix}"),
+                        ));
+                        result.push_str(inner);
+                        result.push_str("</a>");
+                    }
+                    None if destinations.contains(written.as_str()) => {
+                        // Already a destination, as a template writes one:
+                        // rebase it to this page's depth and keep the anchor.
+                        result.push_str(&replace_href(
+                            open_tag,
+                            &format!("{prefix}{written}{suffix}"),
                         ));
                         result.push_str(inner);
                         result.push_str("</a>");
@@ -151,9 +172,9 @@ fn extract_href(open_tag: &str) -> Option<&str> {
 }
 
 /// If `raw_href` is an internal link to another *document*, return its
-/// workspace-relative canonical path and the `?query#fragment` that rode along
-/// with it; otherwise `None` (external, anchor and attachment links are
-/// skipped).
+/// workspace-relative canonical path, the decoded path as it was written, and
+/// the `?query#fragment` that rode along with it; otherwise `None` (external,
+/// anchor and attachment links are skipped).
 ///
 /// "Document" is [`prov::ContentFormat`]'s judgement, not a `.md` test: a vault
 /// links `.dj` and `.html` pages the same way it links `.md` ones, and each of
@@ -170,7 +191,7 @@ fn extract_href(open_tag: &str) -> Option<&str> {
 fn document_link_canonical<'h>(
     raw_href: &'h str,
     current_relative: &Path,
-) -> Option<(String, &'h str)> {
+) -> Option<(String, String, &'h str)> {
     if raw_href.starts_with("http://")
         || raw_href.starts_with("https://")
         || raw_href.starts_with('#')
@@ -187,6 +208,7 @@ fn document_link_canonical<'h>(
         prov::link::resolve(current_relative, &target)
             .to_string_lossy()
             .into_owned(),
+        decoded.trim().to_string(),
         suffix,
     ))
 }
@@ -712,6 +734,63 @@ mod tests {
             "notes/deep.html",
         );
         assert_eq!(out, r#"<img src="../img/photo.png" alt="a">"#);
+    }
+
+    /// A link whose href is already a page's destination — what a template
+    /// writes when it reads `href` off an entry — is a link to that page,
+    /// rebased to the page's depth, and not a source path to be stripped.
+    #[test]
+    fn a_destination_href_is_a_link_to_the_page_it_names() {
+        let workspace = Path::new("");
+        let mut map = HashMap::new();
+        map.insert(PathBuf::from("index.md"), "index.html".to_string());
+        map.insert(
+            PathBuf::from("notes/entry.md"),
+            "notes/entry.html".to_string(),
+        );
+        let html = r##"<a href="notes/entry.html#top">E</a> <a href="notes/gone.html">G</a>"##;
+
+        let out = transform_links(html, Path::new("index.md"), &map, workspace, "index.html");
+        assert_eq!(
+            out,
+            r##"<a href="notes/entry.html#top">E</a> <span class="unpublished-link" title="This page isn’t published">G</span>"##
+        );
+
+        // Written from a page at depth, the destination is still site-root
+        // relative — a template's `href` does not change with the page that
+        // reads it — so it climbs out first.
+        let out = transform_links(
+            html,
+            Path::new("notes/entry.md"),
+            &map,
+            workspace,
+            "notes/entry.html",
+        );
+        assert!(
+            out.starts_with(r##"<a href="../notes/entry.html#top">E</a>"##),
+            "{out}"
+        );
+    }
+
+    /// A source path wins over a destination when a spelling could be either:
+    /// a vault holding an `.html` document links it as the document it is.
+    #[test]
+    fn a_source_html_document_is_resolved_as_a_source() {
+        let workspace = Path::new("");
+        let mut map = HashMap::new();
+        map.insert(
+            PathBuf::from("notes/artifact.html"),
+            "notes/artifact.html".to_string(),
+        );
+        let html = r#"<a href="artifact.html">A</a>"#;
+        let out = transform_links(
+            html,
+            Path::new("notes/entry.md"),
+            &map,
+            workspace,
+            "notes/entry.html",
+        );
+        assert_eq!(out, r#"<a href="../notes/artifact.html">A</a>"#);
     }
 
     /// An island `<iframe>` and a plain link to a non-document attachment are

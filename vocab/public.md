@@ -4,6 +4,7 @@ term: public
 part_of: '[Audiences](/vocab/audiences.md)'
 front_page: '[plates](/README.md)'
 site:
+  footer: .config/sites/docs/footer.md
   lang: en
 ---
 

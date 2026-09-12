@@ -212,6 +212,28 @@ pub struct PublishedPage {
     /// The audience-scoped markdown source (frontmatter + visibility-filtered
     /// body) uploaded as a sibling so the server can serve `?content`/`?json`.
     pub source_markdown: String,
+    /// The headings of the rendered body, in document order, each with the
+    /// `id` the render gave it — what the `toc` shell slot and a template's
+    /// `headings` list are made of. See [`crate::headings`].
+    ///
+    /// Empty for a `verbatim` page, whose body nothing reads.
+    pub headings: Vec<Heading>,
+    /// Whether the built-in shell writes this page's outline (frontmatter
+    /// `toc`, `true` unless the page says `toc: false`). Turns off the
+    /// `toc` slot only: the headings keep their anchors and a template still
+    /// sees them.
+    pub toc: bool,
+}
+
+/// One heading of a rendered body, as the outline lists it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Heading {
+    /// 1–6, from the tag.
+    pub level: u8,
+    /// The anchor: the heading's `id`, as written on the tag.
+    pub id: String,
+    /// The heading's text, markup stripped and entities decoded.
+    pub text: String,
 }
 
 impl PublishedPage {

@@ -15,9 +15,12 @@
 
 use crate::appearance::{FaviconAsset, ThemeAppearance};
 
+use crate::headings::render_toc;
 use crate::links::root_prefix;
+use crate::nav::reading_order;
 use crate::page::{
-    html_escape, render_breadcrumb, render_full_breadcrumbs, render_site_nav, title_to_anchor,
+    html_escape, render_breadcrumb, render_full_breadcrumbs, render_pager, render_site_nav,
+    title_to_anchor,
 };
 use crate::shell::{ShellSlots, ShellTemplate};
 use crate::types::{PageLayout, PublishedPage, SiteNavigation};
@@ -140,6 +143,12 @@ pub struct PageContext<'a> {
     /// The caller's shell, or `None` for the built-in one. Ignored by a page
     /// whose layout is [`PageLayout::Bare`].
     pub template: Option<&'a ShellTemplate>,
+    /// The site's header document, already rendered for this page — the
+    /// `site_header` slot. Empty when the site declares none.
+    pub site_header: &'a str,
+    /// The site's footer document, on the same terms — the `site_footer`
+    /// slot.
+    pub site_footer: &'a str,
 }
 
 /// Assembles complete HTML documents from rendered page bodies.
@@ -377,7 +386,7 @@ impl HtmlRenderer {
 </body>
 </html>"#,
             document_title = html_escape(&document_title(&page.title, site_title)),
-            footer = footer_html(self.style.generator.as_ref()),
+            footer = footer_element(self.style.generator.as_ref()),
             css_link = css_link,
             favicon_link = favicon_link,
             breadcrumb = breadcrumb_html,
@@ -454,7 +463,7 @@ impl HtmlRenderer {
 </body>
 </html>"#,
             site_title = html_escape(site_title),
-            footer = footer_html(self.style.generator.as_ref()),
+            footer = footer_element(self.style.generator.as_ref()),
             css = self.css(),
             favicon_link = favicon_link,
             toc = toc,
@@ -500,24 +509,44 @@ impl HtmlRenderer {
         let mut scripts = vec![format!(
             r#"<script>
     (function() {{
-        // Nav hamburger toggle
+        // The nav drawer. The button says whether it is open, Escape closes
+        // it and hands focus back, and the sidebar opens on the reader's
+        // place in the tree rather than its top.
         var toggle = document.querySelector('.nav-toggle');
         var nav = document.querySelector('.site-nav');
         if (toggle && nav) {{
+            var setOpen = function(open) {{
+                nav.classList.toggle('is-open', open);
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }};
             toggle.addEventListener('click', function(e) {{
                 e.stopPropagation();
-                nav.classList.toggle('is-open');
+                setOpen(!nav.classList.contains('is-open'));
             }});
             document.addEventListener('click', function(e) {{
-                if (!nav.contains(e.target)) nav.classList.remove('is-open');
+                if (!nav.contains(e.target)) setOpen(false);
             }});
+            document.addEventListener('keydown', function(e) {{
+                if (e.key === 'Escape' && nav.classList.contains('is-open')) {{
+                    setOpen(false);
+                    toggle.focus();
+                }}
+            }});
+            var current = nav.querySelector('[aria-current]');
+            if (current && current.scrollIntoView) current.scrollIntoView({{ block: 'center' }});
         }}
+        // The outline is written open, for a reader with scripting off; on a
+        // narrow screen it would push the content down, so it starts closed.
+        var toc = document.querySelector('.toc details');
+        if (toc && !window.matchMedia('(min-width: 88rem)').matches) toc.open = false;
         {interactivity_script}
     }})();
     </script>"#,
             interactivity_script = self.interactivity_script(),
         )];
         scripts.extend(script_tags(&page.scripts, &prefix));
+
+        let order = reading_order(&ctx.nav.tree);
 
         ShellSlots {
             lang: ctx.lang.to_string(),
@@ -529,11 +558,20 @@ impl HtmlRenderer {
                 "has-site-nav".to_string()
             },
             head: join_tags(head),
-            site_nav: render_site_nav(ctx.nav, &prefix),
+            site_nav: render_site_nav(ctx.nav, ctx.site_title, &prefix),
             breadcrumbs: render_full_breadcrumbs(&ctx.nav.breadcrumbs, &prefix),
+            toc: if page.toc {
+                render_toc(&page.headings)
+            } else {
+                String::new()
+            },
+            site_header: ctx.site_header.to_string(),
             content: page.rendered_body.clone(),
+            pager: render_pager(&order, &page.dest_filename, &prefix),
+            site_footer: ctx.site_footer.to_string(),
             footer: footer_html(self.style.generator.as_ref()),
             scripts: join_tags(scripts),
+            root_prefix: prefix,
         }
     }
 
@@ -591,11 +629,13 @@ impl HtmlRenderer {
     }
 }
 
-/// The attribution footer both site shells carry, indented for its place inside
-/// `<div class="site-content">`.
+/// The attribution line both site shells carry: a paragraph, for the shell to
+/// place inside whatever `<footer>` it writes.
 ///
-/// Empty — no `<footer>` element at all — when no [`Generator`] is named, which
-/// is what an unbranded render is.
+/// Empty when no [`Generator`] is named, which is what an unbranded render is.
+/// It used to carry its own `<footer>` element; the built-in shell now writes
+/// one for the site footer and this together, so a caller's stylesheet that
+/// selected `footer` still reaches it.
 fn footer_html(generator: Option<&Generator>) -> String {
     let Some(generator) = generator else {
         return String::new();
@@ -605,7 +645,17 @@ fn footer_html(generator: Option<&Generator>) -> String {
         Some(url) => format!(r#"<a href="{}">{}</a>"#, html_escape(url), name),
         None => name,
     };
-    format!("<footer>\n        <p>Generated by {credit}</p>\n    </footer>")
+    format!(r#"<p class="generator">Generated by {credit}</p>"#)
+}
+
+/// [`footer_html`] in a `<footer>` of its own, for the two shells that write
+/// no site footer around it — or nothing at all, rather than an empty element.
+fn footer_element(generator: Option<&Generator>) -> String {
+    let credit = footer_html(generator);
+    if credit.is_empty() {
+        return credit;
+    }
+    format!("<footer>\n        {credit}\n    </footer>")
 }
 
 /// The built-in site shell.
@@ -623,7 +673,7 @@ fn builtin_shell(slots: &ShellSlots) -> String {
     };
 
     format!(
-        r#"<!DOCTYPE html>
+        r##"<!DOCTYPE html>
 <html lang="{lang}">
 <head>
     <meta charset="UTF-8">
@@ -632,28 +682,36 @@ fn builtin_shell(slots: &ShellSlots) -> String {
     {head}
 </head>
 <body{body_class}>
+    <a class="skip-link" href="#content">Skip to content</a>
     {site_nav}
     <div class="site-content">
-    <main>
+    <header class="site-header">{site_header}</header>
+    <main id="content">
         <article>
             {breadcrumbs}
+            {toc}
             <div class="content">
                 {content}
             </div>
         </article>
+        {pager}
     </main>
-    {footer}
+    <footer class="site-footer">{site_footer}{footer}</footer>
     </div>
     {scripts}
 </body>
-</html>"#,
+</html>"##,
         lang = html_escape(&slots.lang),
         document_title = html_escape(&slots.document_title),
         head = slots.head,
         body_class = body_class,
         site_nav = slots.site_nav,
+        site_header = slots.site_header,
         breadcrumbs = slots.breadcrumbs,
+        toc = slots.toc,
         content = slots.content,
+        pager = slots.pager,
+        site_footer = slots.site_footer,
         footer = slots.footer,
         scripts = slots.scripts,
     )
@@ -715,6 +773,8 @@ mod tests {
             hide_from_feed: false,
             id: None,
             source_markdown: String::new(),
+            headings: vec![],
+            toc: true,
         }
     }
 
@@ -851,6 +911,8 @@ mod tests {
             feed_links: "",
             lang: "en",
             template,
+            site_header: "",
+            site_footer: "",
         }
     }
 
@@ -861,22 +923,24 @@ mod tests {
         }
     }
 
-    /// The exact document the built-in shell has always produced. Pinned byte
-    /// for byte, because "the default is unchanged" is the promise every site
-    /// published before templates existed was published under, and a promise
-    /// about bytes cannot be kept by an assertion about substrings.
+    /// The exact document the built-in shell produces. Pinned byte for byte,
+    /// because "the default is unchanged" is the promise every site published
+    /// without a template is published under, and a promise about bytes cannot
+    /// be kept by an assertion about substrings. When the shell changes on
+    /// purpose — a slot added, a landmark moved — this is updated, not
+    /// weakened: it is the record of what a page contains.
     #[test]
     fn the_built_in_shell_is_unchanged() {
         let page = make_page("index.html", "Home", true);
         let nav = empty_nav();
         let html = credited().render_page_in_site(&page, &site_ctx(&nav, None));
 
-        // The shell's *old* format string, reproduced verbatim with its slots
-        // filled by hand. Written this way rather than as the finished document
+        // The shell's format string, reproduced verbatim with its slots filled
+        // by hand. Written this way rather than as the finished document
         // because the empty slots leave lines of trailing whitespace, which a
         // literal in this file would be one editor away from losing.
         let expected = format!(
-            r#"<!DOCTYPE html>
+            r##"<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -888,39 +952,59 @@ mod tests {
     {feed_links}
 </head>
 <body{body_class}>
+    <a class="skip-link" href="#content">Skip to content</a>
     {site_nav}
     <div class="site-content">
-    <main>
+    <header class="site-header">{site_header}</header>
+    <main id="content">
         <article>
             {breadcrumb}
+            {toc}
             <div class="content">
                 {content}
             </div>
         </article>
+        {pager}
     </main>
-    <footer>
-        <p>Generated by <a href="https://example.com">Example</a></p>
-    </footer>
+    <footer class="site-footer">{site_footer}<p class="generator">Generated by <a href="https://example.com">Example</a></p></footer>
     </div>
     <script>
     (function() {{
-        // Nav hamburger toggle
+        // The nav drawer. The button says whether it is open, Escape closes
+        // it and hands focus back, and the sidebar opens on the reader's
+        // place in the tree rather than its top.
         var toggle = document.querySelector('.nav-toggle');
         var nav = document.querySelector('.site-nav');
         if (toggle && nav) {{
+            var setOpen = function(open) {{
+                nav.classList.toggle('is-open', open);
+                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+            }};
             toggle.addEventListener('click', function(e) {{
                 e.stopPropagation();
-                nav.classList.toggle('is-open');
+                setOpen(!nav.classList.contains('is-open'));
             }});
             document.addEventListener('click', function(e) {{
-                if (!nav.contains(e.target)) nav.classList.remove('is-open');
+                if (!nav.contains(e.target)) setOpen(false);
             }});
+            document.addEventListener('keydown', function(e) {{
+                if (e.key === 'Escape' && nav.classList.contains('is-open')) {{
+                    setOpen(false);
+                    toggle.focus();
+                }}
+            }});
+            var current = nav.querySelector('[aria-current]');
+            if (current && current.scrollIntoView) current.scrollIntoView({{ block: 'center' }});
         }}
+        // The outline is written open, for a reader with scripting off; on a
+        // narrow screen it would push the content down, so it starts closed.
+        var toc = document.querySelector('.toc details');
+        if (toc && !window.matchMedia('(min-width: 88rem)').matches) toc.open = false;
         {interactivity_script}
     }})();
     </script>
 </body>
-</html>"#,
+</html>"##,
             document_title = "Home - My Site",
             css_link = r#"<link rel="stylesheet" href="style.css">"#,
             favicon_link = "",
@@ -928,8 +1012,12 @@ mod tests {
             feed_links = "",
             body_class = "",
             site_nav = "",
+            site_header = "",
             breadcrumb = "",
+            toc = "",
             content = "<p>Hello world</p>",
+            pager = "",
+            site_footer = "",
             interactivity_script = HtmlRenderer::new().interactivity_script(),
         );
         assert_eq!(html, expected);

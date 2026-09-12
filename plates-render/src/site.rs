@@ -23,9 +23,11 @@ use serde_json::Value as JsonValue;
 use crate::dates;
 
 use crate::html::{HtmlRenderer, PageContext, SiteStyle};
-use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page};
+use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
 use crate::shell::ShellTemplate;
-use crate::types::{LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage};
+use crate::types::{
+    Heading, LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage, SiteNavNode,
+};
 use crate::{body, links, page, template};
 
 /// A stored source document to render.
@@ -148,10 +150,15 @@ pub struct SiteOptions {
     /// | `document_title` | text | `"Entry - Site"`, or the site's name on the front page |
     /// | `site_title` | text | the site's name on its own |
     /// | `body_class` | text | `has-site-nav`, or empty — write it inside `class="…"` |
+    /// | `root_prefix` | text | `../` per level of depth, for a template's own link to `index.html` or `style.css` |
     /// | `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's `styles:` |
-    /// | `site_nav` | raw | the navigation sidebar, empty when the site has no tree |
+    /// | `site_nav` | raw | the masthead and the navigation sidebar, empty when the site has no tree |
     /// | `breadcrumbs` | raw | the breadcrumb trail |
+    /// | `toc` | raw | the page's outline ("On this page"), or empty |
+    /// | `site_header` | raw | the site's [`header`](Self::header), rendered for this page |
     /// | `content` | raw | the rendered body, links already rewritten |
+    /// | `pager` | raw | links to the previous and next page in reading order |
+    /// | `site_footer` | raw | the site's [`footer`](Self::footer), rendered for this page |
     /// | `footer` | raw | the built-in attribution footer |
     /// | `scripts` | raw | the built-in interactivity script, then the page's `scripts:` |
     ///
@@ -215,6 +222,39 @@ pub struct SiteOptions {
     /// Ignored entirely without the `syntax-highlighting` feature, where no
     /// block is coloured and there is nothing for a grammar to do.
     pub syntaxes: IndexMap<String, String>,
+    /// The site's header: a document rendered above every page's content,
+    /// into the `site_header` shell slot. `None` writes an empty slot.
+    ///
+    /// A *document* — Markdown, Djot or HTML, read off its path's extension —
+    /// rather than a shell partial, because a document already has everything
+    /// a frame needs: the template vocabulary, so it can name the site, the
+    /// page and the entries; `:vis`, so one footer can carry a line only one
+    /// audience sees; and links that are rewritten like any body's, so
+    /// `[About](/about.md)` works from a page at any depth. It is rendered
+    /// **per page**, against that page's context, and its own metadata block
+    /// is stripped and otherwise unread. It is not an entry: it never
+    /// publishes as a page, never appears in the nav, and the caller that
+    /// plans the site is expected to keep it out of the render set.
+    ///
+    /// The text, for the reason [`template`](Self::template) is text.
+    pub header: Option<FrameDoc>,
+    /// The site's footer, on exactly [`header`](Self::header)'s terms, into
+    /// the `site_footer` slot. The built-in shell writes it before the
+    /// attribution `footer` slot inside one `<footer>`.
+    pub footer: Option<FrameDoc>,
+}
+
+/// A document that frames every page — a site's header or footer — as the
+/// text of the file and the path it was read from.
+///
+/// The path is load-bearing twice over: its extension decides the grammar the
+/// text is parsed in, and relative links in the text resolve against it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameDoc {
+    /// Vault-relative path, spelled the way [`SourceDoc::path`] is.
+    pub path: String,
+    /// The file's text, metadata block and all.
+    pub source: String,
 }
 
 impl Default for SiteOptions {
@@ -233,6 +273,8 @@ impl Default for SiteOptions {
             lang: DEFAULT_LANG.to_string(),
             front_page_supplied: false,
             syntaxes: IndexMap::new(),
+            header: None,
+            footer: None,
         }
     }
 }
@@ -337,26 +379,50 @@ pub struct SiteRender {
 pub fn build_pages(sources: &[SourceDoc], opts: &SiteOptions) -> Vec<PublishedPage> {
     #[cfg(feature = "syntax-highlighting")]
     let syntaxes = resolve_syntaxes(opts);
-    pages_from(
+    let (mut pages, mut prepared) = prepare(sources, opts);
+    // No front page is synthesized here, so the reading order is the forest's
+    // own; `render_site` hangs it under the index first.
+    let tree = build_site_nav_tree(&pages, &opts.outline);
+    render_bodies(
+        &mut pages,
+        0,
         sources,
         opts,
+        &mut prepared,
+        &tree,
         #[cfg(feature = "syntax-highlighting")]
         syntaxes.get(),
         &mut Vec::new(),
-    )
+    );
+    pages
 }
 
-/// [`build_pages`], against a grammar set the caller has already assembled.
+/// Everything a render has in hand before the first body is rendered.
 ///
-/// Split out so that [`render_site`] — which needs the set's warnings for
-/// [`SiteRender::syntax_errors`] — can assemble it once and read both, rather
-/// than unpacking the dumps a second time to ask what went wrong the first.
-fn pages_from(
-    sources: &[SourceDoc],
-    opts: &SiteOptions,
-    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
-    reports: &mut Vec<String>,
-) -> Vec<PublishedPage> {
+/// Two phases rather than one, because a body's template can name what the
+/// site *is* — the entries, the page after this one — and the site is not
+/// known until every source's metadata has been read. So the metadata is read
+/// first, into a [`PublishedPage`] with an empty body, and the bodies are
+/// rendered against the whole.
+struct Prepared {
+    /// Sanitized source path → destination, for link rewriting and for
+    /// resolving a `contents:`/`part_of:` entry.
+    path_to_filename: HashMap<PathBuf, String>,
+    /// The template context's site-level half and per-path lookups.
+    collected: Collected,
+    /// Each source's metadata block and body, parsed once; parallel to the
+    /// sources.
+    parsed: Vec<frontmatter::ParsedFile>,
+    /// Each source page's own half of the template context, parallel to the
+    /// sources. Filled by [`render_bodies`], which is where `headings` and
+    /// the page's neighbours join it, and read again by whatever renders
+    /// *against* the page afterwards — the site's header and footer.
+    values: Vec<serde_json::Map<String, JsonValue>>,
+}
+
+/// Read every source's metadata into a page with no body yet, and assemble
+/// what the bodies will be rendered against.
+fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Prepared) {
     // Map sanitized canonical `.md` path → output `.html` filename (root →
     // index.html, a `serve_at:` claim to what it claims). Sources are keyed by
     // their workspace-relative path; we sanitize keys so that frontmatter links
@@ -368,15 +434,18 @@ fn pages_from(
     // document nobody needs.
     let mut path_to_filename: HashMap<PathBuf, String> = HashMap::new();
     let mut title_map: HashMap<PathBuf, String> = HashMap::new();
+    let mut parsed = Vec::with_capacity(sources.len());
     for s in sources {
         let key = PathBuf::from(links::sanitize_rel_path(&s.path));
-        let fm = frontmatter::parse_or_empty(&s.markdown)
-            .map(|parsed| parsed.frontmatter)
-            .unwrap_or_default();
-        if let Some(t) = frontmatter::get_string(&fm, "title") {
+        let file = frontmatter::parse_or_empty(&s.markdown).unwrap_or(frontmatter::ParsedFile {
+            frontmatter: IndexMap::new(),
+            body: s.markdown.clone(),
+        });
+        if let Some(t) = frontmatter::get_string(&file.frontmatter, "title") {
             title_map.insert(key.clone(), t.to_string());
         }
-        path_to_filename.insert(key, dest_for(&s.path, s.is_root, &fm));
+        path_to_filename.insert(key, dest_for(&s.path, s.is_root, &file.frontmatter));
+        parsed.push(file);
     }
 
     // The collection context, from the same sources and therefore from the
@@ -387,21 +456,59 @@ fn pages_from(
     // pipeline rather than a check inside it.
     let collected = collect_context(sources, opts, &path_to_filename);
 
-    sources
+    let pages = sources
         .iter()
-        .map(|s| {
-            build_page(
-                s,
-                opts,
-                &path_to_filename,
-                &title_map,
-                &collected,
-                #[cfg(feature = "syntax-highlighting")]
-                syntaxes,
-                reports,
-            )
-        })
-        .collect()
+        .zip(&parsed)
+        .map(|(s, file)| page_skeleton(s, file, opts, &path_to_filename, &title_map))
+        .collect();
+
+    (
+        pages,
+        Prepared {
+            path_to_filename,
+            collected,
+            parsed,
+            values: Vec::new(),
+        },
+    )
+}
+
+/// Render every source's body into its page.
+///
+/// `pages` is the whole site — `sources` plus, at index `0` when `offset` is
+/// `1`, the front page [`render_site`] synthesized — and `tree` is the nav
+/// built over it, which is where a page's neighbours in reading order come
+/// from. A synthesized front page has no source and its body is already HTML,
+/// so it is skipped here.
+#[allow(clippy::too_many_arguments)]
+fn render_bodies(
+    pages: &mut [PublishedPage],
+    offset: usize,
+    sources: &[SourceDoc],
+    opts: &SiteOptions,
+    prepared: &mut Prepared,
+    tree: &[SiteNavNode],
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+    reports: &mut Vec<String>,
+) {
+    let order = reading_order(tree);
+    for (i, s) in sources.iter().enumerate() {
+        let page = &mut pages[i + offset];
+        let (prev, next) = neighbours(&order, &page.dest_filename);
+        let values = render_body(
+            page,
+            s,
+            &prepared.parsed[i],
+            opts,
+            &prepared.path_to_filename,
+            &prepared.collected,
+            (prev, next),
+            #[cfg(feature = "syntax-highlighting")]
+            syntaxes,
+            reports,
+        );
+        prepared.values.push(values);
+    }
 }
 
 // ── The template context ────────────────────────────────────────────────────
@@ -868,13 +975,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     #[cfg(feature = "syntax-highlighting")]
     let syntaxes = resolve_syntaxes(opts);
     let mut body_template_errors = Vec::new();
-    let mut pages = pages_from(
-        sources,
-        opts,
-        #[cfg(feature = "syntax-highlighting")]
-        syntaxes.get(),
-        &mut body_template_errors,
-    );
+    let (mut pages, mut prepared) = prepare(sources, opts);
 
     // Read the site's name off an **authored** root, before synthesis can add
     // one. A synthesized front page is named *after* the site, so asking it
@@ -887,13 +988,29 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
         .or_else(|| pages.iter().find(|p| p.is_root).map(|p| p.title.clone()))
         .unwrap_or_else(|| DEFAULT_SITE_TITLE.to_string());
 
-    if !pages.iter().any(|p| p.is_root) && !pages.is_empty() && !opts.front_page_supplied {
+    // Synthesized from metadata alone, which is all a front page lists — and
+    // before the bodies, because the nav hangs the forest under it and the
+    // bodies are rendered against that nav's reading order.
+    let synthesized =
+        !pages.iter().any(|p| p.is_root) && !pages.is_empty() && !opts.front_page_supplied;
+    if synthesized {
         let index = synthesize_index(&pages, opts);
         pages.insert(0, index);
     }
 
     let renderer = HtmlRenderer::with_style(opts.style.clone());
     let nav_tree = build_site_nav_tree(&pages, &opts.outline);
+    render_bodies(
+        &mut pages,
+        usize::from(synthesized),
+        sources,
+        opts,
+        &mut prepared,
+        &nav_tree,
+        #[cfg(feature = "syntax-highlighting")]
+        syntaxes.get(),
+        &mut body_template_errors,
+    );
 
     // Compiled once for the whole site, not once per page: a template's errors
     // are about the template, and reporting them per page would say the same
@@ -946,8 +1063,35 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     let writes_feeds = opts.generate_feeds && !base_url.is_empty();
 
     let mut out_pages = Vec::with_capacity(pages.len());
-    for p in &pages {
+    for (i, p) in pages.iter().enumerate() {
         let nav = nav_for_page(&nav_tree, &p.dest_filename, &pages);
+        // The site's header and footer, rendered *for this page*: against its
+        // context, at its depth. A synthesized front page has no context of
+        // its own to render them against, so it takes them against the site's
+        // alone.
+        let values = i
+            .checked_sub(usize::from(synthesized))
+            .and_then(|source_index| prepared.values.get(source_index));
+        let empty = serde_json::Map::new();
+        let context = template::Context::new(&prepared.collected.context, values.unwrap_or(&empty));
+        let mut frame = |doc: Option<&FrameDoc>, what: &str| {
+            doc.map(|doc| {
+                render_frame_doc(
+                    doc,
+                    what,
+                    p,
+                    context,
+                    opts,
+                    &prepared.path_to_filename,
+                    #[cfg(feature = "syntax-highlighting")]
+                    syntaxes.get(),
+                    &mut body_template_errors,
+                )
+            })
+            .unwrap_or_default()
+        };
+        let site_header = frame(opts.header.as_ref(), "header");
+        let site_footer = frame(opts.footer.as_ref(), "footer");
         let seo = if opts.generate_seo {
             page::generate_seo_meta(p, &site_title, base_url)
         } else {
@@ -985,6 +1129,8 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 // document.
                 lang: p.lang.as_deref().unwrap_or(&opts.lang),
                 template: shell,
+                site_header: &site_header,
+                site_footer: &site_footer,
             },
         );
         out_pages.push(RenderedPage {
@@ -1039,20 +1185,15 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
 
 // ── Per-page reconstruction ─────────────────────────────────────────────────
 
-fn build_page(
+/// A page from its metadata alone: everything a [`PublishedPage`] carries
+/// except its body, which [`render_body`] fills once the whole site is known.
+fn page_skeleton(
     s: &SourceDoc,
+    parsed: &frontmatter::ParsedFile,
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
     title_map: &HashMap<PathBuf, String>,
-    collected: &Collected,
-    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
-    reports: &mut Vec<String>,
 ) -> PublishedPage {
-    let audience = opts.audience.as_deref();
-    let parsed = frontmatter::parse_or_empty(&s.markdown).unwrap_or(frontmatter::ParsedFile {
-        frontmatter: IndexMap::new(),
-        body: s.markdown.clone(),
-    });
     let fm = &parsed.frontmatter;
 
     let current_path = PathBuf::from(&s.path);
@@ -1085,92 +1226,6 @@ fn build_page(
 
     let layout = PageLayout::parse(frontmatter::get_string(fm, "layout"));
 
-    // The stored body is already visibility-filtered; template expansion still
-    // needs to run (sources are stored pre-template). `template::render*`
-    // re-applies visibility (a no-op now) and then expands the directives.
-    //
-    // A `verbatim` page skips it, as it skips everything else: a hand-authored
-    // HTML file is a document someone designed, and rewriting anything inside it
-    // is exactly the kind of help it asked not to be given.
-    //
-    // A template that will not expand still publishes its own source — there is
-    // no better body to publish — but it no longer does so *quietly*. The page
-    // names itself in `reports`, which `render_site` carries out as
-    // `SiteRender::body_template_errors`, on the principle the shell templates
-    // already hold to: silently serving the wrong thing is how a broken theme
-    // survives a release.
-    let file_path = Path::new(&s.path);
-    let format = ContentFormat::from_extension(file_path).unwrap_or(ContentFormat::Markdown);
-    let rendered_body = if layout.is_verbatim() {
-        parsed.body.clone()
-    } else {
-        let values = page_context_values(
-            s,
-            fm,
-            collected,
-            &contents_links,
-            parent_link.as_ref(),
-            audience,
-        );
-        let context = template::Context::new(&collected.context, &values);
-        let mut warnings = Vec::new();
-        let rendered = match audience {
-            Some(a) => {
-                template::render_for_audiences(&parsed.body, format, context, &[a], &mut warnings)
-            }
-            None => template::render(&parsed.body, format, context, &mut warnings),
-        };
-        reports.extend(
-            warnings
-                .into_iter()
-                .map(|w| format!("{}: {w}", current_path.display())),
-        );
-        match rendered {
-            Ok(body) => body,
-            Err(err) => {
-                reports.push(format!(
-                    "{}: {err} — the page is published as its own source",
-                    current_path.display()
-                ));
-                parsed.body.clone()
-            }
-        }
-    };
-
-    // Body → HTML in the document's own grammar, then rewrite internal document
-    // links. The empty workspace dir means canonical paths are used directly as
-    // `path_to_filename` keys.
-    //
-    // The format is the *document's*, read off its extension, not the vault's
-    // `content_format`: one site can hold a `.md` transcription beside the
-    // `.html` artifact it transcribes, and each has to be parsed as what it is.
-    // A path with no recognized extension falls back to Markdown, which is what
-    // every document in every vault written before this was.
-    //
-    // A `verbatim` page takes neither step. Parsing and reserializing a file
-    // someone designed returns a document that means the same and *is* not the
-    // same, and rewriting links inside it would edit bytes it asked to have
-    // copied — so its body passes through as written, and the rest of the
-    // pipeline treats it as already-rendered HTML.
-    let final_html = if layout.is_verbatim() {
-        rendered_body.clone()
-    } else {
-        // The site's grammars, not the built-in set that plain `render_body`
-        // reaches for: a site that declared one of its own declared it to be
-        // used here.
-        #[cfg(feature = "syntax-highlighting")]
-        let converted = body::render_body_with(&rendered_body, format, syntaxes);
-        #[cfg(not(feature = "syntax-highlighting"))]
-        let converted = body::render_body(&rendered_body, format);
-        links::transform_links(
-            &converted,
-            file_path,
-            path_to_filename,
-            Path::new(""),
-            &dest_filename,
-        )
-    };
-
     let nav_order = fm.get("nav_order").and_then(|v| match v {
         YamlValue::Int(i) => Some(*i as i32),
         YamlValue::Float(f) => Some(*f as i32),
@@ -1197,8 +1252,8 @@ fn build_page(
         source_path: current_path,
         dest_filename,
         title,
-        rendered_body: final_html,
-        markdown_body: rendered_body,
+        rendered_body: String::new(),
+        markdown_body: String::new(),
         contents_links,
         parent_link,
         is_root: s.is_root,
@@ -1243,7 +1298,242 @@ fn build_page(
             .unwrap_or(false),
         id: frontmatter::get_string(fm, "id").map(String::from),
         source_markdown: s.markdown.clone(),
+        headings: Vec::new(),
+        toc: fm.get("toc").and_then(|v| v.as_bool()).unwrap_or(true),
     }
+}
+
+/// Render one source's body into its page: template → twig → heading anchors
+/// → link rewrite. Returns the page's own half of the template context, with
+/// `headings` and its neighbours in it, for whatever renders against the page
+/// next.
+///
+/// `neighbours` is the page before and after this one in the nav's reading
+/// order — `None` at either end, and both `None` for a page the nav does not
+/// hold.
+#[allow(clippy::too_many_arguments)]
+fn render_body(
+    page: &mut PublishedPage,
+    s: &SourceDoc,
+    parsed: &frontmatter::ParsedFile,
+    opts: &SiteOptions,
+    path_to_filename: &HashMap<PathBuf, String>,
+    collected: &Collected,
+    neighbours: (Option<&NavLink>, Option<&NavLink>),
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+    reports: &mut Vec<String>,
+) -> serde_json::Map<String, JsonValue> {
+    let audience = opts.audience.as_deref();
+    let fm = &parsed.frontmatter;
+    let current_path = Path::new(&s.path);
+    let format = ContentFormat::from_extension(current_path).unwrap_or(ContentFormat::Markdown);
+
+    let mut values = page_context_values(
+        s,
+        fm,
+        collected,
+        &page.contents_links,
+        page.parent_link.as_ref(),
+        audience,
+    );
+    let (prev, next) = neighbours;
+    values.insert(
+        "prev".into(),
+        prev.map(nav_link_value).unwrap_or(JsonValue::Null),
+    );
+    values.insert(
+        "next".into(),
+        next.map(nav_link_value).unwrap_or(JsonValue::Null),
+    );
+
+    // A `verbatim` page skips everything: a hand-authored HTML file is a
+    // document someone designed, and rewriting anything inside it is exactly
+    // the kind of help it asked not to be given. Its headings are its own too.
+    if page.layout.is_verbatim() {
+        page.rendered_body = parsed.body.clone();
+        page.markdown_body = parsed.body.clone();
+        values.insert("headings".into(), JsonValue::Array(Vec::new()));
+        return values;
+    }
+
+    // Always present so `:::each{of=headings}` over a page with none produces
+    // nothing rather than an error — and a body that *names* it is expanded
+    // twice below, because a page's headings are not known until its template
+    // has run: a template that generates its headings still gets them listed.
+    values.insert("headings".into(), JsonValue::Array(Vec::new()));
+    let (expanded, html, headings) = render_source_body(
+        &parsed.body,
+        format,
+        template::Context::new(&collected.context, &values),
+        audience,
+        current_path,
+        reports,
+        #[cfg(feature = "syntax-highlighting")]
+        syntaxes,
+    );
+    values.insert("headings".into(), headings_value(&headings));
+    let (expanded, html, headings) = if !headings.is_empty() && parsed.body.contains("headings") {
+        render_source_body(
+            &parsed.body,
+            format,
+            template::Context::new(&collected.context, &values),
+            audience,
+            current_path,
+            // The first pass already said what there was to say.
+            &mut Vec::new(),
+            #[cfg(feature = "syntax-highlighting")]
+            syntaxes,
+        )
+    } else {
+        (expanded, html, headings)
+    };
+
+    // Rewrite internal document links last, so a heading anchor's own `#id`
+    // is not a link this pass would try to resolve. The empty workspace dir
+    // means canonical paths are used directly as `path_to_filename` keys.
+    page.rendered_body = links::transform_links(
+        &html,
+        current_path,
+        path_to_filename,
+        Path::new(""),
+        &page.dest_filename,
+    );
+    page.markdown_body = expanded;
+    page.headings = headings;
+    values
+}
+
+/// Template → twig → heading anchors, for a body that is not verbatim.
+///
+/// Returns the expanded source, the anchored HTML, and the headings found.
+///
+/// The stored body is already visibility-filtered; template expansion still
+/// needs to run (sources are stored pre-template). `template::render*`
+/// re-applies visibility (a no-op now) and then expands the directives.
+///
+/// A template that will not expand still publishes its own source — there is
+/// no better body to publish — but it no longer does so *quietly*. The page
+/// names itself in `reports`, which `render_site` carries out as
+/// `SiteRender::body_template_errors`, on the principle the shell templates
+/// already hold to: silently serving the wrong thing is how a broken theme
+/// survives a release.
+///
+/// The format is the *document's*, read off its extension, not the vault's
+/// `content_format`: one site can hold a `.md` transcription beside the
+/// `.html` artifact it transcribes, and each has to be parsed as what it is.
+/// A path with no recognized extension falls back to Markdown, which is what
+/// every document in every vault written before this was.
+fn render_source_body(
+    body: &str,
+    format: ContentFormat,
+    context: template::Context<'_>,
+    audience: Option<&str>,
+    at: &Path,
+    reports: &mut Vec<String>,
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+) -> (String, String, Vec<Heading>) {
+    let mut warnings = Vec::new();
+    let rendered = match audience {
+        Some(a) => template::render_for_audiences(body, format, context, &[a], &mut warnings),
+        None => template::render(body, format, context, &mut warnings),
+    };
+    reports.extend(
+        warnings
+            .into_iter()
+            .map(|w| format!("{}: {w}", at.display())),
+    );
+    let expanded = match rendered {
+        Ok(body) => body,
+        Err(err) => {
+            reports.push(format!(
+                "{}: {err} — the page is published as its own source",
+                at.display()
+            ));
+            body.to_string()
+        }
+    };
+
+    // The site's grammars, not the built-in set that plain `render_body`
+    // reaches for: a site that declared one of its own declared it to be used
+    // here.
+    #[cfg(feature = "syntax-highlighting")]
+    let converted = body::render_body_with(&expanded, format, syntaxes);
+    #[cfg(not(feature = "syntax-highlighting"))]
+    let converted = body::render_body(&expanded, format);
+    let (anchored, headings) = crate::headings::anchor_headings(&converted);
+    (expanded, anchored, headings)
+}
+
+/// `headings`, as a template names it: a list of `{level, id, text}`.
+fn headings_value(headings: &[Heading]) -> JsonValue {
+    JsonValue::Array(
+        headings
+            .iter()
+            .map(|h| serde_json::json!({ "level": h.level, "id": h.id, "text": h.text }))
+            .collect(),
+    )
+}
+
+/// Render the site's header or footer document for one page.
+///
+/// The same pipeline a body goes through — template expansion against the
+/// page's context, `:vis` filtering for the site's audience, twig, link
+/// rewriting to the page's depth — minus the heading anchors, since a frame is
+/// not part of the page's outline. The document's own metadata block, if it
+/// carries one, is stripped and otherwise unread: a frame is not an entry.
+///
+/// Relative links in it resolve against *its* path, so a header at
+/// `.config/sites/docs/header.md` reaches `about.md` as `/about.md` (or
+/// `../../../about.md`) and the rewrite lands the link wherever the page is.
+#[allow(clippy::too_many_arguments)]
+fn render_frame_doc(
+    doc: &FrameDoc,
+    what: &str,
+    page: &PublishedPage,
+    context: template::Context<'_>,
+    opts: &SiteOptions,
+    path_to_filename: &HashMap<PathBuf, String>,
+    #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
+    reports: &mut Vec<String>,
+) -> String {
+    let at = Path::new(&doc.path);
+    let format = ContentFormat::from_extension(at).unwrap_or(ContentFormat::Markdown);
+    let body = frontmatter::parse_or_empty(&doc.source)
+        .map(|parsed| parsed.body)
+        .unwrap_or_else(|_| doc.source.clone());
+
+    let mut warnings = Vec::new();
+    let rendered = match opts.audience.as_deref() {
+        Some(a) => template::render_for_audiences(&body, format, context, &[a], &mut warnings),
+        None => template::render(&body, format, context, &mut warnings),
+    };
+    reports.extend(
+        warnings
+            .into_iter()
+            .map(|w| format!("site {what} {}: {w}", at.display())),
+    );
+    let expanded = match rendered {
+        Ok(body) => body,
+        Err(err) => {
+            reports.push(format!(
+                "site {what} {}: {err} — it is published as its own source",
+                at.display()
+            ));
+            body
+        }
+    };
+
+    #[cfg(feature = "syntax-highlighting")]
+    let converted = body::render_body_with(&expanded, format, syntaxes);
+    #[cfg(not(feature = "syntax-highlighting"))]
+    let converted = body::render_body(&expanded, format);
+    links::transform_links(
+        &converted,
+        at,
+        path_to_filename,
+        Path::new(""),
+        &page.dest_filename,
+    )
 }
 
 /// Resolve a frontmatter list of asset references (`styles`, `scripts`) into
@@ -1331,6 +1621,10 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         }
     };
 
+    // Group headings get anchors like any body's, so a dated site's front
+    // page has an outline and a month can be linked to.
+    let (body, headings) = crate::headings::anchor_headings(&body);
+
     PublishedPage {
         source_path: PathBuf::from("index.md"),
         dest_filename: "index.html".to_string(),
@@ -1365,6 +1659,8 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         // document identity to mint one against.
         id: None,
         source_markdown: String::new(),
+        headings,
+        toc: true,
     }
 }
 
@@ -2153,8 +2449,8 @@ mod tests {
         );
 
         let index = synthesize_index(&pages, &opts);
-        assert!(index.rendered_body.contains("<h2>Grandpa</h2>"));
-        assert!(index.rendered_body.contains("<h2>Nan</h2>"));
+        assert!(index.rendered_body.contains(r#"<h2 id="grandpa">Grandpa "#));
+        assert!(index.rendered_body.contains(r#"<h2 id="nan">Nan "#));
         // The trip is filed under both people it names.
         let trips = index.rendered_body.matches("trip.html").count();
         assert_eq!(trips, 2, "one entry per group it belongs to");
@@ -2949,8 +3245,11 @@ mod tests {
             .find(|p| p.dest_filename == "index.html")
             .unwrap();
 
-        assert!(home.html.contains(r#"href="a.html""#), "got {}", home.html);
-        assert!(home.html.contains("Alpha"), "got {}", home.html);
+        let content = &home.html[home.html.find(r#"<div class="content">"#).unwrap()..];
+        assert!(
+            content.contains(r#"<li><a href="a.html">Alpha</a></li>"#),
+            "the link survives the rewrite: {content}"
+        );
         assert!(home.html.contains("Beta"), "got {}", home.html);
         assert!(
             out.body_template_errors.is_empty(),
@@ -3360,5 +3659,358 @@ mod tests {
             "nothing here nests them: {}",
             trail(&loose)
         );
+    }
+    // ── The site frame: anchors, outline, pager, header and footer ──────────
+
+    fn page_named<'a>(out: &'a SiteRender, dest: &str) -> &'a RenderedPage {
+        out.pages
+            .iter()
+            .find(|p| p.dest_filename == dest)
+            .unwrap_or_else(|| panic!("no page at {dest}"))
+    }
+
+    /// Every heading on a rendered page carries an `id` and an anchor, in
+    /// each grammar, and the outline lists the `h2`–`h3` ones.
+    #[test]
+    fn headings_are_anchored_and_outlined() {
+        let index = "---\ntitle: Home\n---\n# Home\n\n## First\n\ntext\n\n### Inner\n\n## Second\n";
+        let djot = "---\ntitle: Note\n---\n## Alpha\n\n## Beta\n";
+        let sources = vec![src("index.md", index, true), src("note.dj", djot, false)];
+        let out = render_site(&sources, &SiteOptions::default());
+
+        let home = &page_named(&out, "index.html").html;
+        assert!(
+            home.contains(r##"<h2 id="first">First <a class="heading-anchor" href="#first" aria-label="Link to this section">#</a></h2>"##),
+            "got {home}"
+        );
+        assert!(
+            home.contains(r##"<nav class="toc" aria-label="On this page"><details open><summary>On this page</summary><ul><li><a href="#first">First</a><ul><li><a href="#inner">Inner</a></li></ul></li><li><a href="#second">Second</a></li></ul></details></nav>"##),
+            "got {home}"
+        );
+
+        let note = &page_named(&out, "note.html").html;
+        assert!(
+            note.contains(r##"<h2 id="alpha">Alpha "##),
+            "djot too: {note}"
+        );
+        assert!(note.contains(r##"<a href="#beta">Beta</a>"##), "got {note}");
+    }
+
+    /// One heading is not an outline, and `toc: false` turns the built-in
+    /// one off without taking the anchors with it.
+    #[test]
+    fn the_outline_is_omitted_when_short_or_refused() {
+        let short = "---\ntitle: Short\n---\n## Only\n";
+        let refused = "---\ntitle: Refused\ntoc: false\n---\n## One\n\n## Two\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nHi.\n", true),
+            src("short.md", short, false),
+            src("refused.md", refused, false),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        assert!(
+            !page_named(&out, "short.html")
+                .html
+                .contains(r#"class="toc""#)
+        );
+        let refused = &page_named(&out, "refused.html").html;
+        assert!(!refused.contains(r#"class="toc""#), "got {refused}");
+        assert!(
+            refused.contains(r##"<h2 id="one">"##),
+            "anchors stay: {refused}"
+        );
+    }
+
+    /// A page can spell its own outline: `headings` is in the body context,
+    /// with the ids the anchors got — which means the body is expanded once
+    /// to find them and once more with them in scope.
+    #[test]
+    fn a_page_can_list_its_own_headings() {
+        let body = "---\ntitle: Home\n---\n:::each{of=headings as=h}\n- [:val[h.text]](#{{h.id}})\n:::\n\n## Ben & Co\n\n## Second\n";
+        let out = render_site(&[src("index.md", body, true)], &SiteOptions::default());
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+        let home = &page_named(&out, "index.html").html;
+        assert!(
+            home.contains(r##"<a href="#ben-co">Ben &amp; Co</a>"##),
+            "got {home}"
+        );
+        assert!(
+            home.contains(r##"<a href="#second">Second</a>"##),
+            "got {home}"
+        );
+    }
+
+    /// A verbatim page is published unread, headings included: no anchors, no
+    /// outline.
+    #[test]
+    fn a_verbatim_page_keeps_its_headings_as_written() {
+        let verbatim = "---\ntitle: Landing\nlayout: verbatim\n---\n<h2>Raw</h2><h2>Rawer</h2>";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nHi.\n", true),
+            src("landing.html", verbatim, false),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        assert_eq!(
+            page_named(&out, "landing.html").html,
+            "<h2>Raw</h2><h2>Rawer</h2>"
+        );
+    }
+
+    /// The pager follows the sidebar's reading order — the front page, then
+    /// its subtree depth-first — and `prev`/`next` in the body context are
+    /// the same two pages.
+    #[test]
+    fn the_pager_and_the_context_agree_on_the_reading_order() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/a.md\"\n  - \"/b.md\"\n---\nHi.\n";
+        let a = "---\ntitle: A\npart_of: \"/index.md\"\ncontents:\n  - \"/a/kid.md\"\n---\nA. Next: [:val[next.title]]({{next.href}}); prev: :val[prev.title].\n";
+        let kid = "---\ntitle: Kid\npart_of: \"/a.md\"\n---\nKid.\n";
+        let b = "---\ntitle: B\npart_of: \"/index.md\"\n---\nB.\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("a.md", a, false),
+            src("a/kid.md", kid, false),
+            src("b.md", b, false),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+
+        let a = &page_named(&out, "a.html").html;
+        assert!(
+            a.contains(r#"<a class="pager-prev" rel="prev" href="index.html"><span>Previous</span> Home</a>"#),
+            "got {a}"
+        );
+        assert!(
+            a.contains(
+                r#"<a class="pager-next" rel="next" href="a/kid.html"><span>Next</span> Kid</a>"#
+            ),
+            "got {a}"
+        );
+        assert!(
+            a.contains(r#"Next: <a href="a/kid.html">Kid</a>; prev: Home."#),
+            "the context names the same neighbours: {a}"
+        );
+
+        let kid = &page_named(&out, "a/kid.html").html;
+        assert!(
+            kid.contains(r#"rel="next" href="../b.html""#),
+            "depth-first, rebased: {kid}"
+        );
+        let b = &page_named(&out, "b.html").html;
+        assert!(!b.contains("pager-next"), "the last page has no next: {b}");
+    }
+
+    /// A `hide_from_nav` page is in no sequence: no pager, and nothing points
+    /// at it.
+    #[test]
+    fn a_hidden_page_is_in_no_sequence() {
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nHi.\n", true),
+            src("a.md", "---\ntitle: A\n---\nA.\n", false),
+            src(
+                "h.md",
+                "---\ntitle: H\nhide_from_nav: true\n---\nH.\n",
+                false,
+            ),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        assert!(!page_named(&out, "h.html").html.contains(r#"class="pager""#));
+        assert!(!page_named(&out, "a.html").html.contains("h.html"));
+    }
+
+    /// A rootless site's synthesized front page heads the order, so the first
+    /// entry's "previous" is the front page.
+    #[test]
+    fn a_synthesized_front_page_heads_the_reading_order() {
+        let sources = vec![
+            src("a.md", "---\ntitle: A\n---\nA.\n", false),
+            src("b.md", "---\ntitle: B\n---\nB.\n", false),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        let a = &page_named(&out, "a.html").html;
+        assert!(a.contains(r#"rel="prev" href="index.html""#), "got {a}");
+        let home = &page_named(&out, "index.html").html;
+        assert!(home.contains(r#"rel="next" href="a.html""#), "got {home}");
+    }
+
+    fn frame(path: &str, source: &str) -> Option<FrameDoc> {
+        Some(FrameDoc {
+            path: path.to_string(),
+            source: source.to_string(),
+        })
+    }
+
+    /// The header and footer are documents rendered for every page: templated
+    /// against that page's context, with links rewritten to its depth.
+    #[test]
+    fn the_header_and_footer_are_rendered_per_page() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/notes/entry.md\"\n---\nHi.\n";
+        let entry = "---\ntitle: Entry\npart_of: \"/index.md\"\n---\nE.\n";
+        let opts = SiteOptions {
+            site_title: Some("My Site".into()),
+            header: frame(
+                ".config/sites/docs/header.md",
+                "---\ntitle: never published\n---\n- [Home](/index.md)\n- [About](/about.md)\n",
+            ),
+            footer: frame(
+                ".config/sites/docs/footer.md",
+                "© :val[site.title] · you are reading :val[page.title]\n",
+            ),
+            ..SiteOptions::default()
+        };
+        let out = render_site(
+            &[
+                src("index.md", index, true),
+                src("notes/entry.md", entry, false),
+            ],
+            &opts,
+        );
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+
+        let home = &page_named(&out, "index.html").html;
+        assert!(
+            home.contains(r#"<header class="site-header"><ul>"#),
+            "the header is a rendered document: {home}"
+        );
+        assert!(
+            home.contains(r#"<a href="index.html">Home</a>"#),
+            "got {home}"
+        );
+        assert!(
+            home.contains(
+                r#"<span class="unpublished-link" title="This page isn’t published">About</span>"#
+            ),
+            "a link to a page the site does not publish goes inert: {home}"
+        );
+        assert!(
+            home.contains("© My Site · you are reading Home"),
+            "the footer names the page: {home}"
+        );
+        assert!(
+            !home.contains("never published"),
+            "the frame's own metadata is unread"
+        );
+
+        let entry = &page_named(&out, "notes/entry.html").html;
+        assert!(
+            entry.contains(r#"<a href="../index.html">Home</a>"#),
+            "rebased: {entry}"
+        );
+        assert!(entry.contains("you are reading Entry"), "got {entry}");
+        assert!(
+            entry.contains(r#"</footer>"#)
+                && entry.contains(r#"<footer class="site-footer"><p>© "#),
+            "the footer is inside the shell's footer: {entry}"
+        );
+    }
+
+    /// A `:vis` region in a frame is filtered for the site's audience, so one
+    /// footer can carry a line only one audience sees.
+    #[test]
+    fn a_frame_is_filtered_for_the_audience() {
+        let footer = ":::vis{.family}\nfor family\n:::\n\n:::vis{.public}\nfor everyone\n:::\n";
+        let sources = vec![src("index.md", "---\ntitle: Home\n---\nHi.\n", true)];
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                audience: Some("public".into()),
+                footer: frame("footer.md", footer),
+                ..SiteOptions::default()
+            },
+        );
+        let home = &page_named(&out, "index.html").html;
+        assert!(home.contains("for everyone"), "got {home}");
+        assert!(!home.contains("for family"), "got {home}");
+    }
+
+    /// A frame whose template will not expand publishes its source and says
+    /// so, named as the site's header or footer rather than as a page.
+    #[test]
+    fn a_broken_frame_is_reported_against_the_frame() {
+        let sources = vec![src("index.md", "---\ntitle: Home\n---\nHi.\n", true)];
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                header: frame(
+                    ".config/sites/docs/header.md",
+                    ":::if{equals=title}\nX\n:::\n",
+                ),
+                ..SiteOptions::default()
+            },
+        );
+        assert_eq!(
+            out.body_template_errors.len(),
+            1,
+            "{:?}",
+            out.body_template_errors
+        );
+        assert!(
+            out.body_template_errors[0].starts_with("site header .config/sites/docs/header.md:"),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// A site that declares no frame publishes empty frame elements — the
+    /// stylesheet collapses them — and the attribution line still lands.
+    #[test]
+    fn an_undeclared_frame_is_an_empty_slot() {
+        let sources = vec![src("index.md", "---\ntitle: Home\n---\nHi.\n", true)];
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = &page_named(&out, "index.html").html;
+        assert!(
+            home.contains(r#"<header class="site-header"></header>"#),
+            "got {home}"
+        );
+        assert!(
+            home.contains(r#"<footer class="site-footer"></footer>"#),
+            "got {home}"
+        );
+    }
+
+    /// A template names the new slots like any other.
+    #[test]
+    fn a_template_may_place_the_frame_the_outline_and_the_pager() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/a.md\"\n---\n## One\n\n## Two\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src(
+                "a.md",
+                "---\ntitle: A\npart_of: \"/index.md\"\n---\nA.\n",
+                false,
+            ),
+        ];
+        let out = render_site(
+            &sources,
+            &SiteOptions {
+                template: Some(
+                    "<a href=\"{{root_prefix}}index.html\">home</a>[{{{site_header}}}][{{{toc}}}][{{{content}}}][{{{pager}}}][{{{site_footer}}}]"
+                        .to_string(),
+                ),
+                header: frame("h.md", "H\n"),
+                footer: frame("f.md", "F\n"),
+                ..SiteOptions::default()
+            },
+        );
+        assert!(out.template_error.is_none(), "{:?}", out.template_error);
+        let home = &page_named(&out, "index.html").html;
+        assert!(
+            home.starts_with(r#"<a href="index.html">home</a>[<p>H</p>"#),
+            "got {home}"
+        );
+        assert!(home.contains(r#"[<nav class="toc""#), "got {home}");
+        assert!(home.contains(r#"[<nav class="pager""#), "got {home}");
+        assert!(home.ends_with("[<p>F</p>\n]"), "got {home}");
     }
 }

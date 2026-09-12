@@ -37,7 +37,61 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
-_No commits since the last tag._
+### Breaking
+
+- **render** — the site frame — anchors, outline, sidebar, pager, header and footer ([`dca38ad`](https://github.com/diaryx-org/plates/commit/dca38ad7369606a75cf4550610894c68ff06235e))
+
+### Fixed
+
+- **links** — a destination href is a link to the page it names ([`a3b4452`](https://github.com/diaryx-org/plates/commit/a3b445262c8162df64f1ef41452d8f3bc0e66d9c))
+
+### Behavioural changes
+
+- a body link whose href is a page's destination
+(`notes/entry.html`, as a template reads it off an entry) publishes as a
+link to that page, rebased to the reading page's depth, where it was
+demoted to `<span class="unpublished-link">`.
+
+- every heading in a rendered body now carries an
+`id` and a trailing `<a class="heading-anchor">`, in Markdown, Djot and
+HTML bodies alike; the group headings of a synthesized index too. A
+`verbatim` page is untouched.
+
+- the `site_nav` slot's markup has changed. A
+`<header class="site-bar">` holding the Menu button and the masthead
+replaces the floating `nav-toggle` button; the `<nav>` gains
+`id="site-nav"` and a `.site-masthead`, lists the front page's children
+rather than the front page, and wraps every node with children in
+`<li class="nav-section"><details><summary>…</summary>…</details></li>`.
+A caller's stylesheet written against the old markup needs updating.
+
+- `render_site_nav` takes the site's title as a new
+second argument.
+
+- the built-in shell writes a skip link, a
+`<header class="site-header">`, `<main id="content">`, the outline
+inside `<article>`, the pager after it, and a
+`<footer class="site-footer">`; the attribution line is now a
+`<p class="generator">` inside that footer rather than a `<footer>` of
+its own, and the built-in script has changed. `render_page` and
+`render_single_document` keep the attribution in its own `<footer>`.
+
+- `ShellSlots` gains `root_prefix`, `toc`,
+`site_header`, `pager` and `site_footer`, and a template may name them;
+`PageContext` gains `site_header` and `site_footer`; `PublishedPage`
+gains `headings` and `toc`; `SiteOptions` gains `header` and `footer`;
+`SiteSpec`, `TermConfig` and `SiteTheme` gain `header` and `footer`.
+`Heading` and `site::FrameDoc` are new types. A struct literal of any of
+these must name the new fields.
+
+- `SitePlan::entries` no longer holds a document
+named by `SiteSpec::header` or `SiteSpec::footer`, even when the gate
+admits it.
+
+- a body template may name `prev`, `next` and
+`headings`; a page's frontmatter `toc: false` is now read; the term
+node's `site:` mapping now reads `header` and `footer`, and the
+unknown-key warning lists them.
 
 <!-- git-cliff:end -->
 

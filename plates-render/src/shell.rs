@@ -58,17 +58,38 @@ pub struct ShellSlots {
     /// `{{body_class}}` — the class list for `<body>`, to be written *inside*
     /// `class="…"`. Empty when the page has no site nav.
     pub body_class: String,
+    /// `{{root_prefix}}` — the path from this page back up to the site root:
+    /// `../` per level of depth, empty at the root. Every prefixed href in
+    /// `head` and `site_nav` was computed from it; a template writing its own
+    /// `<a href="{{root_prefix}}index.html">` or `<img src="{{root_prefix}}logo.svg">`
+    /// needs the same value.
+    pub root_prefix: String,
     /// `{{{head}}}` — stylesheet link, favicon link, SEO meta, feed links and
     /// the page's own `styles:`, as a newline-separated run of tags indented
     /// four spaces. Does **not** include `<title>`, which is its own slot.
     pub head: String,
-    /// `{{{site_nav}}}` — the site navigation sidebar. Empty when the site has
-    /// no nav tree.
+    /// `{{{site_nav}}}` — the site navigation: the mobile bar with its menu
+    /// button, then the sidebar with the masthead and the tree. Empty when
+    /// the site has no nav tree.
     pub site_nav: String,
     /// `{{{breadcrumbs}}}` — the breadcrumb trail for this page.
     pub breadcrumbs: String,
+    /// `{{{toc}}}` — the page's outline, a `<nav class="toc">` of its `h2`–`h3`
+    /// headings. Empty when there are fewer than two, or the page said
+    /// `toc: false`.
+    pub toc: String,
+    /// `{{{site_header}}}` — the site's header document, rendered for this
+    /// page. Empty when the site declares none.
+    pub site_header: String,
     /// `{{{content}}}` — the rendered body, with its links already rewritten.
     pub content: String,
+    /// `{{{pager}}}` — `<nav class="pager">` linking the previous and next
+    /// page in the nav's reading order. Empty for a page the nav does not
+    /// hold, or a site of one page.
+    pub pager: String,
+    /// `{{{site_footer}}}` — the site's footer document, rendered for this
+    /// page. Empty when the site declares none.
+    pub site_footer: String,
     /// `{{{footer}}}` — the built-in attribution footer.
     pub footer: String,
     /// `{{{scripts}}}` — the built-in interactivity script and the page's own
@@ -90,10 +111,15 @@ const SLOTS: &[(&str, Kind)] = &[
     ("document_title", Kind::Text),
     ("site_title", Kind::Text),
     ("body_class", Kind::Text),
+    ("root_prefix", Kind::Text),
     ("head", Kind::Raw),
     ("site_nav", Kind::Raw),
     ("breadcrumbs", Kind::Raw),
+    ("toc", Kind::Raw),
+    ("site_header", Kind::Raw),
     ("content", Kind::Raw),
+    ("pager", Kind::Raw),
+    ("site_footer", Kind::Raw),
     ("footer", Kind::Raw),
     ("scripts", Kind::Raw),
 ];
@@ -218,10 +244,15 @@ fn slot_value<'a>(slots: &'a ShellSlots, name: &str) -> &'a str {
         "document_title" => &slots.document_title,
         "site_title" => &slots.site_title,
         "body_class" => &slots.body_class,
+        "root_prefix" => &slots.root_prefix,
         "head" => &slots.head,
         "site_nav" => &slots.site_nav,
         "breadcrumbs" => &slots.breadcrumbs,
+        "toc" => &slots.toc,
+        "site_header" => &slots.site_header,
         "content" => &slots.content,
+        "pager" => &slots.pager,
+        "site_footer" => &slots.site_footer,
         "footer" => &slots.footer,
         "scripts" => &slots.scripts,
         // Unreachable: `slot_index` accepted the name against the same table.
@@ -270,10 +301,15 @@ mod tests {
             document_title: "A & B".into(),
             site_title: "<Site>".into(),
             body_class: "has-site-nav".into(),
+            root_prefix: "../".into(),
             head: r#"<link rel="stylesheet" href="style.css">"#.into(),
             site_nav: "<nav>n</nav>".into(),
             breadcrumbs: "<p>b</p>".into(),
+            toc: "<nav>t</nav>".into(),
+            site_header: "<p>h</p>".into(),
             content: "<p>Hello</p>".into(),
+            pager: "<nav>p</nav>".into(),
+            site_footer: "<p>sf</p>".into(),
             footer: "<footer>f</footer>".into(),
             scripts: "<script>s</script>".into(),
         }
@@ -307,6 +343,11 @@ mod tests {
         let out = ShellTemplate::parse(&source).unwrap().render(&slots());
         assert!(out.contains("[en]"));
         assert!(out.contains("[has-site-nav]"));
+        assert!(out.contains("[../]"));
+        assert!(out.contains("[<nav>t</nav>]"));
+        assert!(out.contains("[<p>h</p>]"));
+        assert!(out.contains("[<nav>p</nav>]"));
+        assert!(out.contains("[<p>sf</p>]"));
         assert!(out.contains("[<footer>f</footer>]"));
         assert!(!out.contains("{{"), "nothing was left unfilled: {out}");
     }
