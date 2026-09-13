@@ -21,8 +21,7 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use plates_render::Arrangement;
-use plates_render::site::FrameDoc;
+use plates_render::{Arrangement, FrameDoc};
 use prov::{IdIndex, Storage, ViewSpec, Workspace};
 
 use crate::source::SourceFile;

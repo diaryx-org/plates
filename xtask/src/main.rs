@@ -130,6 +130,40 @@ const JOBS: &[Job] = &[
         }],
     },
     Job {
+        id: "alone",
+        name: "Alone",
+        components: "",
+        target: "",
+        toolchain: "stable",
+        builds: true,
+        // Each published crate with its own features and nothing more — which
+        // is how `cargo publish` verifies it and how a consumer who takes the
+        // defaults receives it. Every other job says `--all-features`, and in
+        // a workspace the features one member turns on reach the members it
+        // depends on: `plates-cli` enables `templating`, so `plates` compiled
+        // fine here against a `plates_render::site` it had never asked for,
+        // and 0.5.0 failed to verify from the tarball. Resolver 2 unifies
+        // only across the packages named on the command line, so one `-p`
+        // per step is exactly the isolation a publish gets.
+        steps: &[
+            Step {
+                program: "cargo",
+                args: &["check", "-p", "plates-render"],
+                env: &[],
+            },
+            Step {
+                program: "cargo",
+                args: &["check", "-p", "plates"],
+                env: &[],
+            },
+            Step {
+                program: "cargo",
+                args: &["check", "-p", "plates-cli"],
+                env: &[],
+            },
+        ],
+    },
+    Job {
         id: "msrv",
         name: "MSRV",
         components: "",

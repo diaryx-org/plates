@@ -88,7 +88,7 @@ its own, and the built-in script has changed. `render_page` and
 `PageContext` gains `site_header` and `site_footer`; `PublishedPage`
 gains `headings` and `toc`; `SiteOptions` gains `header` and `footer`;
 `SiteSpec`, `TermConfig` and `SiteTheme` gain `header` and `footer`.
-`Heading` and `site::FrameDoc` are new types. A struct literal of any of
+`Heading` and `FrameDoc` are new types. A struct literal of any of
 these must name the new fields.
 
 - `SitePlan::entries` no longer holds a document

@@ -111,6 +111,25 @@ impl PageLayout {
     }
 }
 
+/// A document that frames every page — a site's header or footer — as the
+/// text of the file and the path it was read from.
+///
+/// The path is load-bearing twice over: its extension decides the grammar the
+/// text is parsed in, and relative links in the text resolve against it.
+///
+/// Here rather than in [`crate::site`], which consumes it, because the caller
+/// that *assembles* one has only read a file: `plates` builds a `FrameDoc` from
+/// a vault without enabling `templating`, and the type it hands over cannot
+/// live behind a feature it does not turn on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameDoc {
+    /// Vault-relative path, spelled the way `SourceDoc::path` is: no leading
+    /// slash, extension included.
+    pub path: String,
+    /// The file's text, metadata block and all.
+    pub source: String,
+}
+
 /// A navigation link.
 #[derive(Debug, Clone)]
 pub struct NavLink {
