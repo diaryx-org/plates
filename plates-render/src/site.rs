@@ -28,6 +28,10 @@ use crate::shell::ShellTemplate;
 use crate::types::{
     Heading, LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage, SiteNavNode,
 };
+// Where it was declared until 0.5.0. It lives in `types` now so that a caller
+// that only *assembles* a header or footer — `plates::theme` — does not have
+// to enable `templating` to name the type; the path here still resolves.
+pub use crate::types::FrameDoc;
 use crate::{body, links, page, template};
 
 /// A stored source document to render.
@@ -242,19 +246,6 @@ pub struct SiteOptions {
     /// the `site_footer` slot. The built-in shell writes it before the
     /// attribution `footer` slot inside one `<footer>`.
     pub footer: Option<FrameDoc>,
-}
-
-/// A document that frames every page — a site's header or footer — as the
-/// text of the file and the path it was read from.
-///
-/// The path is load-bearing twice over: its extension decides the grammar the
-/// text is parsed in, and relative links in the text resolve against it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FrameDoc {
-    /// Vault-relative path, spelled the way [`SourceDoc::path`] is.
-    pub path: String,
-    /// The file's text, metadata block and all.
-    pub source: String,
 }
 
 impl Default for SiteOptions {

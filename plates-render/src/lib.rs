@@ -55,5 +55,6 @@ pub use shell::{ShellError, ShellSlots, ShellTemplate};
 #[cfg(feature = "syntax-highlighting")]
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
 pub use types::{
-    Arrangement, Grain, Grouping, Heading, LinkEdge, OutlineNode, PageLayout, serve_at_dest,
+    Arrangement, FrameDoc, Grain, Grouping, Heading, LinkEdge, OutlineNode, PageLayout,
+    serve_at_dest,
 };
