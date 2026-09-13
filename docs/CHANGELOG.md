@@ -37,9 +37,16 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v0.5.0 — 2026-09-12
+
 ### Breaking
 
 - **render** — the site frame — anchors, outline, sidebar, pager, header and footer ([`dca38ad`](https://github.com/diaryx-org/plates/commit/dca38ad7369606a75cf4550610894c68ff06235e))
+- **deps** — plates reads its gate field from prov 0.12's scoped declarations ([`f203c2c`](https://github.com/diaryx-org/plates/commit/f203c2c15383d5bc6ab4158981c3e7493ec84955))
 
 ### Fixed
 
@@ -93,7 +100,17 @@ admits it.
 node's `site:` mapping now reads `header` and `footer`, and the
 unknown-key warning lists them.
 
-<!-- git-cliff:end -->
+- `read_term_config` takes `&WorkspaceConfig` where it
+  took `&BTreeMap<String, FieldSpec>`; a caller passing `config.fields`
+  passes `config` now. A gate field declared only `under:` an index (and
+  never for the whole workspace) reads as undeclared here, and the site
+  gets `TermConfig::default()` — no term-node stylesheet or front page.
+
+- the `prov` floor is now 0.12. Everything 0.12 changes
+  in what an archive means — a top-level `prov.yaml` read without the root
+  naming it, `views.<name>.under` resolved by title — reaches a site built
+  over that archive.
+
 
 ## v0.4.0 — 2026-09-02
 
