@@ -7,7 +7,7 @@
 //! Appearance types (colors, typography, favicon, theme) live in
 //! [`crate::appearance`].
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Options for publishing.
 #[derive(Debug, Clone)]
@@ -442,4 +442,64 @@ pub fn serve_at_dest(value: &str) -> Option<String> {
         dest.push_str(".html");
     }
     Some(dest)
+}
+
+/// Convert a canonical source path to its sanitized `.html` output filename.
+///
+/// Public because a caller that must know where a source's HTML lands *before*
+/// rendering it has no other way to ask: `build_pages` applies this same rule
+/// internally, and re-deriving it elsewhere is how the two drift apart. It is
+/// also what `plates`'s collection calls, so a site's uploaded keys and its
+/// rendered links come from one function rather than from two that agree.
+///
+/// Ordinarily the extension is swapped and nothing else moves:
+/// `notes/post.md` publishes at `notes/post.html`, in any content format.
+///
+/// # A folder note publishes as its directory's index
+///
+/// A source whose file stem is the name of the directory holding it —
+/// `page/page.md`, `2026/2026.dj`, `about/about.html` — is that directory's
+/// own note, the same document an `about/index.md` would be. The two spellings
+/// are interchangeable across note-taking tools, and only one of them used to
+/// land on `about/index.html`; the other published at `about/about.html` and
+/// left the directory with no index at all, so a reader who asked for
+/// `about/` got nothing. Both now publish at `<dir>/index.html`.
+///
+/// `index.md` needs no case of its own here and never did: swapping its
+/// extension already yields `index.html`. This is the same destination reached
+/// by the other spelling, which is exactly why the two cannot both be used in
+/// one directory — `page/page.md` and `page/index.md` side by side claim
+/// `page/index.html` twice. Collection refuses that pair by name
+/// (`plates`'s `DestinationClaimedTwice`); nothing is reported here, because
+/// this function sees one path at a time and has no second one to name.
+///
+/// A file with no directory above it is nobody's folder note: `page.md` at the
+/// site root publishes at `page.html`. The comparison is against the immediate
+/// directory only, so `notes/page.md` is untouched.
+pub fn output_filename(canonical_md: &str) -> String {
+    let path = Path::new(canonical_md);
+    let folder_note = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .zip(
+            path.parent()
+                .and_then(Path::file_name)
+                .and_then(|d| d.to_str()),
+        )
+        .is_some_and(|(stem, dir)| stem == dir);
+    let with_ext = if folder_note {
+        path.with_file_name("index.html")
+    } else {
+        path.with_extension("html")
+    };
+    let sanitized: PathBuf = with_ext
+        .components()
+        .map(|c| match c {
+            std::path::Component::Normal(s) => std::ffi::OsString::from(
+                crate::links::sanitize_path_component(&s.to_string_lossy()),
+            ),
+            other => other.as_os_str().to_owned(),
+        })
+        .collect();
+    sanitized.to_string_lossy().into_owned()
 }

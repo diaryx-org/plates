@@ -1803,24 +1803,7 @@ fn resolve_link(
 
 // ── Filename helpers (ported from the publish plugin) ────────────────────────
 
-/// Convert a canonical `.md` path to its sanitized `.html` output filename.
-///
-/// Public because a caller that must know where a source's HTML lands *before*
-/// rendering it has no other way to ask: `build_pages` applies this same rule
-/// internally, and re-deriving it elsewhere is how the two drift apart.
-pub fn output_filename(canonical_md: &str) -> String {
-    let with_ext = Path::new(canonical_md).with_extension("html");
-    let sanitized: PathBuf = with_ext
-        .components()
-        .map(|c| match c {
-            std::path::Component::Normal(s) => {
-                std::ffi::OsString::from(links::sanitize_path_component(&s.to_string_lossy()))
-            }
-            other => other.as_os_str().to_owned(),
-        })
-        .collect();
-    sanitized.to_string_lossy().into_owned()
-}
+pub use crate::types::output_filename;
 
 /// Where one source publishes: `index.html` for the site's front page, the
 /// destination its frontmatter `serve_at:` claims, else [`output_filename`].
@@ -1950,6 +1933,77 @@ mod tests {
             "notes/artifact.html"
         );
         assert_eq!(output_filename("notes/artifact.htm"), "notes/artifact.html");
+    }
+
+    /// A folder note — a file named for the directory holding it — is that
+    /// directory's index, whatever content format it is written in. The
+    /// comparison is against the immediate directory only, and a file with no
+    /// directory above it is nobody's note.
+    #[test]
+    fn output_filename_makes_a_folder_note_its_directorys_index() {
+        assert_eq!(output_filename("page/page.md"), "page/index.html");
+        assert_eq!(output_filename("page/page.dj"), "page/index.html");
+        assert_eq!(output_filename("page/page.djot"), "page/index.html");
+        assert_eq!(output_filename("about/about.html"), "about/index.html");
+        assert_eq!(
+            output_filename("a/physics-121/physics-121.md"),
+            "a/physics-121/index.html"
+        );
+
+        // `index.md` reaches the same destination by the plain extension swap,
+        // which is why it needs no case of its own.
+        assert_eq!(output_filename("page/index.md"), "page/index.html");
+
+        // And what is not a folder note.
+        assert_eq!(output_filename("notes/page.md"), "notes/page.html");
+        assert_eq!(output_filename("page.md"), "page.html");
+        assert_eq!(
+            output_filename("page/pages.md"),
+            "page/pages.html",
+            "near is not the same"
+        );
+    }
+
+    /// The link half, end to end: `dest_for` feeds the rewrite map, so a link
+    /// to a folder note lands on the directory's index without anything at the
+    /// link site knowing the rule.
+    #[test]
+    fn a_link_to_a_folder_note_is_rewritten_to_its_directorys_index() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"[Page](/page/page.md)\"\n---\nSee [the page](/page/page.md).\n";
+        let page = "---\ntitle: Page\npart_of: \"/index.md\"\n---\nBack [home](/index.md).\n";
+
+        let sources = vec![
+            src("index.md", index, true),
+            src("page/page.md", page, false),
+        ];
+        let pages = build_pages(&sources, &SiteOptions::default());
+
+        let folder_note = pages.iter().find(|p| p.title == "Page").unwrap();
+        assert_eq!(
+            folder_note.dest_filename, "page/index.html",
+            "the folder note is its directory's index"
+        );
+
+        let home = pages.iter().find(|p| p.is_root).unwrap();
+        assert!(
+            home.rendered_body.contains(r#"href="page/index.html""#),
+            "the body link follows the destination: {}",
+            home.rendered_body
+        );
+        assert_eq!(
+            home.contents_links[0].href, "page/index.html",
+            "and so does the contents entry"
+        );
+
+        // And back the other way, rebased for the depth the folder note sits
+        // at — one level down, so `../`.
+        assert!(
+            folder_note
+                .rendered_body
+                .contains(r#"href="../index.html""#),
+            "got {}",
+            folder_note.rendered_body
+        );
     }
 
     /// One site, three grammars — the case a vault reaches by importing an

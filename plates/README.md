@@ -49,7 +49,16 @@ and what the other two crates do, is
   work through one scanner.
 - **Destinations.** Path-to-URL shaping, `serve_at:` claims, and refusing two
   documents that claim one address rather than letting one quietly overwrite the
-  other.
+  other. The shaping is `plates_render::output_filename`, called rather than
+  re-implemented so a site's uploaded keys and its rendered links cannot part
+  company: the extension is swapped, and a **folder note** — a file whose stem
+  is the name of the directory holding it, `page/page.md` — publishes at
+  `page/index.html`, exactly as a `page/index.md` does. Both spellings are in
+  ordinary use across note-taking tools and both mean "this directory's own
+  note"; before, only one of them left the directory with an index, and a
+  reader who asked for `page/` got nothing. Which is also why the two cannot
+  share a directory: side by side they claim one address, and that is the
+  refusal above.
 - **The front page.** `SitePlan` on top of prov's export plan: an index resolved
   through the spanning relation so it survives a rename, a move and a retitle;
   the rule that an index need not be among the entries but must be admitted by
