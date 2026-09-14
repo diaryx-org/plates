@@ -37,6 +37,12 @@ a tag: `cargo publish --workspace` is a command somebody runs deliberately.
 
 <!-- git-cliff:begin — generated; edits here are overwritten -->
 
+_No commits since the last tag._
+
+<!-- git-cliff:end -->
+
+## v0.6.0 — 2026-09-14
+
 ### Breaking
 
 - **deps** — move to fig 4 ([`b3a3532`](https://github.com/diaryx-org/plates/commit/b3a3532884ea5e404abe81f6c8d3d8291e4229de))
@@ -48,7 +54,6 @@ fig is not in plates' API, but fig-sys links the one native library, so a
 consumer with fig 3.x elsewhere in its graph is refused outright; move that
 pin to 4 alongside.
 
-<!-- git-cliff:end -->
 
 ## v0.5.1 — 2026-09-14
 
