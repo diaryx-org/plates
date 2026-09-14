@@ -424,15 +424,19 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
 
         let rebased = rebase(path, anchor);
         let source_rel_path = collected_source_path(path, anchor);
-        // The same destination rule `plates_render` renders by, applied here
-        // because a caller needs the address before there is a render to read it
-        // off. A `serve_at:` claim is **not** rebased onto
-        // the site's anchor: it is written from the site's root already, which
-        // is the coordinate rebasing produces.
+        // The same destination rule `plates_render` renders by — the same
+        // *function*, so the two cannot drift — applied here because a caller
+        // needs the address before there is a render to read it off. That rule
+        // is the extension swap, plus a folder note (`page/page.md`) landing on
+        // its directory's `index.html`; `plates_render::output_filename` holds
+        // both and says why. A `serve_at:` claim is **not** rebased onto the
+        // site's anchor: it is written from the site's root already, which is
+        // the coordinate rebasing produces.
         let dest_path = if is_root {
             "index.html".to_string()
         } else {
-            declared_dest(&parsed.meta).unwrap_or_else(|| sanitize_rel_path(&rebased, "html"))
+            declared_dest(&parsed.meta)
+                .unwrap_or_else(|| plates_render::output_filename(&rebased.to_string_lossy()))
         };
         claim_dest(&mut claimed, &dest_path, path)?;
 
@@ -824,6 +828,12 @@ fn push_canonical_ref(
 /// the publish dest-filename sanitization (keep alphanumerics, spaces, `-`,
 /// `_`, `.`). Public so a caller shaping a destination of its own does not
 /// duplicate the rule.
+///
+/// This is the *source* key's shaping, and deliberately nothing more: it keeps
+/// the path it is given, whatever its stem. A document's **destination** is
+/// [`plates_render::output_filename`], which applies one rule this does not —
+/// a folder note publishes as its directory's `index.html` — and a caller
+/// after an address wants that one.
 pub fn sanitize_rel_path(rel: &Path, ext: &str) -> String {
     let with_ext = rel.with_extension(ext);
     let sanitized: PathBuf = with_ext
@@ -1287,6 +1297,119 @@ mod tests {
                     .spanning("contents"),
             )
             .build()
+    }
+
+    /// Run the collector over `admitted` and hand back whatever it answered —
+    /// the half [`collected`] unwraps away, for the tests that are about a
+    /// refusal.
+    fn try_collect(ws: &Workspace<prov::InMemoryFs>, admitted: &[&str]) -> Result<CollectedSite> {
+        let docs: Vec<(PathBuf, bool)> = admitted
+            .iter()
+            .map(|p| (PathBuf::from(p), *p == "index.md"))
+            .collect();
+        prov::block_on(collect_documents(
+            ws,
+            &docs,
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &BTreeMap::new(),
+                census: &[],
+                spanning_root: None,
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+            },
+        ))
+    }
+
+    /// A folder note publishes as its directory's index, so a reader who asks
+    /// for `page/` is answered. Its siblings are shaped the ordinary way, which
+    /// is what makes this a rule about one filename rather than about the
+    /// directory.
+    #[test]
+    fn a_folder_note_publishes_as_its_directorys_index() {
+        let ws = vault(&[
+            (
+                "index.md",
+                "---\ncontents:\n- page/page.md\n- page/other.md\n- loose.md\n---\nHome.\n",
+            ),
+            (
+                "page/page.md",
+                "---\ntitle: Page\npart_of: /index.md\n---\nThe folder's own note.\n",
+            ),
+            (
+                "page/other.md",
+                "---\ntitle: Other\npart_of: /index.md\n---\nA sibling.\n",
+            ),
+            (
+                "loose.md",
+                "---\ntitle: Loose\npart_of: /index.md\n---\nNo directory above it.\n",
+            ),
+        ]);
+
+        let sources = collected(
+            &ws,
+            &["index.md", "page/page.md", "page/other.md", "loose.md"],
+        );
+
+        assert_eq!(sources["page/page.md"].dest_path, "page/index.html");
+        assert_eq!(
+            sources["page/other.md"].dest_path, "page/other.html",
+            "a sibling is shaped by the extension swap, as always"
+        );
+        assert_eq!(
+            sources["loose.md"].dest_path, "loose.html",
+            "a file with no directory above it is nobody's folder note"
+        );
+        assert_eq!(
+            sources["index.md"].dest_path, "index.html",
+            "and the site's front page is its front door either way"
+        );
+        assert_eq!(
+            sources["page/page.md"].source_rel_path, "page/page.md",
+            "the source key keeps the name the vault gave it — only the \
+             destination moves"
+        );
+    }
+
+    /// The pair the rule makes reachable: `page/page.md` and `page/index.md`
+    /// are the two spellings of one folder's note, and side by side they claim
+    /// `page/index.html` twice. Refused by name, before anything is uploaded,
+    /// by the same check that catches two `serve_at:` claims.
+    #[test]
+    fn a_folder_note_beside_an_index_claims_one_destination_twice() {
+        let ws = vault(&[
+            (
+                "index.md",
+                "---\ncontents:\n- page/page.md\n- page/index.md\n---\nHome.\n",
+            ),
+            (
+                "page/page.md",
+                "---\ntitle: Page\npart_of: /index.md\n---\nOne spelling.\n",
+            ),
+            (
+                "page/index.md",
+                "---\ntitle: Index\npart_of: /index.md\n---\nThe other.\n",
+            ),
+        ]);
+
+        let err = try_collect(&ws, &["index.md", "page/page.md", "page/index.md"])
+            .expect_err("two documents cannot share one destination");
+        match err {
+            Error::DestinationClaimedTwice {
+                dest,
+                first,
+                second,
+            } => {
+                assert_eq!(dest, "page/index.html");
+                assert_eq!(first, PathBuf::from("page/page.md"));
+                assert_eq!(second, PathBuf::from("page/index.md"));
+            }
+            other => panic!("expected a claimed destination, got {other:?}"),
+        }
     }
 
     /// Both halves of prov's census reach the collected source: a frontmatter

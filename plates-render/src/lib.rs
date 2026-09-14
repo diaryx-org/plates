@@ -56,5 +56,5 @@ pub use shell::{ShellError, ShellSlots, ShellTemplate};
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
 pub use types::{
     Arrangement, FrameDoc, Grain, Grouping, Heading, LinkEdge, OutlineNode, PageLayout,
-    serve_at_dest,
+    output_filename, serve_at_dest,
 };
