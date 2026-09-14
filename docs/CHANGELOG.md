@@ -41,6 +41,17 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.5.1 — 2026-09-14
+
+### Added
+
+- **render** — a folder note publishes as its directory's index ([`b26f1c9`](https://github.com/diaryx-org/plates/commit/b26f1c94d50d27c64a78d990096cf15e7bfefdbd))
+
+### Behavioural changes
+
+- A document whose file stem equals its directory's name now publishes at `<dir>/index.html` instead of `<dir>/<stem>.html`, and every link to it is rewritten to that destination. Affects `plates_render::output_filename`, `dest_of`/`dest_for`, `RenderedPage::dest_filename`, and `plates::SourceFile::dest_path`. A site that already published such a page changes one object key, and the old key is an orphan. A site holding both `<dir>/<dir>.md` and `<dir>/index.md` in one directory now fails collection with `DestinationClaimedTwice` where it previously published both. Source keys (`SourceFile::source_rel_path`) and attachment destinations are unchanged.
+
+
 ## v0.5.0 — 2026-09-12
 
 ### Breaking
