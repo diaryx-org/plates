@@ -68,3 +68,4 @@ views:
     label: All work
     group: status
     where: { has: status }
+root: README.md

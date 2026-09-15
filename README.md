@@ -1,4 +1,5 @@
 ---
+part_of: id:org/kv2bv2m
 title: plates
 author: adammharris
 config: prov.yaml
@@ -15,6 +16,8 @@ contents:
 fronts:
 - '[Public](/vocab/public.md)'
 audience: public
+registry: registry.yaml
+id: p8ftrd5
 ---
 
 # plates
