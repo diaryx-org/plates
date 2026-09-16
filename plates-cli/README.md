@@ -47,6 +47,9 @@ which is the property that stops a preview and a deploy drifting apart.
 | `-o`, `--out DIR` | `build`, `watch`, `clean` | Where the site lands. Defaults to `_site`; also `PLATES_OUT`. |
 | `--site NAME` | `build`, `watch`, `serve` | Render one site. `build`/`watch` write it *at* the destination root and `serve` answers it at `/`, because someone who named one site asked for one site. |
 | `--base-url URL` | `build`, `watch`, `serve` | The absolute URL the finished site will live at. |
+| `--follow[=DEPTH]` | `build`, `watch`, `serve` | Follow foreign references into peer workspaces and mount their sites — see below. DEPTH counts boundaries crossed; prov's default without one. |
+| `--peers FILE` | with `--follow` | The peer map to follow with, instead of this device's (`prov peer list` prints where that is). Also `PROV_PEERS`. |
+| `--unverified` | with `--follow` | Also follow a peer whose name could not be confirmed. |
 | `--force` | `build`, `watch`, `clean` | Write into (or empty) a directory holding files no build of ours wrote. |
 | `--host`, `-p`, `--port` | `serve` | Defaults `127.0.0.1` and the first free port from 4321, so a second archive served alongside the first just works. |
 | `--open` | `serve` | Open the site in a browser once it is up. |
@@ -59,6 +62,30 @@ which is the right default for a preview whose address is `localhost`.
 decoration: it sorts away from the archive's own directories, and the hosts that
 auto-publish a repository skip it, so a build committed by accident does not
 become a second copy of the site.
+
+## Mounting a peer
+
+`--follow` makes one site out of several archives. A published page's foreign
+reference — `[fig](id:fig/b9j9zgk)`, drawn in its `contents:` — into a
+workspace this device's peer map names (`prov peer add fig ~/src/fig`) mounts
+that workspace's export for the *same audience* at `/fig/`: its front page at
+`/fig/index.html`, its pages and attachments below, its links to the origin
+and the origin's links to it resolved across the boundary, and its outline hung
+in the nav where the edge was drawn. `plates build` inside `fig` still builds
+fig's site at `/`; the mounting site is the union.
+
+Which export is mounted is the one in the peer's own config whose gate names
+the origin site's field and value — one sharing the origin site's *name* if
+several do, else the only one. A peer with none, an unknown peer, or one that
+calls itself something else is a warning naming it, and the edge stays what an
+unfollowed edge is: a link to a page this site does not publish. The origin's
+shell frames every page; a peer's theme is not mounted.
+
+A `watch` re-fingerprints the origin archive only. An edit inside a peer is
+picked up on the next rebuild the origin triggers.
+
+The rule is argued in
+[`docs/proposals/mounting-a-peer.md`](https://github.com/diaryx-org/plates/blob/main/docs/proposals/mounting-a-peer.md).
 
 ## Declaring a site
 

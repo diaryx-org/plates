@@ -40,6 +40,10 @@ archive.
   every published path is written relative to it.
 - **One collector.** Building to a directory, serving a preview and uploading to
   a host are the same walk with different options.
+- **Mounting.** A published page's foreign reference into another archive the
+  device knows where to find mounts that archive's export for the same audience
+  at `/<name>/` — one site out of an organization's repositories, each keeping
+  its own build.
 - **Markdown, Djot and HTML**, read off each source's own extension and parsed
   by [`twig`](https://github.com/diaryx-org/twig) — the same parser an editor
   over the same archive would use.

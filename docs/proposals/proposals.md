@@ -4,6 +4,8 @@ part_of: '[plates](/README.md)'
 contents:
 - '[Proposal: the plates template format](/docs/proposals/templating.md)'
 - '[Proposal: a site is an export](/docs/proposals/site-declaration.md)'
+- '[Proposal: the site frame](/docs/proposals/site-frame.md)'
+- '[Proposal: mounting a peer](/docs/proposals/mounting-a-peer.md)'
 audience: public
 ---
 

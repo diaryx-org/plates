@@ -52,10 +52,10 @@
 
 use std::path::{Path, PathBuf};
 
+use plates::SiteSpec;
 use plates::prov::meta::{Mapping, Value};
 use plates::prov::{Document, ExportSpec};
 use plates::term::{text, text_list};
-use plates::{AUDIENCE_FIELD, SiteSpec};
 
 /// The top-level key the **deprecated** site declaration lives under.
 ///
@@ -165,7 +165,7 @@ pub fn read_sites(
             }
         }
         None => {
-            let specs = specs_from_exports(exports);
+            let specs: Vec<SiteSpec> = exports.iter().map(SiteSpec::from_export).collect();
             let source = if specs.is_empty() {
                 Source::None
             } else {
@@ -262,40 +262,10 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
     specs
 }
 
-/// A site per `exports:` entry — every entry, whatever it gates on.
-///
-/// The render-facing half is left empty here on purpose: it is written on the
-/// gate value's term node, and reading one needs a workspace with an id index,
-/// which this pass does not have and the build does ([`plates::read_term_config`],
-/// folded in by [`crate::build::build_sites`]).
-fn specs_from_exports(exports: &[ExportSpec]) -> Vec<SiteSpec> {
-    exports
-        .iter()
-        .map(|export| SiteSpec {
-            name: export.name.clone(),
-            label: export.label.clone(),
-            audience: export.gate.value.clone(),
-            // `None` for the default field rather than its name spelled out, so
-            // that a spec says what the archive said: `gate_field()` supplies
-            // `audience` wherever the question is asked, and a spec carrying the
-            // string would be indistinguishable from one whose archive named it.
-            gate_field: (export.gate.field != AUDIENCE_FIELD).then(|| export.gate.field.clone()),
-            hold: export.hold.clone(),
-            view: export.view.clone(),
-            index: None,
-            shell: None,
-            stylesheet: None,
-            lang: None,
-            syntaxes: Vec::new(),
-            header: None,
-            footer: None,
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use plates::AUDIENCE_FIELD;
     use plates::prov::exports::Gate;
 
     fn export(name: &str, field: &str, value: &str) -> ExportSpec {
@@ -419,10 +389,13 @@ mod tests {
     /// clearance` *is* the gate, and it travels with the spec.
     #[test]
     fn every_export_becomes_a_site_carrying_its_own_gate() {
-        let specs = specs_from_exports(&[
+        let specs: Vec<SiteSpec> = [
             export("blog", AUDIENCE_FIELD, "public"),
             export("audit", "clearance", "internal"),
-        ]);
+        ]
+        .iter()
+        .map(SiteSpec::from_export)
+        .collect();
 
         assert_eq!(specs.len(), 2);
         assert_eq!(specs[0].audience, "public");
@@ -445,7 +418,10 @@ mod tests {
             hold: Some("draft".into()),
             ..export("blog", AUDIENCE_FIELD, "public")
         };
-        let specs = specs_from_exports(&[export("audit", AUDIENCE_FIELD, "public"), held]);
+        let specs: Vec<SiteSpec> = [export("audit", AUDIENCE_FIELD, "public"), held]
+            .iter()
+            .map(SiteSpec::from_export)
+            .collect();
 
         assert_eq!(specs[0].hold, None);
         assert_eq!(specs[1].hold.as_deref(), Some("draft"));

@@ -32,7 +32,13 @@ pub fn build(site: &SiteArgs, out: &OutArgs, force: bool) -> Result<(), String> 
         })?;
     }
 
-    let sites = build_sites(&session, site.site.as_deref(), site.base_url.as_deref())?;
+    let follow = site.follow();
+    let sites = build_sites(
+        &session,
+        site.site.as_deref(),
+        site.base_url.as_deref(),
+        follow.as_ref(),
+    )?;
     for built in &sites {
         report(&built.warnings);
     }
@@ -111,7 +117,13 @@ fn rebuild(site: &SiteArgs, out: &OutArgs) -> Result<String, String> {
     let session = Session::open()?;
     report(&session.warnings);
 
-    let sites = build_sites(&session, site.site.as_deref(), site.base_url.as_deref())?;
+    let follow = site.follow();
+    let sites = build_sites(
+        &session,
+        site.site.as_deref(),
+        site.base_url.as_deref(),
+        follow.as_ref(),
+    )?;
     // Repeated every rebuild rather than said once: a watch is where a person
     // is editing the shell, so it is the one place the message is worth
     // repeating.
