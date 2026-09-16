@@ -15,13 +15,13 @@
 //! photographs through memory to render a page of text. See
 //! [`plates::digest`] for the machinery this rides on.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
-use plates::prov::block_on;
+use plates::prov::{Descent, PeerFile, block_on};
 use plates::{
-    CollectOptions, DigestMemo, NoStamp, SiteSpec, SiteTheme, TermConfig, collect_site, plan_site,
-    read_page_shells, read_term_config, read_theme,
+    CollectOptions, DigestMemo, MountOptions, NoStamp, RegistryLinks, SiteTheme, collect_mounted,
+    collect_site, plan_site, read_page_shells, read_term_config, read_theme,
 };
 use plates_render::SiteStyle;
 use plates_render::html::Generator;
@@ -41,6 +41,15 @@ const STRIP_KEYS: &[&str] = &[
     plates::prov::config::ROOT_CONFIG_KEY,
     crate::config::SITES_KEY,
 ];
+
+/// Whether, and how far, a build follows foreign references into peer
+/// workspaces and mounts what it finds — `--follow`, resolved.
+pub struct Follow {
+    /// Where the peers are.
+    pub peers: PeerFile,
+    /// How many boundaries to cross, and on whose say-so.
+    pub descent: Descent,
+}
 
 /// One rendered site: everything a server would need to serve it.
 pub struct BuiltSite {
@@ -121,6 +130,7 @@ pub fn build_sites(
     session: &Session,
     only: Option<&str>,
     base_url: Option<&str>,
+    follow: Option<&Follow>,
 ) -> Result<Vec<BuiltSite>, String> {
     if session.sites.is_empty() {
         return Err(session.nothing_to_publish());
@@ -170,19 +180,16 @@ pub fn build_sites(
         // prevent.
         let (spec, term_warnings) = match session.source {
             Source::Declared => (spec.clone(), Vec::new()),
-            _ => with_term_config(
-                spec,
-                block_on(read_term_config(
-                    &ws,
-                    &session.root_doc,
-                    &session.config,
-                    spec.gate_field(),
-                    // The value the gate compares, trimmed as prov trims it, so
-                    // the term node found here is the term node the gate judged
-                    // against.
-                    spec.audience.trim(),
-                )),
-            ),
+            _ => spec.with_term_config(block_on(read_term_config(
+                &ws,
+                &session.root_doc,
+                &session.config,
+                spec.gate_field(),
+                // The value the gate compares, trimmed as prov trims it, so
+                // the term node found here is the term node the gate judged
+                // against.
+                spec.audience.trim(),
+            ))),
         };
         let spec = &spec;
 
@@ -194,25 +201,68 @@ pub fn build_sites(
             &census,
         ))
         .map_err(|e| format!("site {:?}: {e}", spec.name))?;
-        let collected = block_on(collect_site(
-            &ws,
-            &plan,
-            &CollectOptions {
-                audience: &spec.audience,
-                strip_keys: STRIP_KEYS,
-                stamp: &NoStamp,
-                id_by_path: &id_by_path,
-                backlinks: &backlinks,
-                census: &census,
-                // The same document the plan was walked from, so the site
-                // carries the archive's own hierarchy for its nav to be built
-                // from rather than one re-derived from `contents:` strings.
-                spanning_root: Some(&session.root_doc),
-                digests: &UnreadAttachments,
-                digest: no_digest,
-            },
-        ))
-        .map_err(|e| format!("site {:?}: {e}", spec.name))?;
+        // Where each `id:` link in prose lands: this archive's registry, in the
+        // site's coordinates. A mount widens the table with each peer's.
+        let no_foreign = HashMap::new();
+        let id_links = RegistryLinks::new(
+            ws.workspace_id(),
+            &id_by_path,
+            &plates::anchor_of(&plan),
+            "",
+            &no_foreign,
+        );
+        let options = CollectOptions {
+            audience: &spec.audience,
+            strip_keys: STRIP_KEYS,
+            stamp: &NoStamp,
+            id_by_path: &id_by_path,
+            backlinks: &backlinks,
+            census: &census,
+            // The same document the plan was walked from, so the site
+            // carries the archive's own hierarchy for its nav to be built
+            // from rather than one re-derived from `contents:` strings.
+            spanning_root: Some(&session.root_doc),
+            digests: &UnreadAttachments,
+            digest: no_digest,
+            id_links: &id_links,
+            mount: "",
+        };
+        let mut warnings = term_warnings;
+        let collected = match follow {
+            None => block_on(collect_site(&ws, &plan, &options))
+                .map_err(|e| format!("site {:?}: {e}", spec.name))?,
+            Some(follow) => {
+                let mounted = block_on(collect_mounted(
+                    &ws,
+                    spec,
+                    &plan,
+                    &session.root_doc,
+                    &options,
+                    &MountOptions {
+                        peers: &follow.peers,
+                        descent: follow.descent,
+                    },
+                ))
+                .map_err(|e| format!("site {:?}: {e}", spec.name))?;
+                for mount in &mounted.mounts {
+                    println!(
+                        "  mounted {} at /{} — {} page{} from {}",
+                        mount.name,
+                        mount.prefix,
+                        mount.pages,
+                        plural(mount.pages),
+                        mount.root_dir.display()
+                    );
+                }
+                warnings.extend(
+                    mounted
+                        .warnings
+                        .into_iter()
+                        .map(|w| format!("site {:?}: {w}", spec.name)),
+                );
+                mounted.site
+            }
+        };
 
         let mut theme = block_on(read_theme(&ws, spec, &session.config.views));
         block_on(read_page_shells(&ws, &collected.sources, &mut theme));
@@ -221,7 +271,6 @@ pub fn build_sites(
         // only in case. Empty for every archive that never drifted; non-empty
         // means the site is publishing less than its author believes, which is
         // exactly the kind of failure that is invisible from the file alone.
-        let mut warnings = term_warnings;
         warnings.extend(theme.warnings.iter().cloned());
         if !plan.case_drift.is_empty() {
             warnings.push(format!(
@@ -268,30 +317,6 @@ pub fn build_sites(
     }
 
     Ok(built)
-}
-
-/// A site's declaration with the term node's half folded in, and whatever the
-/// term node said that could not be used.
-///
-/// A fill rather than an override, and it can be nothing else: a spec derived
-/// from an export carries `None` — and an empty `syntaxes` — in exactly these
-/// seven fields, because an export has no way to say any of them. The one field
-/// both surfaces could claim is `label`, and the export's wins, so it is not
-/// here.
-fn with_term_config(spec: &SiteSpec, term: TermConfig) -> (SiteSpec, Vec<String>) {
-    (
-        SiteSpec {
-            index: term.index,
-            shell: term.shell,
-            stylesheet: term.stylesheet,
-            lang: term.lang,
-            syntaxes: term.syntaxes,
-            header: term.header,
-            footer: term.footer,
-            ..spec.clone()
-        },
-        term.warnings,
-    )
 }
 
 /// Whether a `--site` filter admits this site.

@@ -123,6 +123,47 @@ pub struct SiteArgs {
     /// a preview whose address is `localhost`.
     #[arg(long, value_name = "URL")]
     pub base_url: Option<String>,
+
+    /// Follow foreign references into peer workspaces and mount their sites.
+    ///
+    /// A published page's `id:<workspace>/<id>` edge into a workspace this
+    /// device's peer map names mounts that workspace's export for the same
+    /// audience at `/<workspace>/`. DEPTH is how many boundaries may be
+    /// crossed; without a value, prov's default. Peers are read from
+    /// `prov peer list`'s file unless `--peers` names another.
+    #[arg(long, value_name = "DEPTH", num_args = 0..=1, default_missing_value = "8")]
+    pub follow: Option<usize>,
+
+    /// The peer map to follow with, instead of this device's.
+    #[arg(long, value_name = "FILE", env = "PROV_PEERS", requires = "follow")]
+    pub peers: Option<PathBuf>,
+
+    /// Also follow a peer whose name could not be confirmed — an anonymous
+    /// workspace, or one the map points at but nothing local could open.
+    #[arg(long, requires = "follow")]
+    pub unverified: bool,
+}
+
+impl SiteArgs {
+    /// How far a build follows, if it follows at all.
+    pub fn follow(&self) -> Option<crate::build::Follow> {
+        let depth = self.follow?;
+        let peers = match &self.peers {
+            Some(file) => plates::prov::PeerFile::load(file),
+            None => plates::prov::PeerFile::from_device(),
+        };
+        Some(crate::build::Follow {
+            peers,
+            descent: plates::prov::Descent {
+                depth,
+                trust: if self.unverified {
+                    plates::prov::Trust::Unverified
+                } else {
+                    plates::prov::Trust::Confirmed
+                },
+            },
+        })
+    }
 }
 
 /// Where a build lands — shared by `build`, `watch` and `clean`.

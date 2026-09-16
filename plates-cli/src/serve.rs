@@ -320,7 +320,13 @@ fn builder_loop(
 fn build(site: &SiteArgs, revision: u64) -> Snapshot {
     let built = Session::open().and_then(|session| {
         crate::commands::report(&session.warnings);
-        build_sites(&session, site.site.as_deref(), site.base_url.as_deref())
+        let follow = site.follow();
+        build_sites(
+            &session,
+            site.site.as_deref(),
+            site.base_url.as_deref(),
+            follow.as_ref(),
+        )
     });
     match built {
         Ok(sites) => {

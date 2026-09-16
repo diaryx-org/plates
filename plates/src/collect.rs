@@ -61,6 +61,106 @@ impl SourceStamp for NoStamp {
     fn stamp(&self, _path: &Path, _id: Option<&str>, _fm: &mut prov::meta::Mapping) {}
 }
 
+/// Where an id-form body link lands, in site coordinates.
+///
+/// The render layer resolves links by *path*: it holds the collected sources
+/// under their site-relative names and rewrites a `.md` href to the page that
+/// source became. An `id:` reference is not a path in any coordinate system it
+/// can see, so it used to reach the render untouched and ship as a dead
+/// `href="id:…"`. Collection answers the question instead, because collection
+/// is the layer holding a registry — and, under a [mount](crate::mount), the
+/// registries of every peer whose pages share the site.
+///
+/// `workspace` is the qualifier of a foreign reference (`id:notes/ajp7eq`) and
+/// `None` for a local one. The answer is a **site-root-absolute source path**,
+/// `/notes/post.md`: the coordinates [`SourceFile::source_rel_path`] is written
+/// in, with the leading slash the render reads as the site's root. A link the
+/// resolver cannot answer is left exactly as written.
+pub trait IdLinks {
+    /// The site-root-absolute source path `id` names, or `None`.
+    fn resolve(&self, workspace: Option<&str>, id: &str) -> Option<String>;
+}
+
+/// An answer to nothing — every id-form link is left as written, which is what
+/// every site collected before the question was asked got.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct NoIdLinks;
+
+impl IdLinks for NoIdLinks {
+    fn resolve(&self, _workspace: Option<&str>, _id: &str) -> Option<String> {
+        None
+    }
+}
+
+/// Resolve id-form links against one registry, in one site's coordinates.
+///
+/// The ordinary single-workspace answer, and the building block a mount
+/// composes: local `id:<id>` references, and references qualified with this
+/// workspace's own name, resolve through `id_by_path` inverted and rebased onto
+/// the anchor; a reference qualified with any other name is [`foreign`]'s to
+/// answer, and `None` when there is no such table.
+///
+/// [`foreign`]: Self::foreign
+#[derive(Debug, Clone)]
+pub struct RegistryLinks<'a> {
+    /// What this workspace calls itself — empty when it is anonymous, in which
+    /// case no qualified reference is local.
+    pub workspace_id: &'a str,
+    /// Site-root-absolute source path by id, for this workspace's documents.
+    pub local: HashMap<String, String>,
+    /// The same, for every *other* workspace whose pages share this site, keyed
+    /// by `(workspace name, id)`. Empty for a site with no mounts.
+    pub foreign: &'a HashMap<(String, String), String>,
+}
+
+impl<'a> RegistryLinks<'a> {
+    /// The local half, from a registry's `path → id` map and the site's anchor.
+    ///
+    /// `mount` is the site-relative directory this workspace's pages land in —
+    /// `""` for the site itself, `"notes/"` for a mounted peer — so a page
+    /// resolving its own sibling by id lands on the sibling's mounted address.
+    pub fn new(
+        workspace_id: &'a str,
+        id_by_path: &HashMap<PathBuf, String>,
+        anchor: &Path,
+        mount: &str,
+        foreign: &'a HashMap<(String, String), String>,
+    ) -> Self {
+        let local = id_by_path
+            .iter()
+            .map(|(path, id)| {
+                (
+                    id.clone(),
+                    format!("/{mount}{}", collected_source_path(path, anchor)),
+                )
+            })
+            .collect();
+        Self {
+            workspace_id,
+            local,
+            foreign,
+        }
+    }
+}
+
+impl IdLinks for RegistryLinks<'_> {
+    fn resolve(&self, workspace: Option<&str>, id: &str) -> Option<String> {
+        match workspace {
+            None => self.local.get(id).cloned(),
+            // A reference qualified with the reading workspace's own name is
+            // local — prov's self-qualification rule, applied here so the two
+            // spellings of one document land on one page.
+            Some(name) if !self.workspace_id.is_empty() && name == self.workspace_id => {
+                self.local.get(id).cloned()
+            }
+            Some(name) => self
+                .foreign
+                .get(&(name.to_string(), id.to_string()))
+                .cloned(),
+        }
+    }
+}
+
 /// Everything a collection needs that the plan does not carry.
 pub struct CollectOptions<'a> {
     /// The audience whose `:vis[...]` regions survive in each collected body.
@@ -140,6 +240,23 @@ pub struct CollectOptions<'a> {
     /// belongs to whoever will do the comparing. A caller that never reads
     /// [`Attachment::hash`] can pass anything.
     pub digest: fn(&[u8]) -> String,
+    /// Where each id-form body link lands. See [`IdLinks`].
+    ///
+    /// [`NoIdLinks`] leaves every `id:` reference as written; [`RegistryLinks`]
+    /// is the ordinary answer for a workspace with a registry, and what a
+    /// [mount](crate::mount) composes across peers.
+    pub id_links: &'a dyn IdLinks,
+    /// The directory below the site root this collection lands in, with its
+    /// trailing slash — `""` for the site itself, `"notes/"` for a peer
+    /// [mounted](crate::mount) under its name.
+    ///
+    /// Every published coordinate is prefixed with it: source paths,
+    /// destinations, attachment keys, inbound and outbound edges. Two things
+    /// are not. A `serve_at:` claim is written from the site root already and
+    /// means the site's root, not the mount's; and the front page of a mounted
+    /// collection is not the *site's* front page, so it lands at
+    /// `<mount>index.html` with [`SourceFile::is_index`] false.
+    pub mount: &'a str,
 }
 
 /// Collect one planned site's sources + attachments.
@@ -334,7 +451,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
     // What each document links out to, gathered once for the whole site rather
     // than by re-scanning the archive's census per page — see
     // [`site_relations`].
-    let mut relations = site_relations(opts.census, &page_paths, anchor);
+    let mut relations = site_relations(opts.census, &page_paths, anchor, opts.mount);
 
     for (path, is_root) in docs {
         let is_root = *is_root;
@@ -382,6 +499,11 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
                 path: path.clone(),
                 reason: reason.to_string(),
             })?;
+        // Then say where each `id:` link lands, in the coordinates the render
+        // resolves links in. After the filter, so a link inside a region this
+        // audience does not see is never looked up; before the reference scan,
+        // which reads paths and would otherwise pass every id link over.
+        let filtered_body = rewrite_id_links(path, &filtered_body, opts.id_links);
 
         // The registry id when present, else the document's own frontmatter
         // `id` (authoritative under `id_storage: both`/`frontmatter`, or when an
@@ -408,6 +530,19 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         for key in opts.strip_keys {
             source_fm.shift_remove(*key);
         }
+        // A mounted collection's front page is the mount's `index.html`, and
+        // the render derives a page's destination from its source path and its
+        // own `serve_at:` — never from [`SourceFile::dest_path`], which is for a
+        // publisher's diff. Claiming the address in the collected frontmatter
+        // is what makes a local render, a server-side render of the uploaded
+        // source, and the diff all put the page in one place; a front page
+        // that already claims somewhere is left with its claim.
+        if is_root && !opts.mount.is_empty() && declared_dest(&parsed.meta).is_none() {
+            source_fm.insert(
+                "serve_at".into(),
+                prov::meta::Value::String(format!("/{}index.html", opts.mount)),
+            );
+        }
         opts.stamp.stamp(path, id.as_deref(), &mut source_fm);
         let source_markdown = if source_fm.is_empty() {
             filtered_body.clone()
@@ -423,7 +558,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         };
 
         let rebased = rebase(path, anchor);
-        let source_rel_path = collected_source_path(path, anchor);
+        let source_rel_path = format!("{}{}", opts.mount, collected_source_path(path, anchor));
         // The same destination rule `plates_render` renders by — the same
         // *function*, so the two cannot drift — applied here because a caller
         // needs the address before there is a render to read it off. That rule
@@ -433,10 +568,15 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
         // site's anchor: it is written from the site's root already, which is
         // the coordinate rebasing produces.
         let dest_path = if is_root {
-            "index.html".to_string()
+            format!("{}index.html", opts.mount)
         } else {
-            declared_dest(&parsed.meta)
-                .unwrap_or_else(|| plates_render::output_filename(&rebased.to_string_lossy()))
+            declared_dest(&parsed.meta).unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    opts.mount,
+                    plates_render::output_filename(&rebased.to_string_lossy())
+                )
+            })
         };
         claim_dest(&mut claimed, &dest_path, path)?;
 
@@ -484,18 +624,20 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             source_rel_path,
             dest_path,
             id,
-            is_index: is_root,
+            // A mounted collection's front page fronts the mount, not the site.
+            is_index: is_root && opts.mount.is_empty(),
             inbound: site_inbound(
                 opts.backlinks.get(path).map_or(&[][..], Vec::as_slice),
                 &page_paths,
                 anchor,
+                opts.mount,
             ),
             outbound: relations.remove(path.as_path()).unwrap_or_default(),
         });
     }
 
     let outline = match opts.spanning_root {
-        Some(root) => outline_of(ws, root, anchor).await?,
+        Some(root) => outline_of(ws, root, anchor, opts.mount).await?,
         None => Vec::new(),
     };
 
@@ -523,7 +665,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
 /// source it is collected as, and every [`SourceFile::backlinks`] entry that
 /// points at it. A second spelling of this rule is a link that resolves in one
 /// place and not the other.
-fn collected_source_path(path: &Path, anchor: &Path) -> String {
+pub(crate) fn collected_source_path(path: &Path, anchor: &Path) -> String {
     let ext = prov::ContentFormat::from_extension(path)
         .unwrap_or(prov::ContentFormat::Markdown)
         .extension();
@@ -553,13 +695,14 @@ fn site_inbound(
     inbound: &[prov::Backlink],
     admitted: &HashSet<&Path>,
     anchor: &Path,
+    mount: &str,
 ) -> Vec<plates_render::LinkEdge> {
     let mut out: Vec<plates_render::LinkEdge> = inbound
         .iter()
         .filter(|link| admitted.contains(link.source.as_path()))
         .map(|link| plates_render::LinkEdge {
             relation: relation_name(&link.site),
-            path: collected_source_path(&link.source, anchor),
+            path: format!("{mount}{}", collected_source_path(&link.source, anchor)),
         })
         .collect();
     out.sort();
@@ -588,6 +731,7 @@ fn site_relations<'a>(
     census: &'a [prov::CensusEntry],
     admitted: &HashSet<&Path>,
     anchor: &Path,
+    mount: &str,
 ) -> HashMap<&'a Path, Vec<plates_render::LinkEdge>> {
     let mut out: HashMap<&Path, Vec<plates_render::LinkEdge>> = HashMap::new();
     for entry in census {
@@ -604,7 +748,7 @@ fn site_relations<'a>(
             .or_default()
             .push(plates_render::LinkEdge {
                 relation: Some(relation),
-                path: collected_source_path(target, anchor),
+                path: format!("{mount}{}", collected_source_path(target, anchor)),
             });
     }
     for edges in out.values_mut() {
@@ -638,12 +782,13 @@ async fn outline_of<FS: Storage + Clone, Id, Ix: IdIndex>(
     ws: &Workspace<FS, Id, Ix>,
     root: &Path,
     anchor: &Path,
+    mount: &str,
 ) -> Result<Vec<plates_render::OutlineNode>> {
     let tree = ws.tree(root).await.map_err(|e| Error::Document {
         path: root.to_path_buf(),
         reason: e.to_string(),
     })?;
-    Ok(vec![outline_node(&tree, anchor)])
+    Ok(vec![outline_node(&tree, anchor, mount)])
 }
 
 /// One prov node as the render layer's, named through
@@ -655,16 +800,45 @@ async fn outline_of<FS: Storage + Clone, Id, Ix: IdIndex>(
 /// and is carried across like any other. It names no page this site publishes,
 /// so it prunes on arrival; deciding *here* which kinds could never match would
 /// be this layer guessing at the render layer's set.
-fn outline_node(node: &prov::Node, anchor: &Path) -> plates_render::OutlineNode {
+pub(crate) fn outline_node(
+    node: &prov::Node,
+    anchor: &Path,
+    mount: &str,
+) -> plates_render::OutlineNode {
     plates_render::OutlineNode {
-        path: collected_source_path(&node.path, anchor),
+        path: format!("{mount}{}", collected_source_path(&node.path, anchor)),
         label: node.label.clone(),
         children: node
             .children
             .iter()
-            .map(|child| outline_node(child, anchor))
+            .map(|child| outline_node(child, anchor, mount))
             .collect(),
     }
+}
+
+/// Retarget every id-form body link in `body` that `links` can answer, to the
+/// site-root-absolute source path it names — locator kept, wrapper kept,
+/// everything else byte-for-byte as it was.
+///
+/// Right-to-left so each span stays valid as earlier ones are replaced, the
+/// same discipline prov's own rewrites keep. A body no link changes is returned
+/// as it came, so a site with no id links pays one scan and no copy.
+fn rewrite_id_links(doc: &Path, body: &str, links: &dyn IdLinks) -> String {
+    let mut out: Option<String> = None;
+    for bl in prov::link::scan_body_links(doc, body).into_iter().rev() {
+        let landed = match bl.link.id_ref() {
+            Some(prov::link::IdRef::Local(id)) => links.resolve(None, id.as_str()),
+            Some(prov::link::IdRef::Foreign { workspace, id }) => {
+                links.resolve(Some(&workspace), id.as_str())
+            }
+            _ => None,
+        };
+        let Some(target) = landed else { continue };
+        let retargeted = bl.link.with_path(target).render();
+        out.get_or_insert_with(|| body.to_string())
+            .replace_range(bl.span.clone(), &retargeted);
+    }
+    out.unwrap_or_else(|| body.to_string())
 }
 
 /// The destination a document's frontmatter `serve_at:` claims, or `None` when
@@ -715,7 +889,11 @@ async fn weigh_attachment<FS: Storage + Clone, Id, Ix: IdIndex>(
     anchor: &Path,
 ) -> Option<Attachment> {
     let source = PathBuf::from(canonical);
-    let dest_rel = rebase(&source, anchor).to_string_lossy().replace('\\', "/");
+    let dest_rel = format!(
+        "{}{}",
+        opts.mount,
+        rebase(&source, anchor).to_string_lossy().replace('\\', "/")
+    );
     weigh(ws, opts, dest_rel, source).await
 }
 
@@ -1182,7 +1360,7 @@ mod tests {
             }],
         };
 
-        let out = outline_node(&node, Path::new("www"));
+        let out = outline_node(&node, Path::new("www"), "");
         assert_eq!(out.path, "notes/My Note.md");
         assert_eq!(out.label.as_deref(), Some("The Note"));
         assert_eq!(
@@ -1249,6 +1427,8 @@ mod tests {
                 spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "",
             },
         ))
         .unwrap();
@@ -1321,6 +1501,8 @@ mod tests {
                 spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "",
             },
         ))
     }
@@ -1673,6 +1855,8 @@ mod tests {
                 spanning_root: Some(Path::new("index.md")),
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "",
             },
         ))
         .unwrap();
@@ -1705,10 +1889,157 @@ mod tests {
                 spanning_root: None,
                 digests: &crate::digest::NoDigests,
                 digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "",
             },
         ))
         .unwrap();
 
         assert!(site.outline.is_empty());
+    }
+
+    /// An `id:` link in prose used to ship as a dead `href="id:…"`. With a
+    /// registry to answer from it lands on the page the id names, in the
+    /// coordinates the render resolves — site-root-absolute, rebased onto the
+    /// anchor — with the locator and the wrapper kept.
+    #[test]
+    fn id_links_land_on_their_pages_in_site_coordinates() {
+        let ws = vault(&[
+            (
+                "www/index.md",
+                "---\ntitle: Home\n---\nSee [about](id:abc1234#why), [[id:abc1234|About]], \
+                 ours [home](id:org/x2q521g), theirs [fig](id:fig/b9j9zgk), and \
+                 [nobody](id:zzzzzzz).\n",
+            ),
+            ("www/about.md", "---\ntitle: About\n---\nAbout.\n"),
+        ]);
+        let id_by_path: HashMap<PathBuf, String> = [
+            (PathBuf::from("www/about.md"), "abc1234".to_string()),
+            (PathBuf::from("www/index.md"), "x2q521g".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let foreign: HashMap<(String, String), String> = [(
+            ("fig".to_string(), "b9j9zgk".to_string()),
+            "/fig/index.md".to_string(),
+        )]
+        .into_iter()
+        .collect();
+        let links = RegistryLinks::new("org", &id_by_path, Path::new("www"), "", &foreign);
+
+        let site = prov::block_on(collect_documents(
+            &ws,
+            &[
+                (PathBuf::from("www/index.md"), true),
+                (PathBuf::from("www/about.md"), false),
+            ],
+            Path::new("www"),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &id_by_path,
+                backlinks: &BTreeMap::new(),
+                census: &[],
+                spanning_root: None,
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+                id_links: &links,
+                mount: "",
+            },
+        ))
+        .unwrap();
+
+        let body = &site.sources[0].source_markdown;
+        assert!(body.contains("[about](/about.md#why)"), "{body}");
+        assert!(body.contains("[[/about.md|About]]"), "{body}");
+        // Qualified with the reading workspace's own name is local.
+        assert!(body.contains("[home](/index.md)"), "{body}");
+        assert!(body.contains("[fig](/fig/index.md)"), "{body}");
+        // Unanswerable: left as written.
+        assert!(body.contains("[nobody](id:zzzzzzz)"), "{body}");
+    }
+
+    /// Under a mount every coordinate carries the prefix, the mounted front
+    /// page is not the site's, and a `serve_at:` claim is left at the site root.
+    #[test]
+    fn a_mount_prefixes_every_coordinate_but_a_serve_at_claim() {
+        let ws = vault(&[
+            (
+                "README.md",
+                "---\ntitle: fig\ncontents:\n- '[Site](/www/index.md)'\n---\n",
+            ),
+            (
+                "www/index.md",
+                "---\ntitle: fig\npart_of: '[fig](/README.md)'\ncontents:\n- '[Legal](/www/legal.md)'\n---\n![logo](logo.png)\n",
+            ),
+            (
+                "www/legal.md",
+                "---\ntitle: Legal\nserve_at: /privacy\npart_of: '[fig](/www/index.md)'\n---\nLegal.\n",
+            ),
+        ]);
+        prov::block_on(
+            ws.fs()
+                .write_atomic(Path::new("/vault/www/logo.png"), b"\x89PNG"),
+        )
+        .unwrap();
+        let census = prov::block_on(ws.census("README.md")).unwrap();
+        let backlinks = prov::block_on(ws.backlinks("README.md")).unwrap();
+
+        let site = prov::block_on(collect_documents(
+            &ws,
+            &[
+                (PathBuf::from("www/index.md"), true),
+                (PathBuf::from("www/legal.md"), false),
+            ],
+            Path::new("www"),
+            &CollectOptions {
+                audience: "public",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &backlinks,
+                census: &census,
+                spanning_root: Some(Path::new("README.md")),
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "fig/",
+            },
+        ))
+        .unwrap();
+
+        let index = &site.sources[0];
+        assert_eq!(index.source_rel_path, "fig/index.md");
+        assert_eq!(index.dest_path, "fig/index.html");
+        assert!(
+            !index.is_index,
+            "a mounted front page fronts the mount, not the site"
+        );
+        let legal = &site.sources[1];
+        assert_eq!(legal.source_rel_path, "fig/legal.md");
+        assert_eq!(
+            legal.dest_path, "privacy.html",
+            "serve_at is from the site root"
+        );
+        assert_eq!(
+            legal
+                .inbound
+                .iter()
+                .map(|e| e.path.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fig/index.md"]
+        );
+        assert_eq!(index.outbound[0].path, "fig/legal.md");
+        assert_eq!(site.attachments[0].dest_rel, "fig/logo.png");
+        assert_eq!(
+            site.attachments[0].source_path,
+            PathBuf::from("www/logo.png")
+        );
+        // The outline: README (outside the anchor, as written) → index → legal.
+        let root = &site.outline[0];
+        assert_eq!(root.path, "fig/README.md");
+        assert_eq!(root.children[0].path, "fig/index.md");
+        assert_eq!(root.children[0].children[0].path, "fig/legal.md");
     }
 }

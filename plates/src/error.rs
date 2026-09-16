@@ -12,6 +12,24 @@ use std::path::PathBuf;
 /// A site-shaped failure.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// The walk across workspace boundaries could not be made — the reader's
+    /// *own* storage failed while descending, never a peer declining to open,
+    /// which is a warning on the mount rather than an error.
+    #[error("cannot walk this archive's foreign references: {0}")]
+    Descent(String),
+
+    /// A peer that was reached and answered to its name could not be planned
+    /// as a site — its export names a view it does not declare, its front page
+    /// resolves to nothing, or the like. Named by the peer, because the fix is
+    /// in the other repository.
+    #[error("mounting {workspace:?}: {reason}")]
+    Mount {
+        /// The peer's name, as the reference that reached it spelled it.
+        workspace: String,
+        /// The site-shaped failure, in its own words.
+        reason: String,
+    },
+
     /// A document's audience regions could not all be resolved, so the
     /// collection refused it.
     ///

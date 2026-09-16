@@ -173,6 +173,61 @@ pub struct SiteSpec {
 }
 
 impl SiteSpec {
+    /// A site per `exports:` entry — the gate, the hold, the view and the label
+    /// carried over, and the render-facing half left empty.
+    ///
+    /// Empty on purpose: it is written on the gate value's term node, and
+    /// reading one needs a workspace with an id index, which the pass that
+    /// reads config does not have and the build does —
+    /// [`read_term_config`](crate::read_term_config), folded in by
+    /// [`with_term_config`](Self::with_term_config).
+    pub fn from_export(export: &prov::exports::ExportSpec) -> Self {
+        Self {
+            name: export.name.clone(),
+            label: export.label.clone(),
+            audience: export.gate.value.clone(),
+            // `None` for the default field rather than its name spelled out, so
+            // that a spec says what the archive said: `gate_field()` supplies
+            // `audience` wherever the question is asked, and a spec carrying the
+            // string would be indistinguishable from one whose archive named it.
+            gate_field: (export.gate.field != crate::plan::AUDIENCE_FIELD)
+                .then(|| export.gate.field.clone()),
+            hold: export.hold.clone(),
+            view: export.view.clone(),
+            index: None,
+            shell: None,
+            stylesheet: None,
+            lang: None,
+            syntaxes: Vec::new(),
+            header: None,
+            footer: None,
+        }
+    }
+
+    /// This declaration with the term node's half folded in, and whatever the
+    /// term node said that could not be used.
+    ///
+    /// A fill rather than an override, and it can be nothing else: a spec from
+    /// [`from_export`](Self::from_export) carries `None` — and an empty
+    /// `syntaxes` — in exactly these seven fields, because an export has no way
+    /// to say any of them. The one field both surfaces could claim is `label`,
+    /// and the export's wins, so it is not here.
+    pub fn with_term_config(&self, term: crate::term::TermConfig) -> (Self, Vec<String>) {
+        (
+            Self {
+                index: term.index,
+                shell: term.shell,
+                stylesheet: term.stylesheet,
+                lang: term.lang,
+                syntaxes: term.syntaxes,
+                header: term.header,
+                footer: term.footer,
+                ..self.clone()
+            },
+            term.warnings,
+        )
+    }
+
     /// What a person calls this site: its label, else its name humanized.
     pub fn display_label(&self) -> String {
         match &self.label {

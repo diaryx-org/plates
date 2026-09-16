@@ -57,6 +57,10 @@
 //!   the ones that lead somewhere this site does not publish — a render cannot
 //!   tell those apart, and demotes both to the same unclickable span. See
 //!   [`links`].
+//! - **The mount.** A published page's foreign reference into a peer workspace
+//!   mounts that peer's export for the same audience at `/<name>/`, planned and
+//!   collected as the peer's own build would, every coordinate prefixed. See
+//!   [`mount`], and [`collect::IdLinks`] for how a link crosses the boundary.
 //!
 //! # The dependency list is the design
 //!
@@ -92,6 +96,7 @@ pub mod collect;
 pub mod digest;
 pub mod error;
 pub mod links;
+pub mod mount;
 pub mod plan;
 pub mod source;
 pub mod spec;
@@ -99,12 +104,14 @@ pub mod term;
 pub mod theme;
 
 pub use collect::{
-    CollectOptions, NoStamp, SourceStamp, anchor_of, collect_documents, collect_site,
-    declared_dest, mime_type_from_ext, rebase, sanitize_component, sanitize_rel_path,
+    CollectOptions, IdLinks, NoIdLinks, NoStamp, RegistryLinks, SourceStamp, anchor_of,
+    collect_documents, collect_site, declared_dest, mime_type_from_ext, rebase, sanitize_component,
+    sanitize_rel_path,
 };
 pub use digest::{DigestMemo, NoDigests, mtime_ms};
 pub use error::{Error, Result};
 pub use links::{LinkDiagnostic, LinkProblem, link_diagnostics};
+pub use mount::{MountOptions, MountReport, Mounted, collect_mounted};
 pub use plan::{AUDIENCE_FIELD, plan_site, to_export};
 pub use source::{Attachment, CollectedSite, SourceFile};
 pub use spec::{

@@ -84,6 +84,13 @@ and what the other two crates do, is
   `fields:`, prov's spanning relation and the two keys prov declines to
   interpret. An archive with no vocabulary gets `TermConfig::default` and no
   complaint.
+- **The mount.** A published page's foreign reference — `id:fig/…` — into a
+  peer workspace the device's map names mounts that peer's export for the same
+  audience at `/fig/`: planned and collected as the peer's own build would be,
+  every coordinate prefixed, links resolved across the boundary through each
+  registry, and its outline hung where the edge was drawn. `mount::collect_mounted`,
+  over prov's `descend`. Nothing is written across the boundary and no registry
+  is read as if it were the origin's.
 - **The link report.** A render demotes every link it cannot publish to the same
   unclickable span, which is right for the page and useless as a report: a link
   to a page the gate holds back is the gate working, and a link to a renamed
