@@ -4,6 +4,7 @@ part_of: '[Proposals](/docs/proposals/proposals.md)'
 status: implemented
 author: adammharris
 created: 2026-08-26
+updated: 2026-09-16
 audience: public
 ---
 
@@ -13,9 +14,10 @@ audience: public
 
 A plates template is **Markdown**. Block structure is spelled with twig's
 generic directives (`:::each{…}`), and so are inline values (`:val[…]`).
-`{{ }}` survives in **one position only** — a link or image destination, the one
-place in Markdown that cannot hold a node — and even there it is resolved by
-reading the destination off the AST, never by scanning text. Templates are
+`{{ }}` survives in **two positions only** — a link or image destination, and
+a directive's attribute values, the places in Markdown that cannot hold a node
+— and even there it is resolved by reading the field off the AST, never by
+scanning text. Templates are
 ordinary vault documents, read the way a shell and a stylesheet are read; the
 HTML shell is unchanged.
 
@@ -94,7 +96,7 @@ operation twig has, and an editor cannot let someone split it in half.
 
 Inline values are therefore `:val[path]`.
 
-### Why `{{ }}` survives in link destinations
+### Why `{{ }}` survives in link destinations — and directive attributes
 
 One position defeats this, and it is exactly one:
 
@@ -115,17 +117,50 @@ text, list items, prose and table cells are all inline-parsed and take a text
 directive fine, and directive *attributes* never needed interpolation at all —
 attributes are already the value language. It is destinations, and nothing else.
 
+A directive's `{…}` attributes turned out to be the same kind of position,
+and the first version of this section was wrong to say they "never needed
+interpolation". They did not for the four directives above, whose attributes
+are paths. They do for a *generic* directive, which renders as an element
+wearing its attributes (`:::article{.cover}` → `<article class="cover">`) —
+because an attribute is the only way a template can put what it knows where a
+stylesheet can see it. A shelf that dresses each book in its own colour is
+`class="cover tone-{{book.color}}"`, and there is no directive spelling of
+that: attributes are a parsed side-table of strings, not content.
+
 So:
 
-> **Block structure and inline values are directives. `{{ }}` survives in link
-> and image destinations only, and is resolved from the `link`/`image` node's
-> `destination` field, never by text substitution.**
+> **Block structure and inline values are directives. `{{ }}` survives in the
+> positions twig decided are characters — a link or image destination, and a
+> directive's attribute values — and is resolved from the node's
+> `destination`/`attrs`, never by text substitution.**
 
-That last clause is what keeps the exception from being a leftover. The
-destination is located as the stretch of the link's span *after* its label
-(`content_span.end .. span.end`), so a `{{` in the label, in a code span, or in
-a paragraph is never in range. The escape hatch stays AST-driven, which was the
-point of the format.
+That last clause is what keeps the exception from being a leftover. The run is
+located in the stretch of the node's span *outside* its content — after a
+link's label, in a container's opening fence, after a leaf or text directive's
+`[label]` — so a `{{` in a label, in a code span, or in a paragraph is never in
+range. The escape hatch stays AST-driven, which was the point of the format.
+
+An attribute value holding braces has to be quoted, because an unquoted `}` is
+the end of the attribute block; that is the extension's grammar, not ours. An
+HTML element's attributes are not a template position — a `<div
+class="{{x}}">` in a Markdown body is raw HTML the author wrote, on the same
+rule that makes a whole HTML body content rather than template.
+
+### Generic directives render
+
+Which needs the render to honour them. It did not: the body was parsed with
+the extension *off* at the HTML stage, so a `:::note{.x}` that filtering and
+templating both saw as a container published as three lines of literal text.
+Now a Markdown body renders with directives on, and a generic directive is an
+element named after itself — remark-directive's documented default.
+
+One rule protects prose. The extension's grammar reads a text directive with no
+label and no attributes anywhere a name follows a colon — `a:b`, `:tada:`,
+`key:value` — and none of that means an element. So every such **bare** node
+is escaped back to its colon before the render, and only a directive the author
+spelled — a `[label]`, a `{…}`, or a `::`/`:::` block form — becomes markup.
+The escape is placed off the node's span, so a `:b` in a code span was never a
+node and is never touched.
 
 ### Why not change twig instead
 
@@ -237,18 +272,26 @@ turns out to be wanted is one line of context; a filter grammar is permanent.
 | `page` | the current page, as an entry |
 | `entries` | the site's pages, in its own order |
 | `groups` | `{key, entries}` per group, when the arrangement is grouped |
-| `children` | the current page's `contents:` links |
-| `parent` | the current page's `part_of` link, or null |
+| `children` | the current page's `contents:` links, as entries |
+| `parent` | the current page's `part_of` link as an entry, or null |
 | `breadcrumbs` | root-to-here trail, this page last |
 | `backlinks` | the entries that link *to* this page, by path |
 | `relations` | this page's own relation edges, by relation name |
 | `inbound` | the same, inverted: who names this page, by relation name |
 
 An entry is `path`, `title`, `href`, `date`, `date_year`, `date_month`, `id`,
-`description`, `group_keys`, `is_root`. Frontmatter keys are also addressable
-bare (`:val[title]`) and under `page`, which is not redundancy for its own sake:
-the first is what every body written against the old context says, the second is
+`description`, `color`, `group_keys`, `is_root`. `color` is the word a document
+names its colour with, read as written; which colours exist and what they look
+like is a stylesheet's to say. Frontmatter keys are also addressable bare
+(`:val[title]`) and under `page`, which is not redundancy for its own sake: the
+first is what every body written against the old context says, the second is
 what the format's own vocabulary says, and both name one value.
+
+`children`, `parent`, `prev` and `next` are entries too — the same record
+`entries` holds — rather than a link cut down to `title` and `href`. A link the
+site does not publish was dropped when it was resolved, so every one that
+reaches a template has an entry to be, and a listing can read `book.color` off
+a child as readily as off the page.
 
 `entries` is in **source order with `nav_order` overriding** — the rule
 `plates-render/src/nav.rs` sorts siblings by, restated in the context assembler
@@ -429,7 +472,10 @@ the first draft gave — `PageLayout::parse` treats anything unrecognized as
 - **`:::if`'s value position.** `equals` needs a key *and* a value, and an
   attribute gives one key one value. Reusing `views::Condition`'s vocabulary
   wholesale would keep one condition spelling across views, exports and
-  templates — worth doing, and still not designed.
+  templates — worth doing, and still not designed. Attribute values resolving
+  `{{ }}` gives it a spelling for free — `:::if{equals="{{page.kind}}"}` —
+  but the *left-hand* side and the comparison are still undesigned, and
+  nothing here settles them.
 - **`entries` ordering under a grouped arrangement.** It is the nav's rule
   today, which is right for containment. A grouped site may want the grain's
   order instead; `groups` already carries the grouping, so this is a question

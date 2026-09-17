@@ -26,21 +26,32 @@
 //! A directive has neither problem, because it is a node: it does not exist
 //! inside a code span, and it is addressable by every operation twig has.
 //!
-//! # Why `{{ }}` survives in link destinations
+//! # Why `{{ }}` survives in link destinations and directive attributes
 //!
-//! One position in Markdown cannot hold a node. A link's destination is not
+//! Two positions in Markdown cannot hold a node. A link's destination is not
 //! inline-parsed — twig stores it as a byte run (`Link.destination`) and
 //! carries a positional escape alphabet for it (`Syntax.link_dest_escapes`),
 //! which is a settled decision rather than a gap. So `[:val[t]](:val[href])`
 //! cannot work, and a list of links is the single most common thing a template
-//! produces.
+//! produces. A directive's `{…}` attributes are the same kind of position: a
+//! parsed side-table of key/value strings, not content — and the value of one
+//! is the only way a template can put what it knows where a *stylesheet* can
+//! see it, since a generic directive renders as an element wearing its
+//! attributes (`:::article{class="cover tone-{{book.color}}"}`).
 //!
-//! `{{path}}` therefore survives **in a link or image destination and nowhere
-//! else**, and — this is the part that matters — it is resolved by reading
-//! `destination` off the AST node, never by scanning text. A `{{` in a code
-//! block is the contents of a `code_block`, not a `link`, so the substitution
-//! cannot reach it. The escape hatch stays AST-driven, which was the point of
-//! the format.
+//! `{{path}}` therefore survives **in those two positions and nowhere else**,
+//! and — this is the part that matters — it is resolved by reading
+//! `destination` or `attrs` off the AST node and locating the run in the part
+//! of the node's span that is *not* its content, never by scanning text. A
+//! `{{` in a code block is the contents of a `code_block`, not a `link`; one in
+//! a link's label or a directive's `[label]` is inside `content_span`, so the
+//! substitution cannot reach either. The escape hatch stays AST-driven, which
+//! was the point of the format.
+//!
+//! An attribute value holding braces has to be quoted — `class="…{{x}}…"` —
+//! because an unquoted `}` is the end of the attribute block. That is twig's
+//! grammar, not a rule of ours, and the same reason `data-x={{x}}` reads as a
+//! value of `{{x`.
 //!
 //! A `{{ }}` written anywhere else is not a template. It publishes as itself
 //! and is reported as a warning, which is the migration this change asks for:
@@ -474,7 +485,7 @@ fn expand_in(
     let expanded = editor
         .source_str()
         .map_err(|e| Error::Edit(format!("{e:?}")))?;
-    resolve_destinations(&expanded, scope, passes)
+    resolve_braces(&expanded, scope, passes)
 }
 
 /// Expand a directive's body once per item of a collection.
@@ -578,21 +589,24 @@ fn holds(found: &Found, scope: &Scope<'_>) -> Result<bool, Error> {
     Ok(result)
 }
 
-// ── Link destinations ───────────────────────────────────────────────────────
+// ── Link destinations and directive attributes ──────────────────────────────
 
-/// Resolve `{{path}}` inside link and image destinations, and only there.
+/// Resolve `{{path}}` inside link and image destinations and inside directive
+/// attributes, and only there.
 ///
-/// The node is what makes this safe. A destination is located as the stretch of
-/// the link's span *after* its label — `content_span.end .. span.end`, which is
-/// `](…)` however the destination is spelled, angle brackets and title
-/// included — so a `{{` in the label, in a code span, or in a paragraph is
-/// never in range. That is the whole difference between this and running a
-/// template engine over the text.
-fn resolve_destinations(
-    source: &str,
-    scope: &Scope<'_>,
-    passes: &mut u32,
-) -> Result<String, Error> {
+/// The node is what makes this safe. The run is located in the stretch of the
+/// node's span *outside* its content — for a link that is `](…)` however the
+/// destination is spelled, angle brackets and title included; for a directive
+/// it is the opening fence with its `{…}`, or the `{…}` after a `[label]` — so
+/// a `{{` in a label, in a code span, or in a paragraph is never in range. That
+/// is the whole difference between this and running a template engine over the
+/// text.
+///
+/// The parsed field is the filter and the span is the locator, and both are
+/// needed: `destination`/`attrs` say *whether* this node carries a run, which
+/// keeps a node whose syntax merely resembles one out of the loop, and the span
+/// says *where*, which is what an edit needs.
+fn resolve_braces(source: &str, scope: &Scope<'_>, passes: &mut u32) -> Result<String, Error> {
     if !source.contains("{{") {
         return Ok(source.to_string());
     }
@@ -609,8 +623,7 @@ fn resolve_destinations(
 
         let Some((at, end, path)) = nodes
             .iter()
-            .filter(|n| matches!(n.kind, twig::Kind::Link | twig::Kind::Image))
-            .filter(|n| n.destination.as_deref().is_some_and(|d| d.contains("{{")))
+            .filter(|n| carries_braces(n))
             .find_map(|n| brace_run(&current, n))
         else {
             break;
@@ -627,27 +640,50 @@ fn resolve_destinations(
         .map_err(|e| Error::Edit(format!("{e:?}")))
 }
 
-/// The first `{{…}}` in a link node's destination region, as `(start, end,
-/// path)`.
+/// Whether a node's parsed syntax — not its content — holds a `{{`.
 ///
-/// The region begins where the label ends, so a link whose *text* contains
-/// braces keeps them. A node with no recorded label falls back to its whole
-/// span, which is the honest answer for an autolink-shaped node and costs
-/// nothing, since one has no label to protect.
-fn brace_run(source: &str, node: &twig::FlatNode) -> Option<(usize, usize, String)> {
-    let from = node
-        .content_span
-        .as_ref()
-        .map(|c| c.end)
-        .unwrap_or(node.span.start);
-    let region = source.get(from..node.span.end)?;
-    let open = region.find("{{")?;
-    let close = region[open..].find("}}")? + open;
-    let path = region[open + 2..close].trim().to_string();
-    Some((from + open, from + close + 2, path))
+/// A link's is its destination; a directive's is its attribute values. An HTML
+/// element's attributes are deliberately not: a `<div class="{{x}}">` in a
+/// Markdown body is raw HTML the author wrote, and the module docs' rule for a
+/// Djot or HTML body — content, not template — holds for one embedded in
+/// Markdown too.
+fn carries_braces(node: &twig::FlatNode) -> bool {
+    match node.kind {
+        twig::Kind::Link | twig::Kind::Image => node
+            .destination
+            .as_deref()
+            .is_some_and(|d| d.contains("{{")),
+        twig::Kind::Container if matches!(node.origin, Some(twig::ContainerOrigin::Directive)) => {
+            node.attrs
+                .iter()
+                .any(|(_, v)| v.as_deref().is_some_and(|v| v.contains("{{")))
+        }
+        _ => false,
+    }
 }
 
-/// Report a `{{ }}` left standing outside a destination.
+/// The first `{{…}}` in a node's syntax, as `(start, end, path)`.
+///
+/// The syntax is the node's span less its content: before the content for a
+/// container directive's opening fence, after it for a link's destination and
+/// a leaf or text directive's trailing `{…}`. A node with no recorded content
+/// is all syntax, which is the honest answer for an autolink-shaped node and
+/// costs nothing, since one has no label to protect.
+fn brace_run(source: &str, node: &twig::FlatNode) -> Option<(usize, usize, String)> {
+    let (before, after) = match &node.content_span {
+        Some(c) => (node.span.start..c.start, c.end..node.span.end),
+        None => (node.span.start..node.span.start, node.span.clone()),
+    };
+    [before, after].into_iter().find_map(|region| {
+        let text = source.get(region.clone())?;
+        let open = text.find("{{")?;
+        let close = text[open..].find("}}")? + open;
+        let path = text[open + 2..close].trim().to_string();
+        Some((region.start + open, region.start + close + 2, path))
+    })
+}
+
+/// Report a `{{ }}` left standing outside a destination or an attribute.
 ///
 /// This is the migration off the Handlebars body, and it is a report rather
 /// than a fallback for the reason the `vis` spelling migration is: the answer
@@ -674,7 +710,7 @@ fn report_stray_braces(out: &str, warnings: &mut Vec<String>) {
             .map_or(out.len(), |(i, _)| at + i);
         warnings.push(format!(
             "`{}` is not a template: `{{{{ }}}}` is read only inside a link or image \
-             destination now — write `:val[…]` for a value in text",
+             destination or a quoted directive attribute — write `:val[…]` for a value in text",
             out[at..end].replace('\n', "\\n")
         ));
     }
@@ -847,6 +883,75 @@ mod tests {
         let (out, warnings) = run(body, &site, json!({}));
         assert!(out.contains("[One](one.html)"), "{out:?}");
         assert!(out.contains("[Two](two.html)"), "{out:?}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// A generic directive renders as an element wearing its attributes, so a
+    /// value in one is how a template reaches a stylesheet.
+    #[test]
+    fn a_brace_in_a_directive_attribute_is_resolved_per_binding() {
+        let site = site_with(
+            json!([{"title": "Lake", "href": "lake.html", "color": "blue"},
+                   {"title": "Kitchen", "href": "kitchen.html", "color": "green"}]),
+            json!([]),
+        );
+        let body = ":::each{of=entries as=book}\n\
+                    :::article{class=\"cover tone-{{book.color}}\"}\n\
+                    [:val[book.title]]({{book.href}})\n\
+                    :::\n\
+                    :::\n";
+        let (out, warnings) = run(body, &site, json!({}));
+        assert!(
+            out.contains(":::article{class=\"cover tone-blue\"}"),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(":::article{class=\"cover tone-green\"}"),
+            "{out:?}"
+        );
+        assert!(out.contains("[Kitchen](kitchen.html)"), "{out:?}");
+        assert!(warnings.is_empty(), "{warnings:?}");
+    }
+
+    /// Leaf and text forms carry attributes too, after their label — and the
+    /// label is content, so braces in it are the author's.
+    #[test]
+    fn leaf_and_text_directive_attributes_resolve_and_labels_do_not() {
+        let site = site_with(json!([]), json!([]));
+        let (out, warnings) = run(
+            "::cover[{{page.title}}]{tone=\"{{page.color}}\"}\n\n\
+             A :swatch[see {{page.color}}]{class=\"{{page.color}}\"} b\n",
+            &site,
+            json!({"page": {"title": "T", "color": "red"}}),
+        );
+        assert!(
+            out.contains("::cover[{{page.title}}]{tone=\"red\"}"),
+            "{out:?}"
+        );
+        assert!(
+            out.contains(":swatch[see {{page.color}}]{class=\"red\"}"),
+            "{out:?}"
+        );
+        assert_eq!(
+            warnings.len(),
+            2,
+            "the two label runs are reported: {warnings:?}"
+        );
+    }
+
+    /// An HTML element's attributes are the author's markup, not a template —
+    /// the same line the module draws for a whole HTML body.
+    #[test]
+    fn an_html_elements_attribute_is_not_a_template_position() {
+        let site = site_with(json!([]), json!([]));
+        let (out, warnings) = run(
+            "<div class=\"{{page.color}}\">x</div>\n",
+            &site,
+            json!({"page": {"color": "red"}}),
+        );
+        assert!(out.contains("class=\"{{page.color}}\""), "{out:?}");
+        // Raw HTML is outside the migration report too, as code is: nothing
+        // this module wrote, nothing it warns about.
         assert!(warnings.is_empty(), "{warnings:?}");
     }
 

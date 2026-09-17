@@ -79,12 +79,79 @@ fn render_markup(body: &str, format: ContentFormat) -> String {
     if !preprocessed.ends_with('\n') {
         preprocessed.push('\n');
     }
-    prov::render_html(&preprocessed, format).unwrap_or_else(|_| {
+    let rendered = match format {
+        ContentFormat::Markdown => render_markdown(&preprocessed),
+        _ => prov::render_html(&preprocessed, format),
+    };
+    rendered.unwrap_or_else(|_| {
         format!(
             "<pre class=\"diaryx-unrendered\">{}</pre>\n",
             html_escape(body)
         )
     })
+}
+
+/// Markdown, with its directive extension on.
+///
+/// A generic directive renders as an element wearing its attributes —
+/// `:::article{.cover}` is `<article class="cover">`, remark-directive's
+/// documented default — which is how a body puts what it knows where a
+/// stylesheet can see it. The alphabet was already spent: `:::vis` and the
+/// template vocabulary are located as directive nodes, so a body has been a
+/// directive-bearing document since either existed. What was missing was the
+/// render honouring the ones it does not itself consume.
+///
+/// **A bare `:word` is prose.** The extension's grammar admits a text directive
+/// with no label and no attributes anywhere a name follows a colon, and prose
+/// writes that constantly — `a:b`, `:tada:`, `key:value` — none of it meaning
+/// an element. So every such node is escaped back to its colon before the
+/// render (`\:` is CommonMark's escaped colon), and only a directive the
+/// author *spelled* — a `[label]`, a `{…}` attribute block, or a `::` / `:::`
+/// block form — becomes markup. The escape is placed off the node's span,
+/// never by matching text, so a `:b` inside a code span is untouched because it
+/// was never a node.
+fn render_markdown(source: &str) -> prov::Result<String> {
+    use prov::twig::{ContainerOrigin, DirectiveForm, Document, Format, Kind, MarkdownExtensions};
+
+    let extensions = MarkdownExtensions {
+        directives: true,
+        ..MarkdownExtensions::default()
+    };
+    let parse = |text: &str| {
+        Document::parse_str_with(text, Format::Markdown, extensions)
+            .map_err(|e| prov::Error::Content(format!("twig parse: {e}")))
+    };
+    let mut doc = parse(source)?;
+
+    let bare: Vec<usize> = doc
+        .nodes()
+        .map_err(|e| prov::Error::Content(format!("twig nodes: {e}")))?
+        .iter()
+        .filter(|n| {
+            matches!(n.kind, Kind::Container)
+                && matches!(n.origin, Some(ContainerOrigin::Directive))
+                && matches!(n.directive_form, Some(DirectiveForm::Text))
+                && n.attrs.is_empty()
+                && n.content_span.as_ref().is_none_or(|c| c.is_empty())
+                && source.as_bytes().get(n.span.start) == Some(&b':')
+        })
+        .map(|n| n.span.start)
+        .collect();
+
+    if !bare.is_empty() {
+        // Back to front, so each insertion leaves the offsets before it true.
+        let mut escaped = source.to_string();
+        for at in bare.into_iter().rev() {
+            escaped.insert(at, '\\');
+        }
+        doc = parse(&escaped)?;
+    }
+
+    let html = doc
+        .render_html()
+        .map_err(|e| prov::Error::Content(format!("twig render: {e}")))?;
+    String::from_utf8(html)
+        .map_err(|e| prov::Error::Content(format!("twig produced non-UTF-8 HTML: {e}")))
 }
 
 /// Pre-process Diaryx's custom syntax (highlights, spoilers, HTML embeds) into
@@ -387,6 +454,55 @@ mod tests {
     /// body had a grammar to be in.
     fn preprocess(source: &str) -> String {
         preprocess_custom_syntax(source, ContentFormat::Markdown)
+    }
+
+    fn md(source: &str) -> String {
+        render_body(source, ContentFormat::Markdown)
+    }
+
+    /// A directive the author spelled is an element wearing its attributes.
+    #[test]
+    fn a_generic_directive_renders_as_an_element() {
+        let html = md(":::article{class=\"cover tone-blue\"}\n[Lake](lake.html)\n:::\n");
+        assert!(
+            html.contains("<article class=\"cover tone-blue\">"),
+            "{html}"
+        );
+        assert!(html.contains("<a href=\"lake.html\">Lake</a>"), "{html}");
+        assert!(html.contains("</article>"), "{html}");
+
+        let html = md("::cover[Label]{.x}\n\nA :swatch[see]{.red} b\n");
+        assert!(html.contains("<cover class=\"x\">Label</cover>"), "{html}");
+        assert!(
+            html.contains("<swatch class=\"red\">see</swatch>"),
+            "{html}"
+        );
+    }
+
+    /// A bare `:word` is prose: the grammar would read every one as an empty
+    /// element, and prose writes them constantly.
+    #[test]
+    fn a_bare_colon_word_stays_prose() {
+        let html = md("Party :tada: at 12:30pm, a:b, http://x.y/z and `c:d`.\n");
+        assert!(html.contains("Party :tada: at 12:30pm, a:b,"), "{html}");
+        assert!(html.contains("<code>c:d</code>"), "{html}");
+        assert!(!html.contains("<tada"), "{html}");
+        assert!(!html.contains("<b>"), "{html}");
+
+        // Several on one line and across lines, so the back-to-front escape
+        // is exercised past the first.
+        let html = md(":one and :two\n\n:three.\n");
+        assert!(html.contains(":one and :two"), "{html}");
+        assert!(html.contains(":three."), "{html}");
+    }
+
+    /// The template vocabulary's own spelling in a code fence is quoted, not
+    /// written, and so is a directive block.
+    #[test]
+    fn a_directive_in_a_code_fence_is_quoted() {
+        let html = md("```\n:::note{.x}\nhi\n:::\n```\n");
+        assert!(html.contains(":::note{.x}"), "{html}");
+        assert!(!html.contains("<note"), "{html}");
     }
 
     #[test]
