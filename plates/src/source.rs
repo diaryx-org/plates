@@ -113,6 +113,13 @@ pub struct CollectedSite {
     pub outline: Vec<plates_render::OutlineNode>,
     /// Every file the site ships alongside them, deduplicated by destination.
     pub attachments: Vec<Attachment>,
+    /// Files a page referenced that the site does **not** ship, in
+    /// [`Attachment::dest_rel`]'s coordinates: each is described by a sidecar
+    /// the plan did not admit that says who the file is for. The renderer
+    /// marks a reference to one as it marks a link to an unpublished page
+    /// (`plates_render::site::SiteOptions::published_files`), and a report
+    /// can say how many a site held back.
+    pub withheld: Vec<String>,
     /// Whether this site's front page is among the
     /// [`attachments`](Self::attachments) — shipped verbatim — rather than
     /// something to render.

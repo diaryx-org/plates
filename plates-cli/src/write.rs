@@ -88,8 +88,12 @@ fn write_file(path: &Path, bytes: &[u8]) -> Result<(), String> {
 
 /// One line per site: what it holds and who it is for.
 pub fn describe(built: &BuiltSite) -> String {
+    let withheld = match built.withheld.len() {
+        0 => String::new(),
+        n => format!(", {n} withheld"),
+    };
     format!(
-        "{} — {} page{}, {} asset{}, {} attachment{} ({})",
+        "{} — {} page{}, {} asset{}, {} attachment{}{withheld} ({})",
         built.name,
         built.pages,
         plural(built.pages),

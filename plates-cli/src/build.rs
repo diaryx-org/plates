@@ -70,6 +70,11 @@ pub struct BuiltSite {
     /// way — so there is one copying rule rather than a second one that could
     /// disagree with it about where a file lands.
     pub attachments: BTreeMap<String, PathBuf>,
+    /// Files a page of this site referenced that the site does not ship —
+    /// each described by a sidecar that says it is for someone else. Named so
+    /// the report can say a site held something back; the render has already
+    /// marked every reference to one.
+    pub withheld: Vec<String>,
     /// How many of [`files`](Self::files) are pages rather than assets.
     pub pages: usize,
     /// What the archive could not deliver, in the words of whoever has to fix
@@ -213,6 +218,7 @@ pub fn build_sites(
         );
         let options = CollectOptions {
             audience: &spec.audience,
+            gate_field: spec.gate_field(),
             strip_keys: STRIP_KEYS,
             stamp: &NoStamp,
             id_by_path: &id_by_path,
@@ -352,10 +358,20 @@ fn assemble(
         })
         .collect();
 
+    // What the site ships, so a page's reference to a file it does not — one
+    // whose sidecar says it is for someone else — is marked like a link to a
+    // page the gate refused, rather than pointing at nothing.
+    let published_files = collected
+        .attachments
+        .iter()
+        .map(|a| a.dest_rel.clone())
+        .collect();
+
     let rendered = render_site(
         &sources,
         &SiteOptions {
             audience: Some(audience.to_string()),
+            published_files: Some(published_files),
             // What the archive calls this site. An authored front page still
             // wins — `render_site` only reaches for this when the site has
             // none — and the case it answers is the ordinary one under per-file
@@ -461,6 +477,7 @@ fn assemble(
         audience: audience.to_string(),
         files,
         attachments,
+        withheld: collected.withheld,
         pages,
         warnings,
     }

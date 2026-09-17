@@ -170,6 +170,17 @@ pub struct CollectOptions<'a> {
     /// a body filtered for one audience inside a site gated for another is a
     /// disclosure with no one to notice it.
     pub audience: &'a str,
+    /// The document field the gate reads [`audience`](Self::audience) out of
+    /// — [`SiteSpec::gate_field`](crate::SiteSpec::gate_field), or
+    /// [`AUDIENCE_FIELD`](crate::AUDIENCE_FIELD).
+    ///
+    /// What lets a *referenced* file be withheld on the same terms a linked
+    /// page is. A page's body may embed a payload whose sidecar the plan did
+    /// not admit; when that sidecar declares who the file is for under this
+    /// field, the site is not among them and the bytes stay home. A sidecar
+    /// that declares nothing is carried by the page that embeds it, as every
+    /// attachment written before sidecars could say who they were for is.
+    pub gate_field: &'a str,
     /// Top-level frontmatter keys removed from the collected source.
     ///
     /// A collected document is routinely served publicly, so internal
@@ -440,6 +451,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
 ) -> Result<CollectedSite> {
     let mut sources = Vec::with_capacity(docs.len());
     let mut attachments = Vec::new();
+    let mut withheld = Vec::new();
     let mut seen_attachments: HashSet<String> = HashSet::new();
     // Which document claimed each published destination, so a second claim on
     // one destination is refused rather than silently overwritten — see
@@ -623,6 +635,20 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             if !seen_attachments.insert(canonical.clone()) {
                 continue;
             }
+            // A referenced file is a node when a sidecar describes it, and a
+            // node the plan did not admit is treated as a linked page the plan
+            // did not admit is: not published, and the reference to it marked
+            // rather than left to 404. Only a sidecar that *says* who the file
+            // is for is refused — one that declares nothing under the gate's
+            // field is carried by the page that embeds it, which is every
+            // attachment made before a sidecar could say.
+            if let Some(sidecar) = describing_sidecar(ws, Path::new(&canonical)).await
+                && !page_paths.contains(sidecar.path.as_path())
+                && sidecar.declares(opts.gate_field)
+            {
+                withheld.push(rebased_dest(opts, &canonical, anchor));
+                continue;
+            }
             if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
                 attachments.push(attachment);
             }
@@ -655,6 +681,7 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
     Ok(CollectedSite {
         sources,
         attachments,
+        withheld,
         outline,
         // Set by `collect_site` when the front page turned out to be a covered
         // directory; nothing collected here can supply one.
@@ -888,6 +915,59 @@ fn claim_dest(claimed: &mut HashMap<String, PathBuf>, dest: &str, path: &Path) -
 /// Describe the attachment at workspace-relative `canonical` for the diff,
 /// published under that same path.
 ///
+/// The sidecar that describes the file at `payload`, if one does: the
+/// `<payload>.<ext>` convention probed, and the `content` pointer confirming
+/// the hit ([`prov::prov_graph::graph::Graph::sidecar_claims`]).
+struct DescribingSidecar {
+    path: PathBuf,
+    meta: prov::Mapping,
+}
+
+impl DescribingSidecar {
+    /// Whether the sidecar says who its file is for — declares anything at all
+    /// under the gate's `field`.
+    fn declares(&self, field: &str) -> bool {
+        self.meta.get(field).is_some()
+    }
+}
+
+async fn describing_sidecar<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    payload: &Path,
+) -> Option<DescribingSidecar> {
+    for candidate in prov::prov_graph::graph::sidecar_candidates(payload) {
+        if ws.graph().sidecar_claims(&candidate, payload).await {
+            let meta = ws
+                .graph()
+                .document(&candidate)
+                .await
+                .ok()?
+                .meta
+                .as_mapping()
+                .cloned()
+                .unwrap_or_default();
+            return Some(DescribingSidecar {
+                path: candidate,
+                meta,
+            });
+        }
+    }
+    None
+}
+
+/// Where the file at workspace-relative `canonical` *would* have published —
+/// the same coordinates [`weigh_attachment`] gives a shipped one — so a
+/// renderer can recognise a reference to it.
+fn rebased_dest(opts: &CollectOptions<'_>, canonical: &str, anchor: &Path) -> String {
+    format!(
+        "{}{}",
+        opts.mount,
+        rebase(Path::new(canonical), anchor)
+            .to_string_lossy()
+            .replace('\\', "/")
+    )
+}
+
 /// The two coordinates coincide for a site anchored at the vault root: a body
 /// pointing at `img/scan.jpg` means the site should serve it at `img/scan.jpg`.
 /// They part company under an anchor — `www/logo.png` is served at `logo.png` —
@@ -1430,6 +1510,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
@@ -1504,6 +1585,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
@@ -1858,6 +1940,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
@@ -1971,6 +2054,69 @@ mod tests {
         assert_eq!(scans, 1, "{:?}", site.attachments);
     }
 
+    /// A page's reference to a file is judged the way its link to a page is.
+    /// Three pictures embedded by one public page: one whose sidecar says
+    /// `family` is withheld and named; one whose sidecar says nothing is
+    /// carried by the page, as every attachment made before a sidecar could
+    /// say is; one with no sidecar at all is carried too.
+    #[test]
+    fn a_file_whose_sidecar_names_another_audience_is_withheld() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [public]\ncontents:\n- attachments/private.jpg.yaml\n- attachments/quiet.jpg.yaml\n---\n![p](attachments/private.jpg) ![q](attachments/quiet.jpg) ![l](attachments/loose.jpg)\n",
+            ),
+            (
+                "attachments/private.jpg.yaml",
+                "title: Private\ncontent: private.jpg\nattachment: true\naudience: [family]\npart_of: /index.md\n",
+            ),
+            (
+                "attachments/quiet.jpg.yaml",
+                "title: Quiet\ncontent: quiet.jpg\nattachment: true\npart_of: /index.md\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        for name in ["private", "quiet", "loose"] {
+            prov::block_on(fs.write_atomic(
+                &Path::new("/vault/attachments").join(format!("{name}.jpg")),
+                b"JPEG",
+            ))
+            .unwrap();
+        }
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        // The public plan admits the page and neither sidecar.
+        let site = try_collect(&ws, &["index.md"]).unwrap();
+        let shipped: Vec<_> = site
+            .attachments
+            .iter()
+            .map(|a| a.dest_rel.as_str())
+            .collect();
+        assert!(shipped.contains(&"attachments/quiet.jpg"), "{shipped:?}");
+        assert!(shipped.contains(&"attachments/loose.jpg"), "{shipped:?}");
+        assert!(
+            !shipped.contains(&"attachments/private.jpg"),
+            "a file that says who it is for stays home: {shipped:?}"
+        );
+        assert_eq!(site.withheld, vec!["attachments/private.jpg".to_string()]);
+
+        // A plan that admits the sidecar ships the file, once.
+        let site = try_collect(&ws, &["index.md", "attachments/private.jpg.yaml"]).unwrap();
+        assert_eq!(
+            site.attachments
+                .iter()
+                .filter(|a| a.dest_rel == "attachments/private.jpg")
+                .count(),
+            1,
+            "{:?}",
+            site.attachments
+        );
+        assert!(site.withheld.is_empty());
+    }
+
     /// …and naming no root collects no outline, which leaves the render layer
     /// on the frontmatter fallback rather than on a tree nobody walked.
     #[test]
@@ -1982,6 +2128,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),
@@ -2037,6 +2184,7 @@ mod tests {
             Path::new("www"),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &id_by_path,
@@ -2096,6 +2244,7 @@ mod tests {
             Path::new("www"),
             &CollectOptions {
                 audience: "public",
+                gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
                 id_by_path: &HashMap::new(),

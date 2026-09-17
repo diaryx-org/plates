@@ -51,15 +51,182 @@ pub fn transform_links(
     workspace_dir: &Path,
     dest_filename: &str,
 ) -> String {
+    transform_links_with_files(
+        html,
+        current_path,
+        path_to_filename,
+        workspace_dir,
+        dest_filename,
+        None,
+    )
+}
+
+/// [`transform_links`], knowing which *files* the site ships as well as
+/// which pages: a reference to a file it does not — an `<img>`, a `<video>`,
+/// an `<audio>`, an `<iframe>`, or an `<a>` pointing at one — is marked the
+/// way a link to an unpublished page is, rather than left to 404. `None`
+/// is a caller that does not know, and marks nothing.
+pub fn transform_links_with_files(
+    html: &str,
+    current_path: &Path,
+    path_to_filename: &HashMap<PathBuf, String>,
+    workspace_dir: &Path,
+    dest_filename: &str,
+    published_files: Option<&HashSet<String>>,
+) -> String {
     let prefix = root_prefix(dest_filename);
-    let html = &rewrite_document_links(
+    let html = rewrite_document_links(
         html,
         current_path,
         path_to_filename,
         workspace_dir,
         dest_filename,
     );
-    rebase_root_absolute(html, &prefix)
+    let html = match published_files {
+        Some(published) => {
+            let current_relative = current_path
+                .strip_prefix(workspace_dir)
+                .unwrap_or(current_path);
+            mark_unpublished_files(&html, current_relative, published)
+        }
+        None => html,
+    };
+    rebase_root_absolute(&html, &prefix)
+}
+
+/// The tags a page reaches a file through, and the attribute each reaches
+/// it by. `<a>` is the one with a body to keep; the rest are replaced whole.
+const FILE_TAGS: &[(&str, &str, bool)] = &[
+    ("a", "href", true),
+    ("img", "src", false),
+    ("video", "src", true),
+    ("audio", "src", true),
+    ("iframe", "src", true),
+];
+
+/// What the build itself writes beside the pages, which no attachment list
+/// names and no page is wrong to link.
+fn is_generated_asset(canonical: &str) -> bool {
+    matches!(
+        canonical,
+        "style.css" | "feed.xml" | "rss.xml" | "sitemap.xml" | "robots.txt"
+    ) || canonical == crate::html::ISLAND_CHILD_SCRIPT_FILENAME
+        || (canonical.starts_with("favicon.") && !canonical.contains('/'))
+}
+
+/// The file half of [`rewrite_document_links`]: a reference to a file the
+/// site does not ship becomes the same marked span a link to an unpublished
+/// page becomes — the link's own text, an image's `alt`, or the file's name.
+///
+/// Runs before [`rebase_root_absolute`] for the reason document links do: a
+/// `/img/photo.png` has to still read as vault-root-absolute to resolve.
+/// `published` is every file the site ships, in the coordinates a page's
+/// destination is spelled in.
+fn mark_unpublished_files(
+    html: &str,
+    current_relative: &Path,
+    published: &HashSet<String>,
+) -> String {
+    let mut result = String::with_capacity(html.len());
+    let mut remaining = html;
+
+    while let Some(lt) = remaining.find('<') {
+        result.push_str(&remaining[..lt]);
+        let after = &remaining[lt..];
+        let Some(gt) = after.find('>') else {
+            result.push_str(after);
+            return result;
+        };
+        let open_tag = &after[..=gt];
+        let tail = &after[gt + 1..];
+
+        let tag_name = open_tag[1..]
+            .split(|c: char| c.is_whitespace() || c == '>' || c == '/')
+            .next()
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        let Some((_, attr, closes)) = FILE_TAGS.iter().find(|(t, _, _)| *t == tag_name) else {
+            result.push_str(open_tag);
+            remaining = tail;
+            continue;
+        };
+        let Some((start, end)) = find_attr_value(open_tag, attr) else {
+            result.push_str(open_tag);
+            remaining = tail;
+            continue;
+        };
+        let Some(canonical) = file_link_canonical(&open_tag[start..end], current_relative) else {
+            result.push_str(open_tag);
+            remaining = tail;
+            continue;
+        };
+        if published.contains(&canonical) || is_generated_asset(&canonical) {
+            result.push_str(open_tag);
+            remaining = tail;
+            continue;
+        }
+
+        // Withheld. What the span says is what the reader would have seen:
+        // the link's text, the image's `alt`, else the file's own name.
+        let name = canonical
+            .rsplit('/')
+            .next()
+            .unwrap_or(&canonical)
+            .to_string();
+        let (inner, rest) = if *closes {
+            let close = format!("</{tag_name}>");
+            match tail.find(&close) {
+                Some(at) => (tail[..at].to_string(), &tail[at + close.len()..]),
+                None => (String::new(), tail),
+            }
+        } else {
+            (String::new(), tail)
+        };
+        let text = if tag_name == "a" && !inner.trim().is_empty() {
+            inner
+        } else {
+            find_attr_value(open_tag, "alt")
+                .map(|(s, e)| open_tag[s..e].to_string())
+                .filter(|alt| !alt.trim().is_empty())
+                .unwrap_or_else(|| crate::page::html_escape(&name))
+        };
+        result.push_str(r#"<span class="unpublished-link" title="This file isn’t published">"#);
+        result.push_str(&text);
+        result.push_str("</span>");
+        remaining = rest;
+    }
+    result.push_str(remaining);
+    result
+}
+
+/// If `raw` is a reference to a *file* in the vault — not a page, not
+/// external, not an anchor, not inline data — its workspace-relative canonical
+/// path; otherwise `None`.
+fn file_link_canonical(raw: &str, current_relative: &Path) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with('#')
+        || trimmed.starts_with("//")
+        || trimmed.split_once(':').is_some_and(|(scheme, _)| {
+            !scheme.is_empty()
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '-' || c == '.')
+        })
+    {
+        return None;
+    }
+    let path = &trimmed[..trimmed.find(['?', '#']).unwrap_or(trimmed.len())];
+    let decoded = percent_decode(path);
+    if decoded.is_empty() || prov::ContentFormat::from_extension(Path::new(&decoded)).is_some() {
+        return None;
+    }
+    let target = prov::Link::parse_path_only(&decoded).target;
+    Some(
+        prov::link::resolve(current_relative, &target)
+            .to_string_lossy()
+            .into_owned(),
+    )
 }
 
 /// The document-link half of [`transform_links`]: `.md`/`.dj`/`.html` hrefs to
@@ -734,6 +901,55 @@ mod tests {
             "notes/deep.html",
         );
         assert_eq!(out, r#"<img src="../img/photo.png" alt="a">"#);
+    }
+
+    /// A reference to a file the site does not ship is marked as a link to a
+    /// page it does not publish is: the image's `alt` where its picture would
+    /// have been, the link's text, a player's title; a file the site ships,
+    /// the build's own assets, and anything external are left alone; and a
+    /// caller that cannot say marks nothing.
+    #[test]
+    fn a_reference_to_a_withheld_file_is_marked_like_an_unpublished_page() {
+        let workspace = Path::new("");
+        let map = HashMap::new();
+        let html = concat!(
+            r#"<img src="attachments/private.jpg" alt="A private picture">"#,
+            r#"<img src="/attachments/shipped.jpg" alt="ok">"#,
+            r#"<a href="attachments/private.pdf">Read the scan</a>"#,
+            r#"<video controls src="attachments/private.mp4"></video>"#,
+            r#"<a href="https://example.com/x.jpg">out</a>"#,
+            r#"<a href="/feed.xml">feed</a>"#,
+            r#"<img src="attachments/nameless.png" alt="">"#,
+        );
+        let published: HashSet<String> = ["attachments/shipped.jpg".to_string()].into();
+
+        let out = transform_links_with_files(
+            html,
+            Path::new("index.md"),
+            &map,
+            workspace,
+            "index.html",
+            Some(&published),
+        );
+        assert_eq!(
+            out,
+            concat!(
+                r#"<span class="unpublished-link" title="This file isn’t published">A private picture</span>"#,
+                r#"<img src="attachments/shipped.jpg" alt="ok">"#,
+                r#"<span class="unpublished-link" title="This file isn’t published">Read the scan</span>"#,
+                r#"<span class="unpublished-link" title="This file isn’t published">private.mp4</span>"#,
+                r#"<a href="https://example.com/x.jpg">out</a>"#,
+                r#"<a href="feed.xml">feed</a>"#,
+                r#"<span class="unpublished-link" title="This file isn’t published">nameless.png</span>"#,
+            )
+        );
+
+        // Not knowing is not the same as knowing nothing ships.
+        let out = transform_links(html, Path::new("index.md"), &map, workspace, "index.html");
+        assert!(
+            out.contains(r#"<img src="attachments/private.jpg""#),
+            "{out}"
+        );
     }
 
     /// A link whose href is already a page's destination — what a template

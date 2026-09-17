@@ -10,7 +10,7 @@
 //! Each source is parsed in its own grammar, which [`crate::body`] reads off the
 //! path's extension. A site is not required to be all one format.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::frontmatter;
@@ -106,6 +106,14 @@ pub struct SiteOptions {
     pub audience: Option<String>,
     /// Site title override; defaults to the root page's title.
     pub site_title: Option<String>,
+    /// Every file the site ships beside its pages — attachments, on the
+    /// terms [`SourceDoc::path`] is spelled: site-relative, forward slashes.
+    /// With it, a page's reference to a file the site does *not* ship is
+    /// marked the way its link to a page the site does not publish is
+    /// (`<span class="unpublished-link">`), instead of pointing at nothing:
+    /// a picture whose sidecar says it is for someone else. `None` is a
+    /// caller that cannot say, and leaves every file reference as written.
+    pub published_files: Option<HashSet<String>>,
     /// Base URL for sitemap/canonical/feeds; when empty those are skipped.
     pub base_url: Option<String>,
     /// Generate SEO meta + sitemap/robots.
@@ -253,6 +261,7 @@ impl Default for SiteOptions {
         Self {
             audience: None,
             site_title: None,
+            published_files: None,
             base_url: None,
             generate_seo: true,
             generate_feeds: true,
@@ -1426,12 +1435,13 @@ fn render_body(
     // Rewrite internal document links last, so a heading anchor's own `#id`
     // is not a link this pass would try to resolve. The empty workspace dir
     // means canonical paths are used directly as `path_to_filename` keys.
-    page.rendered_body = links::transform_links(
+    page.rendered_body = links::transform_links_with_files(
         &html,
         current_path,
         path_to_filename,
         Path::new(""),
         &page.dest_filename,
+        opts.published_files.as_ref(),
     );
     page.markdown_body = expanded;
     page.headings = headings;
@@ -1562,12 +1572,13 @@ fn render_frame_doc(
     let converted = body::render_body_with(&expanded, format, syntaxes);
     #[cfg(not(feature = "syntax-highlighting"))]
     let converted = body::render_body(&expanded, format);
-    links::transform_links(
+    links::transform_links_with_files(
         &converted,
         at,
         path_to_filename,
         Path::new(""),
         &page.dest_filename,
+        opts.published_files.as_ref(),
     )
 }
 

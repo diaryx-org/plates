@@ -351,6 +351,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         );
         let inner = CollectOptions {
             audience: opts.audience,
+            gate_field: opts.gate_field,
             strip_keys: opts.strip_keys,
             stamp: opts.stamp,
             id_by_path: &o.id_by_path,
@@ -428,6 +429,7 @@ fn with<'a>(
 ) -> CollectOptions<'a> {
     CollectOptions {
         audience: opts.audience,
+        gate_field: opts.gate_field,
         strip_keys: opts.strip_keys,
         stamp: opts.stamp,
         id_by_path: opts.id_by_path,
@@ -686,6 +688,7 @@ mod tests {
         .collect();
         let opts = CollectOptions {
             audience: "public",
+            gate_field: "audience",
             strip_keys: &[],
             stamp: &NoStamp,
             id_by_path: &id_by_path,
