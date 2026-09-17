@@ -41,6 +41,25 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.7.0 — 2026-09-17
+
+### Added
+
+- **mount** — a published page's foreign reference mounts the peer's site at /`<name>`/ ([`f124200`](https://github.com/diaryx-org/plates/commit/f1242001068f24b92d8e5b42183576d92f31d82a))
+- **render** — a template reaches a stylesheet through a directive's attributes ([`6ef193a`](https://github.com/diaryx-org/plates/commit/6ef193ae3d2a7edd277dc3db58a0b1e3ad4a898d))
+
+### Behavioural changes
+
+- an `id:` link in a page's prose (`[x](id:abc1234)`,
+
+- a generic directive in a Markdown body — a `[label]`,
+a `{…}` block, or a `::`/`:::` form — now renders as an element named
+after it, where it rendered as literal text. `children`, `parent`, `prev`
+and `next` in the template context gain the fields an entry has; `title`
+and `href` are unchanged. A `{{ }}` in a quoted directive attribute is now
+resolved where it was published as written and warned about.
+
+
 ## v0.6.0 — 2026-09-14
 
 ### Breaking
