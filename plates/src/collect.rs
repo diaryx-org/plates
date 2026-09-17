@@ -761,7 +761,7 @@ fn site_relations<'a>(
 /// The relation a link site names, or `None` for a link written in prose.
 fn relation_name(site: &prov::LinkSite) -> Option<String> {
     match site {
-        prov::LinkSite::Relation(name) => Some(name.clone()),
+        prov::LinkSite::Relation { field, .. } => Some(field.clone()),
         prov::LinkSite::Body(_) => None,
     }
 }
@@ -1728,7 +1728,7 @@ mod tests {
         let sequel_between = |from: &str, to: &str| {
             census.iter().any(|e| {
                 e.source == Path::new(from)
-                    && matches!(&e.site, prov::LinkSite::Relation(r) if r == "sequel")
+                    && matches!(&e.site, prov::LinkSite::Relation { field, .. } if field == "sequel")
                     && e.resolution.resolved_path() == Some(&PathBuf::from(to))
             })
         };

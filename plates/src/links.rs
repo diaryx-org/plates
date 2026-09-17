@@ -158,7 +158,10 @@ impl fmt::Display for LinkDiagnostic {
             write!(f, " ({label:?})")?;
         }
         match &self.site {
-            LinkSite::Relation(name) => write!(f, " in {name}:")?,
+            LinkSite::Relation { field, index } => match index {
+                Some(i) => write!(f, " in {field}[{i}]:")?,
+                None => write!(f, " in {field}:")?,
+            },
             LinkSite::Body(_) => f.write_str(" in its body")?,
         }
         write!(f, " — {}", self.problem)
@@ -340,7 +343,10 @@ mod tests {
     fn a_relation_link_is_reported_by_its_field_name() {
         let census = vec![CensusEntry {
             source: PathBuf::from("trip.md"),
-            site: LinkSite::Relation("contents".to_string()),
+            site: LinkSite::Relation {
+                field: "contents".to_string(),
+                index: Some(0),
+            },
             target_text: "gone.md".to_string(),
             label: Some("the old page".to_string()),
             resolution: Resolution::Broken,
@@ -348,7 +354,7 @@ mod tests {
         let said = link_diagnostics(&census, [Path::new("trip.md")])[0].to_string();
         assert_eq!(
             said,
-            "trip.md links to \"gone.md\" (\"the old page\") in contents: — nothing is on disk there"
+            "trip.md links to \"gone.md\" (\"the old page\") in contents[0]: — nothing is on disk there"
         );
     }
 }
