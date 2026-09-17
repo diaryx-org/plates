@@ -471,15 +471,28 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             })?;
 
         // An attachment sidecar is a document, but it is not a *page*: its body is
-        // a JPEG. Rendering one would publish a broken HTML page per attachment,
-        // and its payload already publishes on its own as an attachment, reached
-        // by the body reference in whatever entry embeds it.
-        //
-        // This only bites on a `*` audience, which sees every reachable document
-        // regardless of what it declares — a named audience never reaches a
-        // sidecar, since `attach` gives it no `audience` and visibility is
-        // never inherited.
+        // a JPEG. Rendering one would publish a broken HTML page per attachment.
+        // What the plan decided still holds — this document leaves — and for a
+        // sidecar the document that leaves is its payload, so the bytes ship as
+        // an attachment whether or not any page's prose happens to embed them.
+        // A sidecar reaches a plan by declaring the audience itself (a PDF
+        // filed under a page, given to `family` in the app and listed in the
+        // page's `contents`) or on a `*` audience, which sees every reachable
+        // document; before this the first case published nothing, because the
+        // only route to a payload was a body reference in some other page.
         if parsed.is_attachment() {
+            if let Some(content) = parsed.content_attr() {
+                let mut refs = Vec::new();
+                push_canonical_ref(path, content, true, anchor, &page_paths, &mut refs);
+                for canonical in refs {
+                    if !seen_attachments.insert(canonical.clone()) {
+                        continue;
+                    }
+                    if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
+                        attachments.push(attachment);
+                    }
+                }
+            }
             continue;
         }
 
@@ -1868,6 +1881,94 @@ mod tests {
             root.children[0].children[0].path, "letters/first.md",
             "the whole spine, in the coordinates the sources are named by"
         );
+    }
+
+    /// A sidecar the plan admitted publishes its payload, with no page
+    /// embedding it: a PDF filed under a page, listed in the page's
+    /// `contents:` and given an audience of its own. It is never a *source* —
+    /// its body is the PDF — and it is not shipped twice when a body reference
+    /// reaches the same bytes.
+    #[test]
+    fn a_planned_sidecar_ships_its_payload_without_a_body_reference() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [family]\ncontents:\n- archive.md\n---\nHome.\n",
+            ),
+            (
+                "archive.md",
+                "---\ntitle: Archive\naudience: [family]\npart_of: index.md\ncontents:\n- attachments/scan.pdf.yaml\n---\nNothing here embeds the scan.\n",
+            ),
+            (
+                "attachments/scan.pdf.yaml",
+                "title: Scan\ncontent: scan.pdf\nattachment: true\naudience: [family]\npart_of: /archive.md\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        prov::block_on(fs.write_atomic(Path::new("/vault/attachments/scan.pdf"), b"%PDF-1.7"))
+            .unwrap();
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let admitted = ["index.md", "archive.md", "attachments/scan.pdf.yaml"];
+        let site = try_collect(&ws, &admitted).unwrap();
+
+        assert!(
+            site.sources
+                .iter()
+                .all(|s| !s.source_rel_path.contains("scan.pdf")),
+            "the sidecar is not a page: {:?}",
+            site.sources
+                .iter()
+                .map(|s| &s.source_rel_path)
+                .collect::<Vec<_>>()
+        );
+        let scan: Vec<_> = site
+            .attachments
+            .iter()
+            .filter(|a| a.dest_rel == "attachments/scan.pdf")
+            .collect();
+        assert_eq!(
+            scan.len(),
+            1,
+            "the payload ships, once: {:?}",
+            site.attachments
+        );
+        assert_eq!(scan[0].mime_type, "application/pdf");
+        assert_eq!(scan[0].bytes.as_deref(), Some(&b"%PDF-1.7"[..]));
+    }
+
+    /// The other route to the same bytes — a page that embeds the payload —
+    /// meets the sidecar's own claim in one attachment, not two.
+    #[test]
+    fn a_sidecar_and_a_body_reference_to_its_payload_ship_one_attachment() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [family]\ncontents:\n- attachments/scan.pdf.yaml\n---\nRead [the scan](attachments/scan.pdf).\n",
+            ),
+            (
+                "attachments/scan.pdf.yaml",
+                "title: Scan\ncontent: scan.pdf\nattachment: true\naudience: [family]\npart_of: /index.md\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        prov::block_on(fs.write_atomic(Path::new("/vault/attachments/scan.pdf"), b"%PDF-1.7"))
+            .unwrap();
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let site = try_collect(&ws, &["index.md", "attachments/scan.pdf.yaml"]).unwrap();
+        let scans = site
+            .attachments
+            .iter()
+            .filter(|a| a.dest_rel == "attachments/scan.pdf")
+            .count();
+        assert_eq!(scans, 1, "{:?}", site.attachments);
     }
 
     /// …and naming no root collects no outline, which leaves the render layer
