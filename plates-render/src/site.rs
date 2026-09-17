@@ -513,6 +513,10 @@ struct Collected {
     /// The entry record for each source, keyed by its sanitized path. This is
     /// what a page names as `page`, and what a breadcrumb trail is made of.
     by_path: HashMap<PathBuf, JsonValue>,
+    /// The same records keyed by the href each publishes at — the coordinate a
+    /// resolved `contents:`/`part_of:` link carries, so `children` and
+    /// `parent` can be entries without a walk over every record per child.
+    by_href: HashMap<String, PathBuf>,
     /// Each source's container, for walking a trail back to the root.
     parent_of: HashMap<PathBuf, PathBuf>,
     /// Each source's contained pages, when the caller supplied the archive's
@@ -679,6 +683,11 @@ fn collect_context(
         "base_url": opts.base_url.clone().unwrap_or_default(),
     });
 
+    let by_href = by_path
+        .iter()
+        .filter_map(|(path, entry)| Some((entry.get("href")?.as_str()?.to_string(), path.clone())))
+        .collect();
+
     Collected {
         context: template::SiteContext::new(
             site,
@@ -686,6 +695,7 @@ fn collect_context(
             groups_of(&order, &meta_of, &by_path, &opts.arrangement),
         ),
         by_path,
+        by_href,
         parent_of,
         spine,
         order,
@@ -764,6 +774,11 @@ fn edges_by_relation(edges: &[LinkEdge], by_path: &HashMap<PathBuf, JsonValue>) 
 /// purpose: a filter language is the thing that turns a template format into a
 /// template *engine*, and this crate already knows how to read a date. A field
 /// that turns out to be wanted is one line; a filter grammar is permanent.
+///
+/// `color` is such a line. It is the word a document names its colour with —
+/// `color: green` — read as written, so a listing can dress each entry in the
+/// tone its author chose (`class="cover tone-{{book.color}}"`); which tones
+/// exist and what they look like is the stylesheet's to say.
 fn entry_value(
     path: &str,
     title: &str,
@@ -783,6 +798,7 @@ fn entry_value(
         "date_month": normalized.as_deref().and_then(|d| d.get(0..7)),
         "id": frontmatter::get_string(fm, "id"),
         "description": frontmatter::get_string(fm, "description"),
+        "color": frontmatter::get_string(fm, "color"),
         "group_keys": group_keys,
         "is_root": is_root,
     })
@@ -864,6 +880,11 @@ fn page_context_values(
     // when the caller walked one and from the page's own links otherwise — the
     // same choice `crate::nav` makes, so a template's `parent` and the
     // breadcrumb printed above it can never name two different pages.
+    //
+    // Each is the *entry* — the record `entries` holds, colour and date and
+    // all — rather than a link cut down to a title and an href. A link this
+    // site does not publish was dropped when it was resolved, so every one
+    // that reaches here has an entry to be.
     let (children, parent) = match &collected.spine {
         Some(spine) => (
             spine
@@ -871,21 +892,23 @@ fn page_context_values(
                 .into_iter()
                 .flatten()
                 .filter_map(|child| collected.by_path.get(child))
-                .map(link_value)
+                .cloned()
                 .collect(),
             collected
                 .parent_of
                 .get(&key)
                 .and_then(|container| collected.by_path.get(container))
-                .map(link_value)
+                .cloned()
                 .unwrap_or(JsonValue::Null),
         ),
         None => (
             contents_links
                 .iter()
-                .map(nav_link_value)
+                .map(|link| collected.entry_of(link))
                 .collect::<Vec<_>>(),
-            parent_link.map(nav_link_value).unwrap_or(JsonValue::Null),
+            parent_link
+                .map(|link| collected.entry_of(link))
+                .unwrap_or(JsonValue::Null),
         ),
     };
     values.insert("children".into(), JsonValue::Array(children));
@@ -915,14 +938,21 @@ fn page_context_values(
     values
 }
 
-fn nav_link_value(link: &NavLink) -> JsonValue {
-    serde_json::json!({ "title": link.title, "href": link.href })
-}
-
-/// An entry record cut down to a link, so `children` and `parent` hold one
-/// shape whichever spine answered for them.
-fn link_value(entry: &JsonValue) -> JsonValue {
-    serde_json::json!({ "title": entry.get("title"), "href": entry.get("href") })
+impl Collected {
+    /// The entry a resolved nav link names.
+    ///
+    /// Falls back to the link's own title and href — the shape `children` and
+    /// `parent` used to hold — for a link whose target published under a
+    /// coordinate no entry claims, which `resolve_link` already makes rare and
+    /// this makes harmless: a template reading `.title` and `.href` off it is
+    /// still answered.
+    fn entry_of(&self, link: &NavLink) -> JsonValue {
+        self.by_href
+            .get(&link.href)
+            .and_then(|path| self.by_path.get(path))
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!({ "title": link.title, "href": link.href }))
+    }
 }
 
 /// The trail from the site's root down to one page, itself included.
@@ -1330,11 +1360,13 @@ fn render_body(
     let (prev, next) = neighbours;
     values.insert(
         "prev".into(),
-        prev.map(nav_link_value).unwrap_or(JsonValue::Null),
+        prev.map(|link| collected.entry_of(link))
+            .unwrap_or(JsonValue::Null),
     );
     values.insert(
         "next".into(),
-        next.map(nav_link_value).unwrap_or(JsonValue::Null),
+        next.map(|link| collected.entry_of(link))
+            .unwrap_or(JsonValue::Null),
     );
 
     // A `verbatim` page skips everything: a hand-authored HTML file is a
@@ -3296,6 +3328,54 @@ mod tests {
             "the link survives the rewrite: {content}"
         );
         assert!(home.html.contains("Beta"), "got {}", home.html);
+        assert!(
+            out.body_template_errors.is_empty(),
+            "{:?}",
+            out.body_template_errors
+        );
+    }
+
+    /// A listing can dress each entry in its own colour: the entry carries
+    /// the word, the attribute carries it to the element, and the element is
+    /// what a stylesheet sees.
+    #[test]
+    fn a_page_can_dress_each_child_in_its_color() {
+        let index = "---\ntitle: Home\ncontents:\n- '[Lake](lake.md)'\n- '[Kitchen](kitchen.md)'\n---\n\
+                     :::each{of=children as=book}\n\
+                     :::article{class=\"cover tone-{{book.color}}\"}\n\
+                     [:val[book.title]]({{book.href}})\n\
+                     :::\n\
+                     :::\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("lake.md", "---\ntitle: Lake\ncolor: blue\n---\nA.\n", false),
+            src(
+                "kitchen.md",
+                "---\ntitle: Kitchen\ncolor: green\n---\nB.\n",
+                false,
+            ),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+
+        let content = &home.html[home.html.find(r#"<div class="content">"#).unwrap()..];
+        assert!(
+            content.contains(r#"<article class="cover tone-blue">"#),
+            "{content}"
+        );
+        assert!(
+            content.contains(r#"<article class="cover tone-green">"#),
+            "{content}"
+        );
+        assert!(
+            content.contains(r#"<a href="lake.html">Lake</a>"#),
+            "{content}"
+        );
         assert!(
             out.body_template_errors.is_empty(),
             "{:?}",
