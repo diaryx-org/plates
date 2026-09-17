@@ -39,7 +39,7 @@ authors = ["Adam Harris"]
 # declares one publishes less than its gate admits — a floor rather than a
 # preference for the fourth time, since planning the same archive against 0.10
 # would publish the drafts it says to hold.
-prov = { version = "0.13", default-features = false }
+prov = { version = "0.14", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.
