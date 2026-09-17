@@ -211,6 +211,30 @@ fn join_tags(tags: Vec<String>) -> String {
     tags.join("\n    ")
 }
 
+/// The drawer's script: what the checkbox-and-label markup
+/// (`render_site_nav`) cannot do on its own. Opening and closing are the
+/// checkbox's, styled by `:checked`, so a page that runs no script — a
+/// reader with scripting off, or a sandboxed frame that grants none — still
+/// has a working menu; this adds closing on a click outside or Escape, and
+/// opens the sidebar on the reader's place in the tree rather than its top.
+const NAV_DRAWER_SCRIPT: &str = r#"        var toggle = document.querySelector('.nav-toggle-state');
+        var nav = document.querySelector('.site-nav');
+        if (toggle && nav) {
+            document.addEventListener('click', function(e) {
+                var t = e.target;
+                var onToggle = t === toggle || (t.closest && t.closest('.nav-toggle'));
+                if (toggle.checked && !onToggle && !nav.contains(t)) toggle.checked = false;
+            });
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape' && toggle.checked) {
+                    toggle.checked = false;
+                    toggle.focus();
+                }
+            });
+            var current = nav.querySelector('[aria-current]');
+            if (current && current.scrollIntoView) current.scrollIntoView({ block: 'center' });
+        }"#;
+
 impl HtmlRenderer {
     /// Renderer with built-in default styling (no theme, bundled CSS).
     pub fn new() -> Self {
@@ -509,32 +533,7 @@ impl HtmlRenderer {
         let mut scripts = vec![format!(
             r#"<script>
     (function() {{
-        // The nav drawer. The button says whether it is open, Escape closes
-        // it and hands focus back, and the sidebar opens on the reader's
-        // place in the tree rather than its top.
-        var toggle = document.querySelector('.nav-toggle');
-        var nav = document.querySelector('.site-nav');
-        if (toggle && nav) {{
-            var setOpen = function(open) {{
-                nav.classList.toggle('is-open', open);
-                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            }};
-            toggle.addEventListener('click', function(e) {{
-                e.stopPropagation();
-                setOpen(!nav.classList.contains('is-open'));
-            }});
-            document.addEventListener('click', function(e) {{
-                if (!nav.contains(e.target)) setOpen(false);
-            }});
-            document.addEventListener('keydown', function(e) {{
-                if (e.key === 'Escape' && nav.classList.contains('is-open')) {{
-                    setOpen(false);
-                    toggle.focus();
-                }}
-            }});
-            var current = nav.querySelector('[aria-current]');
-            if (current && current.scrollIntoView) current.scrollIntoView({{ block: 'center' }});
-        }}
+{NAV_DRAWER_SCRIPT}
         // The outline is written open, for a reader with scripting off; on a
         // narrow screen it would push the content down, so it starts closed.
         var toc = document.querySelector('.toc details');
@@ -970,32 +969,7 @@ mod tests {
     </div>
     <script>
     (function() {{
-        // The nav drawer. The button says whether it is open, Escape closes
-        // it and hands focus back, and the sidebar opens on the reader's
-        // place in the tree rather than its top.
-        var toggle = document.querySelector('.nav-toggle');
-        var nav = document.querySelector('.site-nav');
-        if (toggle && nav) {{
-            var setOpen = function(open) {{
-                nav.classList.toggle('is-open', open);
-                toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
-            }};
-            toggle.addEventListener('click', function(e) {{
-                e.stopPropagation();
-                setOpen(!nav.classList.contains('is-open'));
-            }});
-            document.addEventListener('click', function(e) {{
-                if (!nav.contains(e.target)) setOpen(false);
-            }});
-            document.addEventListener('keydown', function(e) {{
-                if (e.key === 'Escape' && nav.classList.contains('is-open')) {{
-                    setOpen(false);
-                    toggle.focus();
-                }}
-            }});
-            var current = nav.querySelector('[aria-current]');
-            if (current && current.scrollIntoView) current.scrollIntoView({{ block: 'center' }});
-        }}
+{nav_drawer}
         // The outline is written open, for a reader with scripting off; on a
         // narrow screen it would push the content down, so it starts closed.
         var toc = document.querySelector('.toc details');
@@ -1005,6 +979,7 @@ mod tests {
     </script>
 </body>
 </html>"##,
+            nav_drawer = NAV_DRAWER_SCRIPT,
             document_title = "Home - My Site",
             css_link = r#"<link rel="stylesheet" href="style.css">"#,
             favicon_link = "",

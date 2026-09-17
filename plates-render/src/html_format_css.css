@@ -622,6 +622,23 @@ footer a:hover {
     -webkit-backdrop-filter: blur(16px);
 }
 
+/* The drawer's state is a checkbox ahead of the bar and the nav, so opening
+   is `:checked ~` and needs no script — a page inside a frame that runs none
+   still has a menu. Hidden by clipping rather than `display: none`, which
+   would take it out of the tab order and the label's reach. */
+.nav-toggle-state {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+}
+
 .nav-toggle {
     background: none;
     border: 1px solid var(--border);
@@ -633,12 +650,19 @@ footer a:hover {
     cursor: pointer;
     color: var(--text);
     line-height: 1.2;
+    user-select: none;
+    -webkit-user-select: none;
 }
 
-.nav-toggle[aria-expanded="true"] {
+.nav-toggle-state:checked ~ .site-bar .nav-toggle {
     background: var(--_accent-tint);
     border-color: var(--_accent-rule);
     color: var(--accent);
+}
+
+.nav-toggle-state:focus-visible ~ .site-bar .nav-toggle {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
 }
 
 /* The site's name, linking home. In the sidebar it heads the tree; in the
@@ -872,7 +896,7 @@ body.has-site-nav {
         display: none;
     }
 
-    .site-nav.is-open {
+    .nav-toggle-state:checked ~ .site-nav {
         transform: translateX(0);
         box-shadow: 4px 0 16px rgba(0, 0, 0, 0.1);
     }

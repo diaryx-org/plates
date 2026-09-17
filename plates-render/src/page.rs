@@ -188,9 +188,17 @@ pub fn render_site_nav(nav: &SiteNavigation, site_title: &str, root_prefix: &str
         format!("\n{}", render_nodes(top, root_prefix))
     };
 
+    // The drawer is a checkbox, not a button: `.nav-toggle-state:checked`
+    // slides the sidebar out with no script at all, so it opens for a reader
+    // with scripting off and inside a sandboxed frame that grants none — an
+    // encrypted site's reader shell renders every page in one. The script
+    // this crate emits only adds what CSS cannot: closing on a click outside
+    // or Escape, and scrolling the current row into view. The input precedes
+    // both the bar and the nav because `~` reaches a following sibling only.
     format!(
-        r#"<header class="site-bar">
-    <button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false">Menu</button>
+        r#"<input class="nav-toggle-state" type="checkbox" id="nav-toggle" aria-controls="site-nav" aria-label="Menu">
+<header class="site-bar">
+    <label class="nav-toggle" for="nav-toggle">Menu</label>
     {masthead}
 </header>
 <nav class="site-nav" id="site-nav" aria-label="Site navigation">
@@ -1048,8 +1056,8 @@ mod tests {
             "got {html}"
         );
         assert!(
-            html.starts_with(r#"<header class="site-bar">"#),
-            "the bar comes first: {html}"
+            html.starts_with(r#"<input class="nav-toggle-state""#),
+            "the drawer's state comes first, then the bar: {html}"
         );
         assert!(
             html.contains(r#"<nav class="site-nav" id="site-nav" aria-label="Site navigation">"#),
@@ -1063,8 +1071,16 @@ mod tests {
             2,
             "bar and sidebar mastheads only"
         );
+        // The toggle is a checkbox ahead of both the bar and the drawer, so
+        // `:checked ~` reaches them without a script.
+        let state = html
+            .find(r#"<input class="nav-toggle-state" type="checkbox" id="nav-toggle""#)
+            .expect("the drawer state precedes the bar");
+        let bar = html.find(r#"<header class="site-bar">"#).unwrap();
+        let nav = html.find(r#"<nav class="site-nav""#).unwrap();
+        assert!(state < bar && bar < nav, "got {html}");
         assert!(
-            html.contains(r#"<button class="nav-toggle" type="button" aria-controls="site-nav" aria-expanded="false">Menu</button>"#),
+            html.contains(r#"<label class="nav-toggle" for="nav-toggle">Menu</label>"#),
             "got {html}"
         );
     }
