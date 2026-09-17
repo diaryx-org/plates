@@ -432,8 +432,13 @@ fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Pr
     // titles). One pass because both answers come out of one metadata block,
     // and parsing the corpus twice to ask it two questions is a parse per
     // document nobody needs.
+    //
+    // …and the resolver a `contents:`/`part_of:` entry is read through, fed
+    // from the same block: the `id` a page carries and the names it answers
+    // to. See [`Resolver`].
     let mut path_to_filename: HashMap<PathBuf, String> = HashMap::new();
     let mut title_map: HashMap<PathBuf, String> = HashMap::new();
+    let mut resolver = Resolver::new();
     let mut parsed = Vec::with_capacity(sources.len());
     for s in sources {
         let key = PathBuf::from(links::sanitize_rel_path(&s.path));
@@ -444,6 +449,7 @@ fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Pr
         if let Some(t) = frontmatter::get_string(&file.frontmatter, "title") {
             title_map.insert(key.clone(), t.to_string());
         }
+        resolver.learn(&key, &file.frontmatter);
         path_to_filename.insert(key, dest_for(&s.path, s.is_root, &file.frontmatter));
         parsed.push(file);
     }
@@ -454,12 +460,12 @@ fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Pr
     // never assembled. That is a property of *where* this is built, which is
     // why `a_template_cannot_reach_a_withheld_document` tests the shape of the
     // pipeline rather than a check inside it.
-    let collected = collect_context(sources, opts, &path_to_filename);
+    let collected = collect_context(sources, opts, &path_to_filename, &resolver);
 
     let pages = sources
         .iter()
         .zip(&parsed)
-        .map(|(s, file)| page_skeleton(s, file, opts, &path_to_filename, &title_map))
+        .map(|(s, file)| page_skeleton(s, file, opts, &path_to_filename, &title_map, &resolver))
         .collect();
 
     (
@@ -566,6 +572,7 @@ fn collect_context(
     sources: &[SourceDoc],
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
+    resolver: &Resolver,
 ) -> Collected {
     let mut by_path: HashMap<PathBuf, JsonValue> = HashMap::new();
     let mut parent_of: HashMap<PathBuf, PathBuf> = HashMap::new();
@@ -603,13 +610,9 @@ fn collect_context(
         // is a better answer to the same question and is applied below.
         if opts.outline.is_empty()
             && let Some(parent) = frontmatter::get_string(&fm, "part_of")
+            && let Some(parent) = resolver.key(Path::new(&s.path), parent)
         {
-            let link = prov::Link::parse_path_only(parent.trim());
-            let canonical = prov::link::resolve(Path::new(&s.path), &link.target);
-            parent_of.insert(
-                key.clone(),
-                PathBuf::from(links::sanitize_rel_path(&canonical.to_string_lossy())),
-            );
+            parent_of.insert(key.clone(), parent);
         }
 
         let href = path_to_filename
@@ -1223,6 +1226,7 @@ fn page_skeleton(
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
     title_map: &HashMap<PathBuf, String>,
+    resolver: &Resolver,
 ) -> PublishedPage {
     let fm = &parsed.frontmatter;
 
@@ -1248,11 +1252,13 @@ fn page_skeleton(
     // manifest — no separate per-audience list is needed.
     let contents_links: Vec<NavLink> = frontmatter::get_string_array(fm, "contents")
         .into_iter()
-        .filter_map(|child| resolve_link(&child, &current_path, path_to_filename, title_map))
+        .filter_map(|child| {
+            resolve_link(&child, &current_path, path_to_filename, title_map, resolver)
+        })
         .collect();
 
     let parent_link = frontmatter::get_string(fm, "part_of")
-        .and_then(|p| resolve_link(p, &current_path, path_to_filename, title_map));
+        .and_then(|p| resolve_link(p, &current_path, path_to_filename, title_map, resolver));
 
     let layout = PageLayout::parse(frontmatter::get_string(fm, "layout"));
 
@@ -1836,14 +1842,10 @@ fn resolve_link(
     current_relative: &Path,
     path_to_filename: &HashMap<PathBuf, String>,
     title_map: &HashMap<PathBuf, String>,
+    resolver: &Resolver,
 ) -> Option<NavLink> {
-    let link = prov::Link::parse_path_only(link_str.trim());
-    let canonical = prov::link::resolve(current_relative, &link.target)
-        .to_string_lossy()
-        .into_owned();
-    // Sanitize so links carrying unsanitized characters resolve against the
-    // sanitized source-path keys.
-    let key = PathBuf::from(links::sanitize_rel_path(&canonical));
+    let link = prov::Link::parse(link_str.trim());
+    let key = resolver.key(current_relative, link_str)?;
 
     // A whole-file node — an attachment's `photo.jpg.yaml` — is collected
     // under the spelling a source has, `photo.jpg.md`, because its metadata
@@ -1865,9 +1867,80 @@ fn resolve_link(
         .get(&key)
         .cloned()
         .or_else(|| link.label.clone())
-        .unwrap_or_else(|| filename_to_title(&canonical));
+        .unwrap_or_else(|| filename_to_title(&key.to_string_lossy()));
 
     Some(NavLink { href, title })
+}
+
+/// What a `contents:`/`part_of:` entry names, answered the way prov answers
+/// it.
+///
+/// A relation entry is written in whatever spelling prov's reference grammar
+/// allows — a path relative to the document or to the root, an `id:<id>`
+/// that survives a move, the legacy `colophon:` form of it, a `[[Title]]` or
+/// bare name that resolves by title or file stem, a `[label](target)` around
+/// any of those. prov's [`Graph::resolve_link_with`](prov::Graph) is the one
+/// reading of all of them, and this is that resolver over the render set:
+/// an id index and a title index filled from the sources' own frontmatter,
+/// over a filesystem nothing reads, because everything resolution needs was
+/// read when the sources were. Every spelling prov learns arrives here with
+/// no code of this crate's, and a spelling the vault's own `prov check`
+/// accepts cannot be one the site refuses.
+///
+/// What it does not know is the workspace's name, so a reference qualified
+/// with it (`id:<this workspace>/<id>`) is foreign here and names nothing —
+/// as it did before.
+///
+/// Read as a path alone, an `id:` entry named a file called `id:…` that no
+/// source has, and the page it pointed at landed flat at the top of the nav
+/// as a one-sided link — listed by its container, in a spelling the fallback
+/// could not read.
+struct Resolver {
+    graph: prov::Graph<prov::InMemoryFs, prov::InMemoryIndex>,
+    titles: prov::TitleIndex,
+}
+
+impl Resolver {
+    fn new() -> Self {
+        Self {
+            graph: prov::Graph::new(
+                prov::InMemoryFs::new(),
+                PathBuf::new(),
+                prov::InMemoryIndex::new(),
+                prov::ReadSettings::default(),
+            ),
+            titles: prov::TitleIndex::new(),
+        }
+    }
+
+    /// Register what a source at `key` answers to: its `id`, and — as prov's
+    /// own title scan does — its file stem and its `title`.
+    fn learn(&mut self, key: &Path, fm: &prov::Mapping) {
+        use prov::IndexStore as _;
+        if let Some(id) = frontmatter::get_string(fm, "id") {
+            self.graph
+                .index_mut()
+                .register(&prov::Id(id.to_string()), key);
+        }
+        if let Some(stem) = key.file_stem().and_then(|s| s.to_str()) {
+            self.titles.insert(stem, key);
+        }
+        if let Some(title) = frontmatter::get_string(fm, "title") {
+            self.titles.insert(title, key);
+        }
+    }
+
+    /// The sanitized source-path key `target`, written in the document at
+    /// `doc`, names — or `None` when it names nothing this render can address.
+    fn key(&self, doc: &Path, target: &str) -> Option<PathBuf> {
+        let link = prov::Link::parse(target.trim());
+        match self.graph.resolve_link_with(doc, &link, Some(&self.titles)) {
+            prov::Target::Path(path) => Some(PathBuf::from(links::sanitize_rel_path(
+                &path.to_string_lossy(),
+            ))),
+            _ => None,
+        }
+    }
 }
 
 // ── Filename helpers (ported from the publish plugin) ────────────────────────
@@ -2190,6 +2263,107 @@ mod tests {
         let parent = note_page.parent_link.as_ref().unwrap();
         assert_eq!(parent.href, "index.html");
         assert_eq!(parent.title, "Home");
+    }
+
+    /// A `contents:`/`part_of:` entry is read in every spelling prov reads —
+    /// a path, an `id:<id>` (what a document keeps across moves, and what
+    /// diaryx writes for a page it creates under a section), the legacy
+    /// `colophon:` form, a `[[Title]]` alias, a bare file stem — and lands on
+    /// the page it names, exactly as a path entry does. With no outline
+    /// supplied, the nav is built from these links, and a child its container
+    /// listed only by id used to fall out of the section and onto the top
+    /// level as a one-sided link.
+    #[test]
+    fn a_relation_entry_resolves_in_every_spelling_prov_reads() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/blog/blog.md\"\n---\nHi.\n";
+        let blog = concat!(
+            "---\ntitle: Blog\nid: mn1j30r\npart_of: \"/index.md\"\ncontents:\n",
+            "  - \"[By path](/blog/by-path.md)\"\n",
+            "  - id:9wq31fj\n",
+            "  - colophon:k2h7f0a\n",
+            "  - \"[[By alias]]\"\n",
+            "  - by-stem\n",
+            "  - id:elsewhere/zzzzzzz\n",
+            "  - id:\n",
+            "---\nPosts.\n",
+        );
+        let by_path = "---\ntitle: By path\nid: x8qqhzx\npart_of: \"/blog/blog.md\"\n---\nBody.\n";
+        let by_id = "---\ntitle: By id\nid: 9wq31fj\npart_of: id:mn1j30r\n---\nBody.\n";
+        let by_legacy =
+            "---\ntitle: By legacy id\nid: k2h7f0a\npart_of: colophon:mn1j30r\n---\nBody.\n";
+        let by_alias = "---\ntitle: By alias\npart_of: \"[[Blog]]\"\n---\nBody.\n";
+        let by_stem = "---\ntitle: By stem\npart_of: blog\n---\nBody.\n";
+
+        let sources = vec![
+            src("index.md", index, true),
+            src("blog/blog.md", blog, false),
+            src("blog/by-path.md", by_path, false),
+            src("blog/by-id.md", by_id, false),
+            src("blog/by-legacy.md", by_legacy, false),
+            src("blog/by-alias.md", by_alias, false),
+            src("blog/by-stem.md", by_stem, false),
+        ];
+        let pages = build_pages(&sources, &SiteOptions::default());
+
+        let listed = [
+            "blog/by-path.html",
+            "blog/by-id.html",
+            "blog/by-legacy.html",
+            "blog/by-alias.html",
+            "blog/by-stem.html",
+        ];
+        let blog = pages.iter().find(|p| p.title == "Blog").unwrap();
+        let hrefs: Vec<&str> = blog
+            .contents_links
+            .iter()
+            .map(|l| l.href.as_str())
+            .collect();
+        assert_eq!(
+            hrefs, listed,
+            "every spelling resolves; a foreign id and a malformed one name nothing here"
+        );
+        assert_eq!(
+            blog.contents_links[1].title, "By id",
+            "titled from the target, as a path entry is"
+        );
+
+        for page in pages
+            .iter()
+            .filter(|p| listed.contains(&p.dest_filename.as_str()))
+        {
+            let parent = page
+                .parent_link
+                .as_ref()
+                .unwrap_or_else(|| panic!("{}'s part_of resolves too", page.dest_filename));
+            assert_eq!(parent.href, "blog/index.html", "{}", page.dest_filename);
+        }
+
+        // …and the nav nests every one under the section rather than beside it.
+        let tree = crate::nav::build_site_nav_tree(&pages, &[]);
+        let home = &tree[0];
+        assert_eq!(
+            home.children.len(),
+            1,
+            "only the section hangs off the root: {:?}",
+            home.children.iter().map(|n| &n.href).collect::<Vec<_>>()
+        );
+        let section = &home.children[0];
+        assert_eq!(section.href, "blog/index.html");
+        let nested: Vec<&str> = section.children.iter().map(|n| n.href.as_str()).collect();
+        assert_eq!(nested, listed);
+
+        // The template context reads the same spine: the page's `parent` is
+        // the section, not nothing.
+        let out = render_site(&sources, &SiteOptions::default());
+        let by_id_html = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "blog/by-id.html")
+            .unwrap();
+        assert!(
+            by_id_html.html.contains("blog/index.html"),
+            "breadcrumbs reach the section"
+        );
     }
 
     #[test]
