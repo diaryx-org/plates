@@ -1379,6 +1379,18 @@ fn render_body(
         return values;
     }
 
+    // An attachment's body is its payload, and the sidecar wrote no prose to
+    // expand: the page is the embed, and the headings are none. Before the
+    // Markdown pass rather than through it so a title containing `_` or `*`
+    // reaches the `alt` as written.
+    if let Some(payload) = crate::attachment::payload_of(fm) {
+        let (html, markdown) = crate::attachment::render(&page.title, payload);
+        page.rendered_body = html;
+        page.markdown_body = markdown;
+        values.insert("headings".into(), JsonValue::Array(Vec::new()));
+        return values;
+    }
+
     // Always present so `:::each{of=headings}` over a page with none produces
     // nothing rather than an error — and a body that *names* it is expanded
     // twice below, because a page's headings are not known until its template
@@ -1821,6 +1833,20 @@ fn resolve_link(
     // Sanitize so links carrying unsanitized characters resolve against the
     // sanitized source-path keys.
     let key = PathBuf::from(links::sanitize_rel_path(&canonical));
+
+    // A whole-file node — an attachment's `photo.jpg.yaml` — is collected
+    // under the spelling a source has, `photo.jpg.md`, because its metadata
+    // travels re-fenced as a Markdown document's would (`plates::collect`
+    // swaps an extension prov reads no prose from for the default grammar's).
+    // A `contents:` entry names the node by the path on disk, so the lookup
+    // makes the same swap.
+    let key = if !path_to_filename.contains_key(&key)
+        && prov::document::whole_file_format(&key).is_some()
+    {
+        key.with_extension("md")
+    } else {
+        key
+    };
 
     let href = path_to_filename.get(&key)?.clone();
 
@@ -2283,6 +2309,82 @@ mod tests {
         assert!(index.html.contains("tue.html"));
         assert!(index.id.is_none(), "nothing in the vault to identify");
         assert_eq!(out.pages.len(), 3, "the index plus both entries");
+    }
+
+    /// An attachment is a page: its sidecar, collected under a source's
+    /// spelling with its metadata re-fenced and no body, renders in the site
+    /// frame with the payload embedded by a sibling reference; the parent
+    /// that lists it by the path on disk finds it in the nav and its child
+    /// list; and the pager walks through it.
+    #[test]
+    fn an_attachment_renders_as_a_page_its_parent_lists() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n- archive/archive.md\n---\nHome.\n",
+                true,
+            ),
+            src(
+                "archive/archive.md",
+                "---\ntitle: Archive\npart_of: /index.md\ncontents:\n- attachments/scan.pdf.yaml\n- notes.md\n---\nPapers.\n",
+                false,
+            ),
+            src(
+                "archive/attachments/scan.pdf.md",
+                "---\ntitle: The Scan\ncontent: scan.pdf\nattachment: true\npart_of: /archive/archive.md\n---\n",
+                false,
+            ),
+            src(
+                "archive/notes.md",
+                "---\ntitle: Notes\npart_of: /archive/archive.md\n---\nNotes.\n",
+                false,
+            ),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+
+        let scan = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "archive/attachments/scan.pdf.html")
+            .expect("the sidecar is a page");
+        assert!(
+            scan.html
+                .contains(r#"<iframe src="scan.pdf" title="The Scan">"#),
+            "the payload is the body: {}",
+            scan.html
+        );
+        assert!(
+            scan.html
+                .contains(r#"<a href="scan.pdf" download>Download scan.pdf</a>"#),
+            "{}",
+            scan.html
+        );
+        assert!(scan.html.contains("<title>The Scan"), "framed like a page");
+        // The nav on the parent lists the attachment by its title, at the
+        // page's address — not the sidecar's path on disk.
+        let archive = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "archive/index.html")
+            .unwrap();
+        assert!(
+            archive
+                .html
+                .contains(r#"<a href="../archive/attachments/scan.pdf.html">The Scan</a>"#),
+            "listed by the page that holds it: {}",
+            archive.html
+        );
+        assert!(
+            !archive.html.contains("scan.pdf.yaml"),
+            "the sidecar's own spelling never reaches the page: {}",
+            archive.html
+        );
+        // The pager walks through it: the attachment's next is its sibling.
+        assert!(
+            scan.html.contains(r#"rel="next""#) && scan.html.contains("notes.html"),
+            "in the reading order: {}",
+            scan.html
+        );
     }
 
     /// …but not when the caller is supplying the front page itself. A site
