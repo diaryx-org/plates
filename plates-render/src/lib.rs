@@ -20,6 +20,7 @@
 //! no clock. A caller that has those reads the files and passes the bytes in.
 
 pub mod appearance;
+pub mod attachment;
 pub mod body;
 pub mod dates;
 pub mod frontmatter;

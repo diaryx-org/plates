@@ -470,30 +470,28 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
                 reason: e.to_string(),
             })?;
 
-        // An attachment sidecar is a document, but it is not a *page*: its body is
-        // a JPEG. Rendering one would publish a broken HTML page per attachment.
-        // What the plan decided still holds — this document leaves — and for a
-        // sidecar the document that leaves is its payload, so the bytes ship as
-        // an attachment whether or not any page's prose happens to embed them.
-        // A sidecar reaches a plan by declaring the audience itself (a PDF
-        // filed under a page, given to `family` in the app and listed in the
-        // page's `contents`) or on a `*` audience, which sees every reachable
-        // document; before this the first case published nothing, because the
-        // only route to a payload was a body reference in some other page.
-        if parsed.is_attachment() {
-            if let Some(content) = parsed.content_attr() {
-                let mut refs = Vec::new();
-                push_canonical_ref(path, content, true, anchor, &page_paths, &mut refs);
-                for canonical in refs {
-                    if !seen_attachments.insert(canonical.clone()) {
-                        continue;
-                    }
-                    if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
-                        attachments.push(attachment);
-                    }
+        // An attachment sidecar is a node like any other — it has a title, a
+        // place in the tree, an audience of its own — and it publishes as one:
+        // a page the renderer fills with the payload (`plates_render::
+        // attachment`), listed by its parent, walked by the pager, and the
+        // payload itself shipped beside it as an attachment at the sibling
+        // path the sidecar declares. A sidecar reaches a plan by declaring the
+        // audience itself, or under a `*` audience; before this it was skipped
+        // outright, and its payload reached a site only by way of a body
+        // reference in some other page.
+        if parsed.is_attachment()
+            && let Some(content) = parsed.content_attr()
+        {
+            let mut refs = Vec::new();
+            push_canonical_ref(path, content, true, anchor, &page_paths, &mut refs);
+            for canonical in refs {
+                if !seen_attachments.insert(canonical.clone()) {
+                    continue;
+                }
+                if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
+                    attachments.push(attachment);
                 }
             }
-            continue;
         }
 
         // Which *parts* of this document leave. The plan already decided that
@@ -1883,11 +1881,11 @@ mod tests {
         );
     }
 
-    /// A sidecar the plan admitted publishes its payload, with no page
-    /// embedding it: a PDF filed under a page, listed in the page's
-    /// `contents:` and given an audience of its own. It is never a *source* —
-    /// its body is the PDF — and it is not shipped twice when a body reference
-    /// reaches the same bytes.
+    /// A sidecar the plan admitted is a page of the site and publishes its
+    /// payload beside it, with no other page embedding it: a PDF filed under
+    /// a page, listed in the page's `contents:` and given an audience of its
+    /// own. The payload is not shipped twice when a body reference reaches
+    /// the same bytes.
     #[test]
     fn a_planned_sidecar_ships_its_payload_without_a_body_reference() {
         let fs = prov::InMemoryFs::default();
@@ -1915,15 +1913,17 @@ mod tests {
         let admitted = ["index.md", "archive.md", "attachments/scan.pdf.yaml"];
         let site = try_collect(&ws, &admitted).unwrap();
 
+        let page = site
+            .sources
+            .iter()
+            .find(|s| s.source_rel_path == "attachments/scan.pdf.md")
+            .expect("the sidecar is a page of the site, spelled as a source is");
+        assert_eq!(page.dest_path, "attachments/scan.pdf.html");
         assert!(
-            site.sources
-                .iter()
-                .all(|s| !s.source_rel_path.contains("scan.pdf")),
-            "the sidecar is not a page: {:?}",
-            site.sources
-                .iter()
-                .map(|s| &s.source_rel_path)
-                .collect::<Vec<_>>()
+            page.source_markdown.starts_with("---\n")
+                && page.source_markdown.contains("content: scan.pdf"),
+            "its metadata travels re-fenced, so the renderer knows the payload: {}",
+            page.source_markdown
         );
         let scan: Vec<_> = site
             .attachments

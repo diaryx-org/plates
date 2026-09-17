@@ -875,6 +875,41 @@ body.has-site-nav {
     opacity: 0.5;
 }
 
+/* ── Attachments ── */
+
+/* A sidecar's page: the payload, shown as what it is. The frame a document
+   sits in takes the column's width and a tall, bounded height; a picture is
+   a figure like any the prose would carry. */
+.attachment {
+    margin: 0 0 1.25rem;
+}
+
+.attachment img,
+.attachment video {
+    display: block;
+    max-width: 100%;
+    height: auto;
+    border-radius: var(--radius-sm);
+}
+
+.attachment audio {
+    display: block;
+    width: 100%;
+}
+
+.attachment iframe {
+    display: block;
+    width: 100%;
+    height: min(80vh, 60rem);
+    border: 1px solid var(--surface-border);
+    border-radius: var(--radius-sm);
+    background: var(--surface-bg);
+}
+
+.attachment-download {
+    font-size: 0.9rem;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 60rem) {
