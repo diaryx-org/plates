@@ -41,6 +41,52 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.7.1 — 2026-09-17
+
+### Added
+
+- an attachment is a page — a sidecar renders, is listed, and is walked like text ([`de7ed8f`](https://github.com/diaryx-org/plates/commit/de7ed8fd6ebfb0564456ab0670e3a975eda0e983))
+- a file whose sidecar names another audience is withheld, and marked like a page ([`c5e3270`](https://github.com/diaryx-org/plates/commit/c5e327041b24e7f46d8f3ec4949f989cfbb89558))
+
+### Fixed
+
+- **collect** — a sidecar the plan admits ships its payload ([`6522221`](https://github.com/diaryx-org/plates/commit/65222218064d8cf90469e4e1edba9e999b222f2b))
+- **render** — the nav drawer opens without a script ([`3161a4f`](https://github.com/diaryx-org/plates/commit/3161a4ffcf91c837b6944891b66ac957d8d06100))
+
+### Behavioural changes
+
+- a sidecar admitted to a site's plan — by its own
+audience, or under a `*` audience — publishes its payload as an
+attachment where it published nothing unless a page's body referenced
+it. Nothing links to such a payload yet: the nav and a page's listing
+are built from pages.
+
+- the site nav's markup changes — an
+`<input class="nav-toggle-state" type="checkbox" id="nav-toggle">` now
+precedes `<header class="site-bar">`, whose toggle is `<label
+class="nav-toggle" for="nav-toggle">` rather than a `<button>`; the
+`.site-nav.is-open` class and the toggle's `aria-expanded` are gone, and
+a custom stylesheet that styled either needs `.nav-toggle-state:checked
+~ .site-nav` and `.nav-toggle-state:checked ~ .site-bar .nav-toggle`.
+The drawer now opens in a page that runs no script.
+
+- a sidecar admitted to a site's plan — by its own
+audience, or under a `*` audience — now publishes as a page at
+`<sidecar path>.html` with its payload as an attachment beside it, and
+appears in the nav, its parent's child list and the reading order,
+where before it published nothing. A body reference to a payload whose
+sidecar declares an audience that excludes the site still ships the
+payload, as before.
+
+- a page in one audience that embeds a payload whose
+sidecar declares a different audience no longer publishes those bytes,
+and the reference renders as an inert marked span; before, the bytes
+shipped and the embed showed. A sidecar with no audience, or a file
+with no sidecar, publishes by reference exactly as before.
+`CollectOptions` gains a required `gate_field` and `SiteOptions` an
+optional `published_files`.
+
+
 ## v0.7.0 — 2026-09-17
 
 ### Added
