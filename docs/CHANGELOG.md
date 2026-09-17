@@ -41,6 +41,17 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.7.2 — 2026-09-17
+
+### Fixed
+
+- **render** — a `contents:`/`part_of:` entry is read in every spelling prov reads ([`1ca1afb`](https://github.com/diaryx-org/plates/commit/1ca1afbc3c3bef140c8b26f0e0d26c7ea730caed))
+
+### Behavioural changes
+
+- with no outline supplied, a `contents:` or
+
+
 ## v0.7.1 — 2026-09-17
 
 ### Added
