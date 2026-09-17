@@ -765,6 +765,7 @@ mod tests {
                 .map(|p| ((*p).to_string(), b"<html><body>x</body></html>".to_vec()))
                 .collect(),
             attachments: BTreeMap::new(),
+            withheld: Vec::new(),
             pages: pages.len(),
             warnings: Vec::new(),
         }
