@@ -162,6 +162,7 @@ impl fmt::Display for LinkDiagnostic {
                 Some(i) => write!(f, " in {field}[{i}]:")?,
                 None => write!(f, " in {field}:")?,
             },
+            LinkSite::Field { path } => write!(f, " in {path}:")?,
             LinkSite::Body(_) => f.write_str(" in its body")?,
         }
         write!(f, " — {}", self.problem)
