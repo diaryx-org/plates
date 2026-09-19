@@ -41,6 +41,11 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.7.3 — 2026-09-18
+
+_No commits since the last tag._
+
+
 ## v0.7.2 — 2026-09-17
 
 ### Fixed
