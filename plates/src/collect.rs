@@ -796,12 +796,11 @@ fn site_relations<'a>(
     out
 }
 
-/// The relation a link site names, or `None` for a link written in prose.
+/// The relation a link site names, or `None` for a link written in prose or
+/// held by a path-valued field (`type: ref`), which is a link and not a
+/// relation.
 fn relation_name(site: &prov::LinkSite) -> Option<String> {
-    match site {
-        prov::LinkSite::Relation { field, .. } => Some(field.clone()),
-        prov::LinkSite::Body(_) => None,
-    }
+    site.relation().map(str::to_owned)
 }
 
 /// The archive's spanning outline from `root`, in the coordinates the collected
