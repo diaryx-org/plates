@@ -163,7 +163,7 @@ pub struct SiteOptions {
     /// | `site_title` | text | the site's name on its own |
     /// | `body_class` | text | `has-site-nav`, or empty — write it inside `class="…"` |
     /// | `root_prefix` | text | `../` per level of depth, for a template's own link to `index.html` or `style.css` |
-    /// | `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's `styles:` |
+    /// | `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's identity meta and its `styles:` |
     /// | `site_nav` | raw | the masthead and the navigation sidebar, empty when the site has no tree |
     /// | `breadcrumbs` | raw | the breadcrumb trail |
     /// | `toc` | raw | the page's outline ("On this page"), or empty |
@@ -234,6 +234,30 @@ pub struct SiteOptions {
     /// Ignored entirely without the `syntax-highlighting` feature, where no
     /// block is coloured and there is nothing for a grammar to do.
     pub syntaxes: IndexMap<String, String>,
+    /// The durable identifiers of the documents behind these pages, keyed by
+    /// [`SourceDoc::path`] — each page's identifiers in the order they should
+    /// be written.
+    ///
+    /// The hook an embedding publisher names a document by. A page's URL is not
+    /// its identity: it moves when a site is re-anchored, re-arranged or
+    /// mounted under a peer, so a reader's annotation layer — or a citation, or
+    /// an index of what has been read — needs the *document's* name to key on.
+    /// What this crate can say on its own is the page's frontmatter `id`, and it
+    /// writes that unqualified when a page is absent here. What it cannot say is
+    /// which archive that id belongs to, or what a publisher's own namespace
+    /// calls the same document: reading a workspace's name needs a workspace,
+    /// and a render has none — the same reason [`outline`](Self::outline) is
+    /// supplied rather than derived.
+    ///
+    /// So the layer that holds the archive supplies them: a workspace-qualified
+    /// `id:notes/1ch2991`, an `ark:/12345/…`, a DOI — most specific first. An
+    /// entry **replaces** the plain `id:` default for that page rather than
+    /// adding to it, because the two are the same document said twice; a caller
+    /// that wants both writes both. Empty is every site published before this
+    /// existed, which keeps its pages byte for byte.
+    ///
+    /// See [`crate::page::generate_identity_meta`] for what is written.
+    pub identifiers: HashMap<String, Vec<String>>,
     /// The site's header: a document rendered above every page's content,
     /// into the `site_header` shell slot. `None` writes an empty slot.
     ///
@@ -273,6 +297,7 @@ impl Default for SiteOptions {
             lang: DEFAULT_LANG.to_string(),
             front_page_supplied: false,
             syntaxes: IndexMap::new(),
+            identifiers: HashMap::new(),
             header: None,
             footer: None,
         }
@@ -1130,6 +1155,16 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
         } else {
             String::new()
         };
+        // Which document this page is, whatever `generate_seo` said: a gated
+        // site with no address still has documents, and naming one is for a
+        // reader's annotation layer rather than for a crawler.
+        let identity = page::generate_identity_meta(
+            p,
+            opts.identifiers
+                .get(p.source_path.to_string_lossy().as_ref())
+                .map(Vec::as_slice)
+                .unwrap_or_default(),
+        );
         // Advertised on exactly the condition the files are written under
         // below. The tags used to hang off `generate_feeds` alone, so a render
         // with no base URL — every published site, since no client sent one —
@@ -1155,6 +1190,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 site_title: &site_title,
                 nav: &nav,
                 seo_meta: &seo,
+                identity_meta: &identity,
                 feed_links: &feeds,
                 // The page's own language when it declared one, and the site's
                 // otherwise — the same shape as its own shell above, for the
@@ -2364,6 +2400,94 @@ mod tests {
             by_id_html.html.contains("blog/index.html"),
             "breadcrumbs reach the section"
         );
+    }
+
+    /// Every page says which document it is, so a script on the page can
+    /// anchor to the document rather than to the address it was served at.
+    #[test]
+    fn a_page_carries_its_documents_identifier() {
+        let index = "---\ntitle: Home\nid: 1ch2991\n---\nHi.\n";
+        let child = "---\ntitle: Child\nid: ajp7eq\n---\nBody.\n";
+        let sources = vec![src("index.md", index, true), src("child.md", child, false)];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        for page in &out.pages {
+            assert!(
+                page.html.contains(r#"<link rel="schema.DC""#),
+                "{}: the Dublin Core schema is named",
+                page.dest_filename
+            );
+        }
+        let child_html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "child.html")
+            .unwrap()
+            .html;
+        assert!(child_html.contains(r#"<meta name="DC.identifier" content="id:ajp7eq">"#));
+    }
+
+    /// The publisher's own names for the same documents — qualified references,
+    /// ARKs — replace the plain one, keyed by source path.
+    #[test]
+    fn a_publisher_supplies_its_own_identifiers() {
+        let child = "---\ntitle: Child\nid: ajp7eq\n---\nBody.\n";
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nHi.\n", true),
+            src("child.md", child, false),
+        ];
+        let mut opts = SiteOptions::default();
+        opts.identifiers.insert(
+            "child.md".to_string(),
+            vec![
+                "id:notes/ajp7eq".to_string(),
+                "ark:/12345/n9/ajp7eq".to_string(),
+            ],
+        );
+
+        let out = render_site(&sources, &opts);
+        let child_html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "child.html")
+            .unwrap()
+            .html;
+        assert!(child_html.contains(r#"<meta name="DC.identifier" content="id:notes/ajp7eq">"#));
+        assert!(
+            child_html.contains(r#"<meta name="DC.identifier" content="ark:/12345/n9/ajp7eq">"#)
+        );
+        assert!(!child_html.contains(r#"content="id:ajp7eq""#));
+
+        // The front page said nothing about itself and is named by nobody, so
+        // it carries no identifier at all rather than an invented one.
+        let home_html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap()
+            .html;
+        assert!(!home_html.contains("DC.identifier"));
+    }
+
+    /// Identity is not SEO: a site with no address, publishing no meta and no
+    /// feeds, still says which document each page is.
+    #[test]
+    fn identity_survives_a_render_with_no_seo() {
+        let sources = vec![src(
+            "index.md",
+            "---\ntitle: Home\nid: 1ch2991\n---\nHi.\n",
+            true,
+        )];
+        let opts = SiteOptions {
+            generate_seo: false,
+            generate_feeds: false,
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let html = &out.pages[0].html;
+        assert!(html.contains(r#"<meta name="DC.identifier" content="id:1ch2991">"#));
+        assert!(!html.contains("og:title"), "and still no SEO");
     }
 
     #[test]

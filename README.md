@@ -49,6 +49,10 @@ archive.
   over the same archive would use.
 - **Shell templates**, per-site and per-page, plus arrangements, sitemaps,
   feeds, canonical links and Open Graph metadata.
+- **Identity in the head.** Every page says which *document* it is — a
+  `DC.identifier` carrying the archive-qualified `prov` reference, or whatever
+  identifier the publisher supplies — so what anchors to a page anchors to the
+  document rather than to the address it was served at.
 
 Each of those is written up where it lives: the gate, the anchor and the
 collector in [`plates`](plates/README.md), the grammars, regions, shells and
