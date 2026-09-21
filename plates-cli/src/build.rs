@@ -234,6 +234,10 @@ pub fn build_sites(
             mount: "",
         };
         let mut warnings = term_warnings;
+        // Where each mounted peer's pages land, and what that peer calls
+        // itself — what qualifies a mounted page's identifier with the archive
+        // it is actually a document of, rather than with this one.
+        let mut mounted_at: Vec<(String, String)> = Vec::new();
         let collected = match follow {
             None => block_on(collect_site(&ws, &plan, &options))
                 .map_err(|e| format!("site {:?}: {e}", spec.name))?,
@@ -251,6 +255,7 @@ pub fn build_sites(
                 ))
                 .map_err(|e| format!("site {:?}: {e}", spec.name))?;
                 for mount in &mounted.mounts {
+                    mounted_at.push((mount.prefix.clone(), mount.name.clone()));
                     println!(
                         "  mounted {} at /{} — {} page{} from {}",
                         mount.name,
@@ -297,13 +302,17 @@ pub fn build_sites(
             warnings.push(format!("site {:?}: {diagnostic}", spec.name));
         }
 
+        let identifiers = identifiers(&collected, ws.workspace_id(), &mounted_at);
         built.push(assemble(
-            &spec.name,
-            &theme,
-            &spec.audience,
+            Site {
+                name: &spec.name,
+                theme: &theme,
+                audience: &spec.audience,
+                root: &session.root_dir,
+                base_url,
+            },
             collected,
-            &session.root_dir,
-            base_url,
+            identifiers,
             warnings,
         ));
     }
@@ -330,20 +339,90 @@ fn selected(only: Option<&str>, name: &str) -> bool {
     only.is_none_or(|wanted| wanted.trim().eq_ignore_ascii_case(name.trim()))
 }
 
+/// What each page's document is called, keyed the way the render keys a page:
+/// by [`plates::SourceFile::source_rel_path`].
+///
+/// A document's `id` is unique within the archive that registered it, and a
+/// site can carry the pages of several — every mounted peer is one. So the
+/// identifier written is the qualified reference, `id:<workspace>/<id>`, which
+/// is the form a reference *from outside* names the document by and the form
+/// prov resolves. Which workspace a page belongs to is read off its path: a
+/// mounted peer's pages are collected under its prefix, and everything else is
+/// this archive's own.
+///
+/// An anonymous workspace qualifies nothing — there is no name to qualify with
+/// — and the page falls back to the render's own plain `id:<id>`.
+fn identifiers(
+    collected: &plates::CollectedSite,
+    workspace: &str,
+    mounted_at: &[(String, String)],
+) -> HashMap<String, Vec<String>> {
+    collected
+        .sources
+        .iter()
+        .filter_map(|source| {
+            let id = source.id.as_deref()?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            // The longest matching prefix, so a peer mounted below another peer
+            // is named by the one it is actually a document of.
+            let owner = mounted_at
+                .iter()
+                .filter(|(prefix, _)| source.source_rel_path.starts_with(prefix.as_str()))
+                .max_by_key(|(prefix, _)| prefix.len())
+                .map(|(_, name)| name.as_str())
+                .unwrap_or(workspace)
+                .trim();
+            if owner.is_empty() {
+                return None;
+            }
+            Some((
+                source.source_rel_path.clone(),
+                vec![format!("id:{owner}/{id}")],
+            ))
+        })
+        .collect()
+}
+
+/// What a site is, apart from the documents in it: the five values the whole
+/// of [`assemble`] reads and none of it writes.
+///
+/// A struct because they arrived one at a time and the call had grown to eight
+/// positional arguments, three of them `&str` — which is a call whose next
+/// argument goes in the wrong place and still compiles.
+struct Site<'a> {
+    /// The site's path segment, as its declaration names it.
+    name: &'a str,
+    /// Its declaration resolved against the archive — label, shell,
+    /// stylesheet, language and arrangement.
+    theme: &'a SiteTheme,
+    /// The audience the gate admitted these documents to.
+    audience: &'a str,
+    /// The archive's root directory, which an attachment's path is relative to.
+    root: &'a Path,
+    /// The address the site is served at, for canonical links and feeds.
+    base_url: Option<&'a str>,
+}
+
 /// Render one collected site into the bytes that represent it.
 ///
 /// `theme` is the site's declaration resolved against the archive — its label,
 /// shell, stylesheet, language and arrangement — as distinct from `name`, which
 /// is its path segment.
 fn assemble(
-    name: &str,
-    theme: &SiteTheme,
-    audience: &str,
+    site: Site<'_>,
     collected: plates::CollectedSite,
-    root: &Path,
-    base_url: Option<&str>,
+    identifiers: HashMap<String, Vec<String>>,
     mut warnings: Vec<String>,
 ) -> BuiltSite {
+    let Site {
+        name,
+        theme,
+        audience,
+        root,
+        base_url,
+    } = site;
     let sources: Vec<SourceDoc> = collected
         .sources
         .iter()
@@ -395,6 +474,9 @@ fn assemble(
             // collection walked the relation this workspace configures, and the
             // render layer has no workspace to ask.
             outline: collected.outline,
+            // Which document each page is, named the way a reference from
+            // outside this archive would name it.
+            identifiers,
             front_page_supplied: collected.verbatim_front_page,
             template: theme.template.clone(),
             templates: theme
@@ -492,4 +574,57 @@ pub fn asset_count(built: &BuiltSite) -> usize {
 /// `""` or `"s"` — this binary counts things often enough to say it once.
 pub fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn source(path: &str, id: Option<&str>) -> plates::SourceFile {
+        plates::SourceFile {
+            source_markdown: String::new(),
+            source_rel_path: path.to_string(),
+            dest_path: path.replace(".md", ".html"),
+            id: id.map(str::to_string),
+            is_index: false,
+            inbound: Vec::new(),
+            outbound: Vec::new(),
+        }
+    }
+
+    fn site(sources: Vec<plates::SourceFile>) -> plates::CollectedSite {
+        plates::CollectedSite {
+            sources,
+            ..Default::default()
+        }
+    }
+
+    /// A page of this archive is named by this archive; a page of a peer
+    /// mounted under it is named by the peer, because that is whose registry
+    /// the id is in.
+    #[test]
+    fn a_mounted_page_is_named_by_the_archive_it_belongs_to() {
+        let collected = site(vec![
+            source("index.md", Some("p8ftrd5")),
+            source("fig/index.md", Some("ajp7eq")),
+        ]);
+        let map = identifiers(
+            &collected,
+            "plates",
+            &[("fig/".to_string(), "fig".to_string())],
+        );
+
+        assert_eq!(map["index.md"], vec!["id:plates/p8ftrd5".to_string()]);
+        assert_eq!(map["fig/index.md"], vec!["id:fig/ajp7eq".to_string()]);
+    }
+
+    /// Nothing to say is said with silence: a document with no id, and an
+    /// archive with no name, are both left to the render's own answer.
+    #[test]
+    fn a_page_with_nothing_to_qualify_is_absent() {
+        let collected = site(vec![source("index.md", None), source("a.md", Some("x1"))]);
+
+        assert!(!identifiers(&collected, "plates", &[]).contains_key("index.md"));
+        assert!(identifiers(&collected, "", &[]).is_empty());
+    }
 }

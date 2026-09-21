@@ -391,6 +391,73 @@ pub fn generate_seo_meta(page: &PublishedPage, site_title: &str, base_url: &str)
     tags.join("\n    ")
 }
 
+/// The Dublin Core Elements namespace a `DC.` meta name is read against.
+///
+/// Emitted as `<link rel="schema.DC">` beside the identifiers themselves, which
+/// is what DC-HTML asks for and what makes `DC.identifier` mean the Dublin Core
+/// element rather than a name this generator invented.
+const DC_SCHEMA: &str = "http://purl.org/dc/elements/1.1/";
+
+/// Generate the identity meta for a page: *which document this is*, as opposed
+/// to where it happens to be served.
+///
+/// A page's URL is not its identity. It moves when a site is re-anchored,
+/// re-arranged or mounted under a peer, and two sites can serve the same
+/// document at two addresses — so anything that wants to attach something *to
+/// the document* (an annotation layer, a citation, an index of what has been
+/// read) has nothing durable to key on. The document's own identifier is that
+/// key, and the render is the only place the pairing between a published page
+/// and the identifier of the document behind it exists.
+///
+/// Written as [Dublin Core](https://www.dublincore.org/specifications/) rather
+/// than a name of this project's own: `DC.identifier` is the element for
+/// "an unambiguous reference to the resource within a given context", it has
+/// meant that since 1998, and a consumer that already reads Dublin Core needs
+/// no agreement with plates to find it. Repeating the element is how Dublin
+/// Core says a resource has more than one identifier, so a page with both a
+/// `prov` reference and an ARK carries one `<meta>` each, most specific first.
+///
+/// What is written, in order:
+///
+/// - the identifiers `extra` supplies, which is the embedding publisher's hook:
+///   a workspace-qualified `id:notes/1ch2991`, an `ark:/12345/…`, a DOI — any
+///   identifier the layer that *holds the archive* can name and this crate
+///   cannot. Supplying them replaces the default below, so a caller that wants
+///   the plain reference alongside its own writes it into the list.
+/// - failing that, the document's own `id:` reference
+///   ([`PublishedPage::id`], prov's registry id for the file) — unqualified,
+///   because this crate has no workspace to qualify it with.
+///
+/// Empty for a page with neither, which is a document no archive has given an
+/// identity: better nothing than a made-up one.
+pub fn generate_identity_meta(page: &PublishedPage, extra: &[String]) -> String {
+    let supplied: Vec<&str> = extra
+        .iter()
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let own = page.id.as_deref().map(str::trim).filter(|s| !s.is_empty());
+    let identifiers: Vec<String> = if supplied.is_empty() {
+        own.map(|id| format!("id:{id}")).into_iter().collect()
+    } else {
+        supplied.into_iter().map(str::to_string).collect()
+    };
+
+    if identifiers.is_empty() {
+        return String::new();
+    }
+
+    let mut tags = vec![format!(r#"<link rel="schema.DC" href="{DC_SCHEMA}">"#)];
+    tags.extend(identifiers.iter().map(|id| {
+        format!(
+            r#"<meta name="DC.identifier" content="{}">"#,
+            html_escape(id)
+        )
+    }));
+    tags.join("\n    ")
+}
+
 /// Find the best og:image for a page.
 fn find_og_image(page: &PublishedPage) -> Option<String> {
     const IMAGE_EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
@@ -755,6 +822,61 @@ mod tests {
         let meta = generate_seo_meta(&page, "Site", "");
         assert!(!meta.contains("canonical"));
         assert!(!meta.contains("og:url"));
+    }
+
+    /// A page whose document has an id carries it, as a `prov` reference.
+    #[test]
+    fn identity_meta_writes_the_documents_own_id() {
+        let mut page = make_page("about.html", "About", false);
+        page.id = Some("1ch2991".into());
+        let meta = generate_identity_meta(&page, &[]);
+
+        assert!(meta.contains(r#"<link rel="schema.DC" href="http://purl.org/dc/elements/1.1/">"#));
+        assert!(meta.contains(r#"<meta name="DC.identifier" content="id:1ch2991">"#));
+        assert_eq!(meta.matches("DC.identifier").count(), 1);
+    }
+
+    /// The publisher's identifiers replace the bare one — they are the same
+    /// document said more precisely, not a second document — and every one of
+    /// them is written, in the order given.
+    #[test]
+    fn identity_meta_takes_the_publishers_identifiers() {
+        let mut page = make_page("about.html", "About", false);
+        page.id = Some("1ch2991".into());
+        let meta = generate_identity_meta(
+            &page,
+            &[
+                "id:notes/1ch2991".to_string(),
+                "ark:/12345/n9/1ch2991".to_string(),
+            ],
+        );
+
+        assert!(meta.contains(r#"<meta name="DC.identifier" content="id:notes/1ch2991">"#));
+        assert!(meta.contains(r#"<meta name="DC.identifier" content="ark:/12345/n9/1ch2991">"#));
+        assert!(!meta.contains(r#"content="id:1ch2991""#));
+        assert!(
+            meta.find("id:notes/1ch2991").unwrap() < meta.find("ark:/12345").unwrap(),
+            "identifiers keep the order they were given"
+        );
+    }
+
+    /// A document no archive has given an identity carries nothing, rather than
+    /// an identifier invented from its address.
+    #[test]
+    fn identity_meta_is_empty_without_an_identifier() {
+        let page = make_page("about.html", "About", false);
+        assert_eq!(generate_identity_meta(&page, &[]), "");
+        assert_eq!(generate_identity_meta(&page, &["  ".to_string()]), "");
+    }
+
+    /// An identifier is attacker-shaped like any other frontmatter value.
+    #[test]
+    fn identity_meta_escapes_its_content() {
+        let mut page = make_page("about.html", "About", false);
+        page.id = Some(r#"a"><script>alert(1)</script>"#.into());
+        let meta = generate_identity_meta(&page, &[]);
+        assert!(!meta.contains("<script>"));
+        assert!(meta.contains("&quot;&gt;&lt;script&gt;"));
     }
 
     #[test]

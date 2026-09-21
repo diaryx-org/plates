@@ -136,6 +136,16 @@ pub struct PageContext<'a> {
     pub nav: &'a SiteNavigation,
     /// Pre-rendered SEO `<meta>` tags, or empty.
     pub seo_meta: &'a str,
+    /// Pre-rendered identity `<meta>` tags — which *document* this page is, as
+    /// [`crate::page::generate_identity_meta`] writes it — or empty.
+    ///
+    /// Separate from [`seo_meta`](Self::seo_meta), and written whatever
+    /// `generate_seo` said, because identity is not marketing: a site with no
+    /// address still has documents, and the reason to name them is a reader's
+    /// annotation layer rather than a crawler. Nothing is added to the head
+    /// when it is empty, so a page whose document has no identifier is
+    /// byte-for-byte the page it was.
+    pub identity_meta: &'a str,
     /// Pre-rendered feed `<link>` tags, or empty.
     pub feed_links: &'a str,
     /// BCP 47 language tag for `<html lang="…">`.
@@ -207,6 +217,16 @@ fn script_tags(scripts: &[String], prefix: &str) -> Vec<String> {
 }
 
 /// Join a run of head/script tags the way both shells indent them.
+/// The page's identity tags as a head entry, or nothing at all.
+///
+/// An entry rather than a slot of its own so that a page whose document has no
+/// identifier — and every page published before this existed — is written
+/// exactly as it was, down to the whitespace: an empty entry would leave a
+/// blank line in every head on the site.
+fn identity_tags(ctx: &PageContext<'_>) -> Option<String> {
+    (!ctx.identity_meta.is_empty()).then(|| ctx.identity_meta.to_string())
+}
+
 fn join_tags(tags: Vec<String>) -> String {
     tags.join("\n    ")
 }
@@ -528,6 +548,7 @@ impl HtmlRenderer {
             ctx.seo_meta.to_string(),
             ctx.feed_links.to_string(),
         ];
+        head.extend(identity_tags(ctx));
         head.extend(style_link_tags(&page.styles, &prefix));
 
         let mut scripts = vec![format!(
@@ -585,6 +606,7 @@ impl HtmlRenderer {
             ctx.seo_meta.to_string(),
             ctx.feed_links.to_string(),
         ];
+        head.extend(identity_tags(ctx));
         head.extend(style_link_tags(&page.styles, &prefix));
 
         format!(
@@ -907,6 +929,7 @@ mod tests {
             site_title: "My Site",
             nav,
             seo_meta: "",
+            identity_meta: "",
             feed_links: "",
             lang: "en",
             template,

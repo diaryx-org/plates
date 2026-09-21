@@ -229,7 +229,7 @@ script or a CSS block is left alone.
 | `site_title` | text | the site's name on its own |
 | `body_class` | text | `has-site-nav`, or empty — write it inside `class="…"` |
 | `root_prefix` | text | `../` per level of depth, for a template's own `href="{{root_prefix}}index.html"` |
-| `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's `styles:` |
+| `head` | raw | stylesheet, favicon, SEO meta, feed links, the page's identity meta and its `styles:` |
 | `site_nav` | raw | the mobile bar and the sidebar — masthead and tree — empty when the site has no tree |
 | `breadcrumbs` | raw | the breadcrumb trail |
 | `toc` | raw | the page's outline, "On this page", or empty |
@@ -359,6 +359,46 @@ them in another.
 Sitemaps, `robots.txt`, canonical links, Open Graph metadata and both feeds are
 generated together, and only with a `base_url`: a feed needs absolute URLs, so
 without one there is no feed to advertise either.
+
+## Which document a page is
+
+A page's URL is not its identity. It moves when a site is re-anchored,
+re-arranged or mounted under a peer, and two sites can serve the same document
+at two addresses — so a reader's annotation layer, a citation, or an index of
+what has been read has nothing durable to key on. Every page therefore carries
+the identifier of the document behind it, in its head:
+
+```html
+<link rel="schema.DC" href="http://purl.org/dc/elements/1.1/">
+<meta name="DC.identifier" content="id:notes/1ch2991">
+```
+
+[Dublin Core](https://www.dublincore.org/specifications/) rather than a name of
+this project's own: `DC.identifier` is the element for "an unambiguous reference
+to the resource within a given context", it has meant that since 1998, and a
+consumer that already reads Dublin Core needs no agreement with plates to find
+it. The schema link is what makes the `DC.` prefix mean that element rather than
+a convention invented here. Repeating the element is how Dublin Core says a
+resource has more than one identifier, so a page named both by a `prov`
+reference and by an ARK carries one `<meta>` each, most specific first.
+
+What is written is, in order of what the render can honestly say:
+
+- the identifiers `SiteOptions::identifiers` supplies for that page, keyed by
+  its source path. This is the hook for the layer that holds the archive: a
+  workspace-qualified `id:notes/1ch2991` (the `plates` CLI writes these, and
+  names a mounted peer's pages by the peer), an `ark:/12345/…`, a DOI — any
+  name this crate has no way to know. An entry replaces the default below
+  rather than adding to it, since the two are the same document said twice.
+- failing that, the document's own frontmatter `id` as a plain `prov` reference,
+  `id:1ch2991` — unqualified, because a render holds no workspace to qualify it
+  with.
+- failing that, nothing at all. A document no archive has given an identity is
+  better left unnamed than named after its address.
+
+Identity is written whatever `generate_seo` said: a gated site with no address
+still has documents, and the reason to name one is a reader rather than a
+crawler.
 
 ## HTML attachments as islands
 
