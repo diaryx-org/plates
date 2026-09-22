@@ -41,6 +41,19 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.7.4 — 2026-09-21
+
+### Added
+
+- **render** — a page says which document it is, not just where it is served ([`b8649ab`](https://github.com/diaryx-org/plates/commit/b8649ab47e4a584335e6bd39d028af04f1eb41f4))
+
+### Behavioural changes
+
+- every rendered page whose document has an identifier now carries two extra tags in its head — `<link rel="schema.DC" href="http://purl.org/dc/elements/1.1/">` and one `<meta name="DC.identifier">` per identifier. A snapshot test over a page's HTML will see them. A page whose document has no identifier, and a `verbatim` page, are unchanged.
+
+- `plates_render::site::SiteOptions` has a new field, `identifiers`, and `plates_render::html::PageContext` a new field, `identity_meta`. Both are empty by default; a caller that builds either with a struct literal rather than `..Default::default()` must name them.
+
+
 ## v0.7.3 — 2026-09-18
 
 _No commits since the last tag._
