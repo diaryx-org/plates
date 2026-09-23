@@ -173,6 +173,15 @@ pub struct SiteOptions {
     /// | `site_footer` | raw | the site's [`footer`](Self::footer), rendered for this page |
     /// | `footer` | raw | the built-in attribution footer |
     /// | `scripts` | raw | the built-in interactivity script, then the page's `scripts:` |
+    /// | `page_kind` | text | `front`, `book` (holds pages) or `page` (is read) — see [`crate::library`] |
+    /// | `page_color` | text | the colour name the page's room wears, or empty |
+    /// | `page_head` | raw | the band: cover, title, description, counts, the way in; or a read page's book and title |
+    /// | `shelf` | raw | what the page holds, as covers and sheets |
+    /// | `book_nav` | raw | the contents of the book the page is in, with a way back to the front page |
+    /// | `content_below_title` | raw | `content` without a leading `<h1>` that repeats the title |
+    ///
+    /// [`crate::library::LIBRARY_SHELL`] is a shell built on the last six, and
+    /// [`crate::library::library_stylesheet`] the stylesheet it wants.
     ///
     /// `<title>` is not part of `head`, so a template decides where its own
     /// title tag goes. A page whose frontmatter says `layout: bare` or
@@ -1120,6 +1129,11 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     let base_url = opts.base_url.as_deref().unwrap_or("");
     let writes_feeds = opts.generate_feeds && !base_url.is_empty();
 
+    // The library slots read a shelf's colours and descriptions off the pages
+    // it lists, so every page is found by where it lands.
+    let by_dest: HashMap<String, &PublishedPage> =
+        pages.iter().map(|p| (p.dest_filename.clone(), p)).collect();
+
     let mut out_pages = Vec::with_capacity(pages.len());
     for (i, p) in pages.iter().enumerate() {
         let nav = nav_for_page(&nav_tree, &p.dest_filename, &pages);
@@ -1200,6 +1214,13 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 template: shell,
                 site_header: &site_header,
                 site_footer: &site_footer,
+                pages: &by_dest,
+                // A generated front page under containment is a list of what
+                // its shelf shows; grouped, its body is the grouping, which a
+                // shelf does not draw.
+                listing_body: synthesized
+                    && i == 0
+                    && matches!(opts.arrangement, Arrangement::Containment),
             },
         );
         out_pages.push(RenderedPage {
@@ -1296,7 +1317,11 @@ fn page_skeleton(
     let parent_link = frontmatter::get_string(fm, "part_of")
         .and_then(|p| resolve_link(p, &current_path, path_to_filename, title_map, resolver));
 
-    let layout = PageLayout::parse(frontmatter::get_string(fm, "layout"));
+    let layout = PageLayout::for_document(
+        frontmatter::get_string(fm, "layout"),
+        ContentFormat::from_extension(&current_path).unwrap_or(ContentFormat::Markdown),
+        &parsed.body,
+    );
 
     let nav_order = fm.get("nav_order").and_then(|v| match v {
         YamlValue::Int(i) => Some(*i as i32),
@@ -1319,6 +1344,8 @@ fn page_skeleton(
 
     let styles = resolve_asset_paths(fm, "styles", &current_path);
     let scripts = resolve_asset_paths(fm, "scripts", &current_path);
+    let start_with = frontmatter::get_string(fm, "start_with")
+        .and_then(|l| resolve_link(l, &current_path, path_to_filename, title_map, resolver));
 
     PublishedPage {
         source_path: current_path,
@@ -1372,7 +1399,22 @@ fn page_skeleton(
         source_markdown: s.markdown.clone(),
         headings: Vec::new(),
         toc: fm.get("toc").and_then(|v| v.as_bool()).unwrap_or(true),
+        color: frontmatter::get_string(fm, "color").and_then(color_name),
+        start_with,
     }
+}
+
+/// A frontmatter `color:` as the name a stylesheet can select on, or `None`
+/// when it is not one. A name is lowercase letters, digits and hyphens; a hex,
+/// a space or a quote is not a name, and would not be safe in a class list.
+fn color_name(value: &str) -> Option<String> {
+    let name = value.trim();
+    (!name.is_empty()
+        && name.len() <= 32
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'))
+    .then(|| name.to_string())
 }
 
 /// Render one source's body into its page: template → twig → heading anchors
@@ -1749,6 +1791,8 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         source_markdown: String::new(),
         headings,
         toc: true,
+        color: None,
+        start_with: None,
     }
 }
 
@@ -4548,5 +4592,237 @@ mod tests {
         assert!(home.contains(r#"[<nav class="toc""#), "got {home}");
         assert!(home.contains(r#"[<nav class="pager""#), "got {home}");
         assert!(home.ends_with("[<p>F</p>\n]"), "got {home}");
+    }
+
+    // ── The library shell ────────────────────────────────────────────────────
+
+    /// A circle's front page, a book of two chapters, a loose page, and two
+    /// HTML pages — one a whole document, one a fragment — rendered in the
+    /// library shell.
+    fn library_site() -> SiteRender {
+        let sources = vec![
+            src(
+                "vocab/family.md",
+                "---\ntitle: The Harris Family Archive\ncolor: green\ndescription: Letters and talks.\nstart_with: '[Inspirational Writing](id:iw0001)'\n---\n# The Harris Family Archive\n\nWelcome, family.\n",
+                true,
+            ),
+            src(
+                "iw.md",
+                "---\ntitle: Inspirational Writing\nid: iw0001\ncolor: purple\ncontents:\n  - '[Serenity](a.md)'\n  - '[Birds](b.md)'\n---\n# Inspirational Writing\n\nA folder of writings.\n",
+                false,
+            ),
+            src(
+                "a.md",
+                "---\ntitle: The Serenity Prayer\npart_of: '[Inspirational Writing](iw.md)'\ncolor: red\ndescription: Niebuhr, as usually quoted\n---\n# The Serenity Prayer\n\nGod, grant me the serenity.\n",
+                false,
+            ),
+            src(
+                "b.md",
+                "---\ntitle: The Snow-White Birds\npart_of: '[Inspirational Writing](iw.md)'\n---\nNo heading here.\n",
+                false,
+            ),
+            src(
+                "about.md",
+                "---\ntitle: About\n---\n# Something else\n\nHi.\n",
+                false,
+            ),
+            src(
+                "poster.html",
+                "---\ntitle: Poster\n---\n<!DOCTYPE html>\n<html><body><p>mine</p></body></html>\n",
+                false,
+            ),
+            src(
+                "note.html",
+                "---\ntitle: Note\n---\n<p>a fragment</p>\n",
+                false,
+            ),
+        ];
+        render_site(
+            &sources,
+            &SiteOptions {
+                template: Some(crate::library::LIBRARY_SHELL.to_string()),
+                generate_seo: false,
+                generate_feeds: false,
+                ..SiteOptions::default()
+            },
+        )
+    }
+
+    fn page_html<'r>(render: &'r SiteRender, dest: &str) -> &'r str {
+        &render
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == dest)
+            .unwrap_or_else(|| {
+                panic!(
+                    "no {dest} in {:?}",
+                    render
+                        .pages
+                        .iter()
+                        .map(|p| &p.dest_filename)
+                        .collect::<Vec<_>>()
+                )
+            })
+            .html
+    }
+
+    /// The front page is a band in its own colour, a welcome without its
+    /// repeated title, a way in, and a shelf: books as covers in theirs, loose
+    /// pages as sheets on the front page's paper.
+    #[test]
+    fn a_front_page_in_the_library_shell_is_a_band_a_welcome_and_a_shelf() {
+        let render = library_site();
+        assert!(
+            render.template_error.is_none(),
+            "{:?}",
+            render.template_error
+        );
+        let html = page_html(&render, "index.html");
+
+        assert!(
+            html.contains(r#"class="library kind-front tone-green""#),
+            "{html}"
+        );
+        assert!(html.contains("page-head page-head-front"));
+        assert!(html.contains(r#"<p class="page-description">Letters and talks.</p>"#));
+        assert!(
+            html.contains(
+                r#"<a class="start-with" href="iw.html">Start with Inspirational Writing</a>"#
+            ),
+            "{html}"
+        );
+
+        let content = html.split(r#"<div class="content">"#).nth(1).unwrap();
+        let content = content.split("</div>").next().unwrap();
+        assert!(content.contains("Welcome, family."));
+        assert!(
+            !content.contains("<h1"),
+            "the title is the band's: {content}"
+        );
+
+        assert!(html.contains(r#"<a class="cover tone-purple" href="iw.html" data-page="iw.html"><span class="cover-title">Inspirational Writing</span><span class="cover-count">2 chapters</span></a>"#), "{html}");
+        assert!(html.contains(r#"<h2 class="shelf-heading" id="shelf-books">Books <span class="shelf-count">1</span></h2>"#));
+        assert!(
+            html.contains(r#"<a class="sheet tone-green" href="about.html""#),
+            "a loose page sits on the front page's paper: {html}"
+        );
+        assert!(html.contains("1 book"));
+    }
+
+    /// A book is a band in its own colour and its chapters as numbered sheets
+    /// on its paper, with no contents panel beside it.
+    #[test]
+    fn a_book_lists_its_chapters_as_numbered_sheets_on_its_own_paper() {
+        let render = library_site();
+        let html = page_html(&render, "iw.html");
+        assert!(
+            html.contains(r#"class="library kind-book tone-purple""#),
+            "{html}"
+        );
+        assert!(html.contains(r#"<a class="sheet tone-purple" href="a.html" data-page="a.html"><span class="sheet-number">1</span><span class="sheet-title">The Serenity Prayer</span><span class="sheet-description">Niebuhr, as usually quoted</span></a>"#), "{html}");
+        assert!(html.contains(r#"<span class="sheet-number">2</span><span class="sheet-title">The Snow-White Birds</span>"#));
+        assert!(
+            html.contains("Start reading"),
+            "a book with no start_with begins at its first chapter"
+        );
+    }
+
+    /// A chapter is read in its book's room: the book's colour whatever its
+    /// own says, the book above its title, and the book's contents beside it
+    /// with this chapter marked.
+    #[test]
+    fn a_chapter_is_read_in_its_books_colour_beside_the_books_contents() {
+        let render = library_site();
+        let html = page_html(&render, "a.html");
+        assert!(
+            html.contains(r#"class="library kind-page tone-purple""#),
+            "the room, not the page's own red: {html}"
+        );
+        assert!(html.contains(r#"<p class="page-eyebrow"><a href="iw.html">Inspirational Writing</a> <span class="page-chapter">Chapter 1</span></p>"#), "{html}");
+        assert!(
+            html.contains(
+                r#"<a class="book-nav-up" href="index.html">The Harris Family Archive</a>"#
+            )
+        );
+        assert!(html.contains(r#"<a href="a.html" aria-current="page"><span class="book-nav-number">1</span><span class="book-nav-label">The Serenity Prayer</span></a>"#), "{html}");
+        assert!(
+            html.contains(r#"<aside class="lib-margin" id="margin" aria-label="Margin"></aside>"#)
+        );
+        let content = html.split(r#"<div class="content">"#).nth(1).unwrap();
+        assert!(!content.split("</div>").next().unwrap().contains("<h1"));
+    }
+
+    /// Only a leading heading that *says the title* gives way to the band; a
+    /// first heading that says something else is the author's and stays.
+    #[test]
+    fn a_first_heading_that_is_not_the_title_stays_in_the_text() {
+        let render = library_site();
+        let html = page_html(&render, "about.html");
+        assert!(html.contains("Something else"), "{html}");
+        assert!(html.contains(r#"<h1 class="page-title">About</h1>"#));
+    }
+
+    /// An HTML page that is a whole document publishes as itself; a fragment
+    /// sits in the site's frame like any body.
+    #[test]
+    fn an_html_page_that_is_a_whole_document_is_itself_and_a_fragment_is_framed() {
+        let render = library_site();
+        assert_eq!(
+            page_html(&render, "poster.html"),
+            "<!DOCTYPE html>\n<html><body><p>mine</p></body></html>\n"
+        );
+        let note = page_html(&render, "note.html");
+        assert!(note.contains(r#"class="library kind-page"#), "{note}");
+        assert!(note.contains("<p>a fragment</p>"));
+    }
+
+    /// `layout: site` puts a whole HTML document back in the frame, because an
+    /// explicit layout always wins over the default.
+    #[test]
+    fn an_explicit_layout_wins_over_the_whole_document_default() {
+        let layout = |value: Option<&str>, body: &str| {
+            PageLayout::for_document(value, ContentFormat::Html, body)
+        };
+        assert_eq!(layout(None, "<!doctype html><p>x"), PageLayout::Verbatim);
+        assert_eq!(
+            layout(None, "  <!-- note -->\n<HTML lang=en>"),
+            PageLayout::Verbatim
+        );
+        assert_eq!(layout(None, "<htmlish>"), PageLayout::Site);
+        assert_eq!(layout(None, "<p>x</p>"), PageLayout::Site);
+        assert_eq!(layout(Some("site"), "<!doctype html>"), PageLayout::Site);
+        assert_eq!(layout(Some("bare"), "<!doctype html>"), PageLayout::Bare);
+        assert_eq!(
+            PageLayout::for_document(None, ContentFormat::Markdown, "<!doctype html>"),
+            PageLayout::Site,
+            "only an HTML body is sniffed"
+        );
+    }
+
+    /// A colour is a name or nothing: a hex or anything a class list cannot
+    /// hold is dropped rather than written into one.
+    #[test]
+    fn a_color_that_is_not_a_name_is_dropped() {
+        assert_eq!(color_name("green"), Some("green".to_string()));
+        assert_eq!(color_name(" slate-2 "), Some("slate-2".to_string()));
+        assert_eq!(color_name("#ff0000"), None);
+        assert_eq!(color_name("Green"), None);
+        assert_eq!(color_name("a\" onmouseover=\"x"), None);
+    }
+
+    /// The built-in shell reads none of the library slots, so a site that
+    /// never asked for the library is the page it was.
+    #[test]
+    fn the_built_in_shell_writes_none_of_the_library() {
+        let sources = vec![src(
+            "index.md",
+            "---\ntitle: Home\ncolor: green\n---\n# Home\n\nHi.\n",
+            true,
+        )];
+        let render = render_site(&sources, &SiteOptions::default());
+        let html = &render.pages[0].html;
+        assert!(!html.contains("page-head"), "{html}");
+        assert!(!html.contains("tone-green"));
+        assert!(html.contains("<h1"), "the title heading stays in the body");
     }
 }

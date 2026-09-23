@@ -789,6 +789,8 @@ mod tests {
             source_markdown: String::new(),
             headings: vec![],
             toc: true,
+            color: None,
+            start_with: None,
         }
     }
 

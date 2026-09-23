@@ -104,6 +104,28 @@ impl PageLayout {
         }
     }
 
+    /// The layout a document asks for, with the one default that depends on
+    /// the document rather than on its metadata: an **HTML body that is a
+    /// whole document** — its first markup is `<!doctype` or `<html` — is
+    /// [`PageLayout::Verbatim`] unless it says otherwise.
+    ///
+    /// Such a file already has a head, a body and a frame of its own, and
+    /// wrapping it in the site's shell nests one document inside another. An
+    /// author who wrote the page by hand meant the page they wrote. An HTML
+    /// *fragment* is prose that happens to be spelled in tags, and stays in the
+    /// site's frame like a Markdown body. An explicit `layout:` always wins, so
+    /// `layout: site` puts a whole document back in the frame.
+    pub fn for_document(value: Option<&str>, format: prov::ContentFormat, body: &str) -> Self {
+        match value.map(str::trim) {
+            Some("site") => Self::Site,
+            Some(_) => Self::parse(value),
+            None if format == prov::ContentFormat::Html && is_whole_html_document(body) => {
+                Self::Verbatim
+            }
+            None => Self::Site,
+        }
+    }
+
     /// Whether the body is published unread — no templating, no parse, no link
     /// rewriting. True only for [`PageLayout::Verbatim`].
     pub fn is_verbatim(self) -> bool {
@@ -242,6 +264,39 @@ pub struct PublishedPage {
     /// `toc` slot only: the headings keep their anchors and a template still
     /// sees them.
     pub toc: bool,
+    /// The page's colour, from frontmatter `color:` — a **name** (`green`,
+    /// `purple`), never a hex, and only when it is one: lowercase letters,
+    /// digits and hyphens. A theme answers the name in its own idiom
+    /// (`.tone-green`), which is why nothing here knows what green is.
+    pub color: Option<String>,
+    /// Where a reader should begin, from frontmatter `start_with:` — a link
+    /// resolved against this render set like `part_of:`, so it is `None` when
+    /// it names a page this site does not publish.
+    pub start_with: Option<NavLink>,
+}
+
+/// Whether an HTML body is a whole document rather than a fragment: its first
+/// markup, past whitespace and comments, opens `<!doctype` or `<html`.
+fn is_whole_html_document(body: &str) -> bool {
+    let mut rest = body.trim_start_matches('\u{feff}');
+    loop {
+        rest = rest.trim_start();
+        match rest.strip_prefix("<!--") {
+            Some(comment) => match comment.find("-->") {
+                Some(end) => rest = &comment[end + 3..],
+                None => return false,
+            },
+            None => break,
+        }
+    }
+    let bytes = rest.as_bytes();
+    let opens = |tag: &str| {
+        bytes.len() > tag.len()
+            && bytes[..tag.len()].eq_ignore_ascii_case(tag.as_bytes())
+            // `<html>` or `<html lang=…>`, not `<htmlish>`.
+            && matches!(bytes[tag.len()], b'>' | b' ' | b'\t' | b'\n' | b'\r' | b'/')
+    };
+    opens("<!doctype") || opens("<html")
 }
 
 /// One heading of a rendered body, as the outline lists it.
