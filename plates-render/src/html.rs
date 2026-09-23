@@ -165,6 +165,9 @@ pub struct PageContext<'a> {
     /// Every page in the render, by destination — what the library slots read
     /// a shelf's colours and descriptions from. See [`crate::library`].
     pub pages: &'a HashMap<String, &'a PublishedPage>,
+    /// What the library is called — its authored front page's title, else the
+    /// site's name. See [`crate::library::LibrarySlots::library_title`].
+    pub library_title: &'a str,
     /// This page is a generated front page whose body only lists what its
     /// shelf already shows, so `content_below_title` leaves the list out.
     pub listing_body: bool,
@@ -581,7 +584,7 @@ impl HtmlRenderer {
             &LibraryContext {
                 nav: ctx.nav,
                 pages: ctx.pages,
-                site_title: ctx.site_title,
+                library_title: ctx.library_title,
                 root_prefix: &prefix,
                 listing_body: ctx.listing_body,
             },
@@ -612,6 +615,7 @@ impl HtmlRenderer {
             scripts: join_tags(scripts),
             root_prefix: prefix,
             page_kind: library.page_kind,
+            library_title: library.library_title,
             page_color: library.page_color,
             page_head: library.page_head,
             shelf: library.shelf,
@@ -969,6 +973,7 @@ mod tests {
             site_header: "",
             site_footer: "",
             pages: &NO_PAGES,
+            library_title: "My Site",
             listing_body: false,
         }
     }

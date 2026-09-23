@@ -71,6 +71,10 @@ impl PageKind {
 pub struct LibrarySlots {
     /// `front`, `book` or `page`.
     pub page_kind: String,
+    /// What the library is called: its authored front page's title — the
+    /// face a reader was shown at the door — or the site's name when the
+    /// front page is generated.
+    pub library_title: String,
     /// The colour name this page's room wears, or empty.
     pub page_color: String,
     /// The band: cover, title, description, counts and the way in — or, on a
@@ -93,8 +97,9 @@ pub struct LibraryContext<'a> {
     pub nav: &'a SiteNavigation,
     /// Every page in the render, by destination.
     pub pages: &'a HashMap<String, &'a PublishedPage>,
-    /// The site's name, for the way back to the front page.
-    pub site_title: &'a str,
+    /// What the library is called, for its bar and the way back to its front
+    /// page — see [`LibrarySlots::library_title`].
+    pub library_title: &'a str,
     /// `../` per level of depth.
     pub root_prefix: &'a str,
     /// The page is a generated front page whose body only lists what the shelf
@@ -126,6 +131,7 @@ pub fn library_slots(page: &PublishedPage, cx: &LibraryContext<'_>) -> LibrarySl
 
     LibrarySlots {
         page_kind: kind.as_str().to_string(),
+        library_title: cx.library_title.to_string(),
         page_head: page_head(page, kind, &place, children, cx),
         shelf: match kind {
             PageKind::Front => front_shelf(children, page, cx),
@@ -382,7 +388,7 @@ fn shelf_section(id: &str, heading: &str, items: Vec<String>) -> String {
 fn cover(node: &SiteNavNode, cx: &LibraryContext<'_>) -> String {
     let page = cx.pages.get(&node.href).copied();
     format!(
-        "    <li><a class=\"cover{tone}\" href=\"{prefix}{href}\" data-page=\"{href}\"><span class=\"cover-title\">{title}</span><span class=\"cover-count\">{held}</span></a><span class=\"cover-label\" aria-hidden=\"true\">{title}</span></li>",
+        "    <li><a class=\"cover{tone}\" href=\"{prefix}{href}\"><span class=\"cover-title\">{title}</span><span class=\"cover-count\">{held}</span></a><span class=\"cover-label\" aria-hidden=\"true\">{title}</span></li>",
         tone = tone_class(page.and_then(|p| p.color.as_deref())),
         prefix = cx.root_prefix,
         href = html_escape(&node.href),
@@ -425,7 +431,7 @@ fn sheet(
         })
         .unwrap_or_default();
     format!(
-        "    <li><a class=\"sheet{room}{tone}\" href=\"{prefix}{href}\" data-page=\"{href}\">{number}<span class=\"sheet-title\">{title}</span>{description}</a></li>",
+        "    <li><a class=\"sheet{room}{tone}\" href=\"{prefix}{href}\">{number}<span class=\"sheet-title\">{title}</span>{description}</a></li>",
         room = if room { " sheet-room" } else { "" },
         tone = tone_class(tone),
         prefix = cx.root_prefix,
@@ -488,7 +494,7 @@ fn book_nav(book: &SiteNavNode, cx: &LibraryContext<'_>) -> String {
     format!(
         "<nav class=\"book-nav\" aria-label=\"Contents\">\n  <a class=\"book-nav-up\" href=\"{prefix}{FRONT_PAGE_DEST}\">{site}</a>\n  <a class=\"book-nav-book{tone}\" href=\"{prefix}{href}\"{aria}><span class=\"book-nav-title\">{title}</span><span class=\"book-nav-count\">{held}</span></a>\n  <ol class=\"book-nav-list\">{items}</ol>\n</nav>",
         prefix = cx.root_prefix,
-        site = html_escape(cx.site_title),
+        site = html_escape(cx.library_title),
         tone = tone_class(page.and_then(|p| p.color.as_deref())),
         href = html_escape(&book.href),
         title = html_escape(&book.title),
