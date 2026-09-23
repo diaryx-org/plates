@@ -99,6 +99,10 @@ pub struct ShellSlots {
     /// (a page that is read), for a shell that lays the three out differently.
     /// See [`crate::library`].
     pub page_kind: String,
+    /// `{{library_title}}` — what the library is called: its authored front
+    /// page's title, else [`site_title`](Self::site_title). For a shell's
+    /// bar, where the reader should see the name they were shown at the door.
+    pub library_title: String,
     /// `{{page_color}}` — the colour name the page's room wears (`green`), or
     /// empty. A shell writes it as a class: `class="tone-{{page_color}}"`.
     pub page_color: String,
@@ -144,6 +148,7 @@ const SLOTS: &[(&str, Kind)] = &[
     ("footer", Kind::Raw),
     ("scripts", Kind::Raw),
     ("page_kind", Kind::Text),
+    ("library_title", Kind::Text),
     ("page_color", Kind::Text),
     ("page_head", Kind::Raw),
     ("shelf", Kind::Raw),
@@ -283,6 +288,7 @@ fn slot_value<'a>(slots: &'a ShellSlots, name: &str) -> &'a str {
         "footer" => &slots.footer,
         "scripts" => &slots.scripts,
         "page_kind" => &slots.page_kind,
+        "library_title" => &slots.library_title,
         "page_color" => &slots.page_color,
         "page_head" => &slots.page_head,
         "shelf" => &slots.shelf,
@@ -346,6 +352,7 @@ mod tests {
             footer: "<footer>f</footer>".into(),
             scripts: "<script>s</script>".into(),
             page_kind: "book".into(),
+            library_title: "Lib".into(),
             page_color: "green".into(),
             page_head: "<header>ph</header>".into(),
             shelf: "<section>sh</section>".into(),

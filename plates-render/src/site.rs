@@ -174,6 +174,7 @@ pub struct SiteOptions {
     /// | `footer` | raw | the built-in attribution footer |
     /// | `scripts` | raw | the built-in interactivity script, then the page's `scripts:` |
     /// | `page_kind` | text | `front`, `book` (holds pages) or `page` (is read) — see [`crate::library`] |
+    /// | `library_title` | text | the authored front page's title, else `site_title` |
     /// | `page_color` | text | the colour name the page's room wears, or empty |
     /// | `page_head` | raw | the band: cover, title, description, counts, the way in; or a read page's book and title |
     /// | `shelf` | raw | what the page holds, as covers and sheets |
@@ -1133,6 +1134,14 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     // it lists, so every page is found by where it lands.
     let by_dest: HashMap<String, &PublishedPage> =
         pages.iter().map(|p| (p.dest_filename.clone(), p)).collect();
+    // The library is called what its door says: an authored front page's
+    // title. A generated front page is named after the site already.
+    let library_title = pages
+        .iter()
+        .find(|p| p.is_root)
+        .filter(|_| !synthesized)
+        .map(|p| p.title.clone())
+        .unwrap_or_else(|| site_title.clone());
 
     let mut out_pages = Vec::with_capacity(pages.len());
     for (i, p) in pages.iter().enumerate() {
@@ -1215,6 +1224,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 site_header: &site_header,
                 site_footer: &site_footer,
                 pages: &by_dest,
+                library_title: &library_title,
                 // A generated front page under containment is a list of what
                 // its shelf shows; grouped, its body is the grouping, which a
                 // shelf does not draw.
@@ -4700,7 +4710,7 @@ mod tests {
             "the title is the band's: {content}"
         );
 
-        assert!(html.contains(r#"<a class="cover tone-purple" href="iw.html" data-page="iw.html"><span class="cover-title">Inspirational Writing</span><span class="cover-count">2 chapters</span></a>"#), "{html}");
+        assert!(html.contains(r#"<a class="cover tone-purple" href="iw.html"><span class="cover-title">Inspirational Writing</span><span class="cover-count">2 chapters</span></a>"#), "{html}");
         assert!(html.contains(r#"<h2 class="shelf-heading" id="shelf-books">Books <span class="shelf-count">1</span></h2>"#));
         assert!(
             html.contains(r#"<a class="sheet tone-green" href="about.html""#),
@@ -4719,7 +4729,7 @@ mod tests {
             html.contains(r#"class="library kind-book tone-purple""#),
             "{html}"
         );
-        assert!(html.contains(r#"<a class="sheet tone-purple" href="a.html" data-page="a.html"><span class="sheet-number">1</span><span class="sheet-title">The Serenity Prayer</span><span class="sheet-description">Niebuhr, as usually quoted</span></a>"#), "{html}");
+        assert!(html.contains(r#"<a class="sheet tone-purple" href="a.html"><span class="sheet-number">1</span><span class="sheet-title">The Serenity Prayer</span><span class="sheet-description">Niebuhr, as usually quoted</span></a>"#), "{html}");
         assert!(html.contains(r#"<span class="sheet-number">2</span><span class="sheet-title">The Snow-White Birds</span>"#));
         assert!(
             html.contains("Start reading"),
@@ -4808,6 +4818,37 @@ mod tests {
         assert_eq!(color_name("#ff0000"), None);
         assert_eq!(color_name("Green"), None);
         assert_eq!(color_name("a\" onmouseover=\"x"), None);
+    }
+
+    /// A site's declared name stays its name — in `<title>`, in feeds — while
+    /// the library's bar says what its door says: the authored front page's
+    /// title.
+    #[test]
+    fn the_library_is_called_what_its_front_page_says() {
+        let sources = vec![
+            src(
+                "vocab/family.md",
+                "---\ntitle: The Harris Family Archive\n---\nWelcome.\n",
+                true,
+            ),
+            src("book.md", "---\ntitle: Book\n---\nText.\n", false),
+        ];
+        let render = render_site(
+            &sources,
+            &SiteOptions {
+                template: Some(crate::library::LIBRARY_SHELL.to_string()),
+                site_title: Some("Family".into()),
+                generate_seo: false,
+                generate_feeds: false,
+                ..SiteOptions::default()
+            },
+        );
+        let book = page_html(&render, "book.html");
+        assert!(book.contains("<title>Book - Family</title>"), "{book}");
+        assert!(
+            book.contains(r#"<span class="lib-brand-name">The Harris Family Archive</span>"#),
+            "{book}"
+        );
     }
 
     /// The built-in shell reads none of the library slots, so a site that

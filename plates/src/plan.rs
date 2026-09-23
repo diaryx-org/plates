@@ -78,22 +78,30 @@ pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
             other => Error::Export(other.to_string()),
         })?;
 
-    // The own page is outside the gate — it is admitted by what it is, not by
-    // what it says — so the hold the gate applies never saw it. A draft of it
-    // is a page nobody chose to open on yet.
-    let own_page = match own_page {
-        Some(page) if holds(ws, spec, page).await => None,
-        other => other,
+    // Whether the own page may front the site. Not when the archive's root is
+    // already shared with this audience: a vault whose root its readers can
+    // see opens where it always did. And not as a draft — the own page is
+    // outside the gate, admitted by what it is rather than by what it says, so
+    // the hold the gate applies never saw it.
+    let root_shared = export.entries.iter().any(|doc| doc.path == root_doc)
+        || export.outside_view.iter().any(|path| path == root_doc);
+    let fronting = match own_page {
+        Some(page) if !root_shared && !holds(ws, spec, page).await => Some(page),
+        _ => None,
     };
 
-    finish(
+    let mut plan = finish(
         spec,
         export,
         index.as_deref(),
         index_directory,
-        own_page,
+        fronting,
         census,
-    )
+    )?;
+    // Recorded whether or not it fronts the site: a tagged own page published
+    // as an ordinary entry still keeps its site settings home.
+    plan.own_page = own_page.map(Path::to_path_buf);
+    Ok(plan)
 }
 
 /// Whether the site's hold field keeps `page` back: `draft: true`, or the
