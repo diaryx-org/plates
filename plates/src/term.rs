@@ -62,7 +62,7 @@
 //! [`TermConfig::warnings`] carries only what the term node *did* say and this
 //! pass could not use.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use prov::config::WorkspaceConfig;
 use prov::link::{Link, LinkStyle};
@@ -105,6 +105,10 @@ pub const TERM_SITE_KEYS: &[&str] = &[
 /// term node exists or not.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct TermConfig {
+    /// The term node itself — the audience's own page. A site names no front
+    /// page of its own opens on this one, and it is always shared with the
+    /// audience it describes: see [`plan_site`](crate::plan_site).
+    pub page: Option<PathBuf>,
     /// The front page, already resolved against the **term node** and respelled
     /// root-absolute (`/README.md`) — see [`read_term_config`] for why the
     /// resolution happens here and the spelling travels.
@@ -208,6 +212,7 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
     };
     let Some(site) = site else {
         return TermConfig {
+            page: Some(term_path),
             index,
             warnings,
             ..TermConfig::default()
@@ -225,6 +230,7 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
     }
 
     TermConfig {
+        page: Some(term_path),
         index,
         shell: text(&site, "shell"),
         stylesheet: text(&site, "stylesheet"),
