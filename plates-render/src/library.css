@@ -1,0 +1,708 @@
+/* ── The library theme ──────────────────────────────────────────────────────
+ *
+ * Appended to the base stylesheet, and read only by pages wearing the library
+ * shell (`library_shell.html`), whose <body> says `class="library …"`. Every
+ * rule is scoped under `.library` so a page in any other shell is untouched.
+ *
+ * A page's colour is a name — `tone-green` on the body, on a cover, on a sheet
+ * — and the nine names are the Diaryx app's cover papers, value for value:
+ * face (the board), spine (a step darker) and ink (the text printed on it).
+ * A page with no colour, or one this sheet does not know, is grey.
+ *
+ * No script: a sealed site renders every page in a sandboxed frame that runs
+ * none, so the contents drawer and the margin are checkboxes (`#lib-contents`,
+ * `#lib-margin`) and `:has()` decides which columns exist.
+ */
+
+:root {
+    --lib-serif: "Iowan Old Style", "New York", Charter, "Source Serif Pro", Georgia, serif;
+    --lib-remark: #2F6F6B;
+    --lib-pages: #FAF7F0;
+    --lib-rule: color-mix(in oklab, var(--text) 9%, transparent);
+    --lib-panel: color-mix(in oklab, var(--bg) 70%, #f3f1ec);
+    --lib-contents-width: 18rem;
+    --lib-margin-width: 20rem;
+    --lib-measure: 36rem;
+    --lib-wide: 74rem;
+}
+
+.library {
+    --face: #D5D5D2; --spine: #ABABA6; --ink: #2E2E2C;
+}
+.library .tone-red,    .library.tone-red    { --face: #F0D3CE; --spine: #D9A49D; --ink: #5C3230; }
+.library .tone-orange, .library.tone-orange { --face: #F1DDC4; --spine: #DBB68C; --ink: #5A4128; }
+.library .tone-yellow, .library.tone-yellow { --face: #F0E6B9; --spine: #D6C77A; --ink: #524818; }
+.library .tone-green,  .library.tone-green  { --face: #D3E6CB; --spine: #A2C798; --ink: #2F4A2A; }
+.library .tone-blue,   .library.tone-blue   { --face: #7FE1F5; --spine: #49C6DF; --ink: #1F4A54; }
+.library .tone-purple, .library.tone-purple { --face: #E2D5EE; --spine: #BCA4D6; --ink: #44305C; }
+.library .tone-white,  .library.tone-white  { --face: #F7F6F2; --spine: #D9D7D0; --ink: #3A3A36; }
+.library .tone-grey,   .library.tone-grey   { --face: #D5D5D2; --spine: #ABABA6; --ink: #2E2E2C; }
+.library .tone-black,  .library.tone-black  { --face: #3B3B3A; --spine: #232322; --ink: #EDEDE8; }
+
+@media (prefers-color-scheme: dark) {
+    :root {
+        --lib-remark: #7FD1CB;
+        --lib-pages: #8E8C86;
+        --lib-panel: color-mix(in oklab, var(--bg) 85%, #ffffff);
+    }
+    .library { --face: #5A5A57; --spine: #3F3F3D; --ink: #ECECE8; }
+    .library .tone-red,    .library.tone-red    { --face: #4A2E2C; --spine: #6B4340; --ink: #F0D3CE; }
+    .library .tone-orange, .library.tone-orange { --face: #4A3826; --spine: #6B5238; --ink: #F1DDC4; }
+    .library .tone-yellow, .library.tone-yellow { --face: #45402A; --spine: #66603C; --ink: #F0E6B9; }
+    .library .tone-green,  .library.tone-green  { --face: #2C3F28; --spine: #41603C; --ink: #D3E6CB; }
+    .library .tone-blue,   .library.tone-blue   { --face: #1E4650; --spine: #2F6A78; --ink: #7FE1F5; }
+    .library .tone-purple, .library.tone-purple { --face: #3C2F4A; --spine: #574670; --ink: #E2D5EE; }
+    .library .tone-white,  .library.tone-white  { --face: #E8E6E0; --spine: #C8C6BF; --ink: #3A3A36; }
+    .library .tone-grey,   .library.tone-grey   { --face: #5A5A57; --spine: #3F3F3D; --ink: #ECECE8; }
+    .library .tone-black,  .library.tone-black  { --face: #262625; --spine: #121211; --ink: #D8D8D3; }
+}
+
+/* ── The frame ── */
+
+body.library {
+    max-width: none;
+    margin: 0;
+    padding: 0;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+}
+
+.library .lib-state {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.library .lib-bar {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    height: 3.5rem;
+    padding: 0 1.25rem;
+    background: var(--surface-bg);
+    border-bottom: 1px solid var(--lib-rule);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+
+.library .lib-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.6rem;
+    min-width: 0;
+    color: var(--text);
+    font-weight: 600;
+    font-size: 0.95rem;
+    text-decoration: none;
+}
+
+.library .lib-brand-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.library .lib-brand-mark {
+    flex: none;
+    width: 1.1rem;
+    height: 1.35rem;
+    border-radius: 2px 4px 4px 2px;
+    background: var(--face);
+    box-shadow: inset 3px 0 0 var(--spine), 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.library.kind-page .lib-brand-mark { background: var(--lib-pages); box-shadow: inset 3px 0 0 var(--border), 0 1px 2px rgba(0, 0, 0, 0.2); }
+
+.library .lib-bar-space { flex: 1; }
+
+.library .lib-toggle {
+    display: none;
+    align-items: center;
+    height: 2rem;
+    padding: 0 0.8rem;
+    border-radius: 1rem;
+    border: 1px solid var(--border);
+    font-size: 0.85rem;
+    font-weight: 500;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.library .lib-toggle:hover { background: color-mix(in oklab, var(--face) 25%, transparent); }
+
+.library.kind-page:has(.lib-contents:not(:empty)) .lib-toggle-contents,
+.library:has(.lib-margin:not(:empty)) .lib-toggle-margin {
+    display: inline-flex;
+}
+
+.library #lib-contents:focus-visible ~ .lib-bar .lib-toggle-contents,
+.library #lib-margin:focus-visible ~ .lib-bar .lib-toggle-margin {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.library .site-header:empty { display: none; }
+
+.library .lib-room {
+    flex: 1;
+    display: grid;
+    grid-template-columns: var(--lib-left, 0) minmax(0, 1fr) var(--lib-right, 0);
+}
+
+.library .lib-contents,
+.library .lib-margin {
+    display: none;
+    min-width: 0;
+}
+
+.library .lib-main {
+    grid-column: 2;
+    min-width: 0;
+    padding-bottom: 4rem;
+}
+
+/* ── Panels, wide ── */
+
+@media (min-width: 64rem) {
+    .library.kind-page:has(.lib-contents:not(:empty)):not(:has(#lib-contents:checked)) {
+        --lib-left: var(--lib-contents-width);
+    }
+    .library.kind-page:has(.lib-contents:not(:empty)):not(:has(#lib-contents:checked)) .lib-contents {
+        display: block;
+    }
+    .library:has(.lib-margin:not(:empty)):not(:has(#lib-margin:checked)) {
+        --lib-right: var(--lib-margin-width);
+    }
+    .library:has(.lib-margin:not(:empty)):not(:has(#lib-margin:checked)) .lib-margin {
+        display: block;
+    }
+    .library:not(:has(#lib-contents:checked)) .lib-toggle-contents,
+    .library:not(:has(#lib-margin:checked)) .lib-toggle-margin {
+        background: color-mix(in oklab, var(--face) 40%, var(--bg));
+        border-color: color-mix(in oklab, var(--spine) 70%, transparent);
+        color: var(--ink);
+    }
+    .library .lib-contents,
+    .library .lib-margin {
+        position: sticky;
+        top: 3.5rem;
+        height: calc(100vh - 3.5rem);
+        overflow-y: auto;
+        background: var(--lib-panel);
+    }
+    .library .lib-contents { grid-column: 1; border-right: 1px solid var(--lib-rule); }
+    .library .lib-margin { grid-column: 3; border-left: 1px solid var(--lib-rule); }
+}
+
+/* ── Panels, narrow: a drawer from the left, a sheet from below ── */
+
+@media (max-width: 63.99rem) {
+    .library:has(#lib-contents:checked) .lib-contents {
+        display: block;
+        position: fixed;
+        z-index: 40;
+        top: 3.5rem;
+        bottom: 0;
+        left: 0;
+        width: min(22rem, 88vw);
+        overflow-y: auto;
+        background: var(--bg);
+        box-shadow: var(--surface-shadow);
+    }
+    .library:has(#lib-margin:checked) .lib-margin {
+        display: block;
+        position: fixed;
+        z-index: 40;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        max-height: 70vh;
+        overflow-y: auto;
+        background: var(--bg);
+        border-radius: 1rem 1rem 0 0;
+        box-shadow: var(--surface-shadow);
+    }
+    .library:has(#lib-contents:checked) .lib-toggle-contents,
+    .library:has(#lib-margin:checked) .lib-toggle-margin {
+        background: color-mix(in oklab, var(--face) 40%, var(--bg));
+        color: var(--ink);
+    }
+}
+
+/* ── The band ── */
+
+.library .page-head-front,
+.library .page-head-book {
+    display: flex;
+    gap: 2rem;
+    align-items: flex-start;
+    padding: 2.25rem var(--lib-gutter) 2rem;
+    background: linear-gradient(180deg,
+        color-mix(in oklab, var(--face) 70%, var(--bg)) 0%,
+        color-mix(in oklab, var(--face) 22%, var(--bg)) 70%,
+        var(--bg) 100%);
+}
+
+.library .page-head .cover {
+    flex: none;
+    width: 9.5rem;
+    cursor: default;
+}
+
+.library .page-head .cover:hover { transform: none; }
+
+.library .page-head-text { min-width: 0; padding-top: 0.25rem; }
+
+.library .page-head .page-title {
+    margin: 0 0 0.5rem;
+    font-family: var(--lib-serif);
+    font-size: clamp(1.9rem, 4vw, 2.5rem);
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -0.01em;
+    color: var(--ink);
+}
+
+.library .page-head .page-description {
+    margin: 0 0 0.75rem;
+    max-width: 40rem;
+    font-family: var(--lib-serif);
+    font-size: 1.15rem;
+    line-height: 1.45;
+    color: color-mix(in oklab, var(--ink) 80%, var(--bg));
+}
+
+.library .page-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem 1rem;
+    margin: 0 0 1rem;
+    font-size: 0.85rem;
+    color: color-mix(in oklab, var(--ink) 70%, var(--bg));
+}
+
+.library .page-meta b { font-weight: 600; }
+
+.library .page-actions { margin: 0; }
+
+.library .start-with {
+    display: inline-flex;
+    align-items: center;
+    height: 2.3rem;
+    padding: 0 1rem;
+    border-radius: 0.55rem;
+    background: var(--ink);
+    color: var(--face);
+    font-weight: 600;
+    font-size: 0.9rem;
+    text-decoration: none;
+}
+
+.library .start-with:hover { text-decoration: none; filter: brightness(1.12); }
+
+/* A page being read: its book above its title, centred over the column. */
+.library .page-head-reading {
+    max-width: var(--lib-measure);
+    margin: 0 auto;
+    padding: 3rem 1.5rem 1.5rem;
+    text-align: center;
+}
+
+.library .page-eyebrow {
+    margin: 0 0 0.6rem;
+    font-size: 0.72rem;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: color-mix(in oklab, var(--ink) 75%, var(--bg));
+}
+
+.library .page-eyebrow a { color: inherit; text-decoration: none; }
+.library .page-eyebrow a:hover { text-decoration: underline; }
+.library .page-chapter::before { content: "·"; margin: 0 0.5em; }
+
+.library .page-head-reading .page-title {
+    margin: 0;
+    font-family: var(--lib-serif);
+    font-size: clamp(1.8rem, 4vw, 2.3rem);
+    font-weight: 600;
+    line-height: 1.15;
+}
+
+.library .page-head-reading .page-description {
+    margin: 0.5rem 0 0;
+    font-family: var(--lib-serif);
+    font-style: italic;
+    font-size: 1.05rem;
+    color: var(--text-muted);
+}
+
+/* ── The text ── */
+
+.library .lib-article {
+    max-width: var(--lib-measure);
+    margin: 0 auto;
+    padding: 0 1.5rem;
+}
+
+.library .lib-article .content:empty { display: none; }
+
+/* On a front page or a book the text sits under the band's title, and the
+   shelf and footer under its cover: one gutter, the band's, for all three. */
+.library {
+    --lib-gutter: max(2.75rem, calc((100% - var(--lib-wide)) / 2));
+}
+
+.library.kind-front .lib-article,
+.library.kind-book .lib-article {
+    max-width: none;
+    margin: 0;
+    padding: 0 var(--lib-gutter) 0 calc(var(--lib-gutter) + 11.5rem);
+}
+
+.library.kind-front .lib-article .content,
+.library.kind-book .lib-article .content {
+    max-width: 40rem;
+}
+
+.library .content {
+    font-family: var(--lib-serif);
+    font-size: 1.15rem;
+    line-height: 1.7;
+}
+
+.library.kind-page .content { font-size: 1.2rem; line-height: 1.72; }
+
+.library .content :is(h1, h2, h3, h4) { font-family: var(--lib-serif); }
+
+.library .content blockquote {
+    border-left: 2px solid var(--spine);
+    font-style: italic;
+}
+
+.library .content a { text-decoration-color: color-mix(in oklab, currentColor 40%, transparent); }
+
+/* ── The shelf ── */
+
+.library .shelf {
+    margin: 2rem 0 0;
+    padding: 0 var(--lib-gutter);
+}
+
+.library .shelf-heading {
+    margin: 0 0 1.25rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+
+.library .shelf-count { margin-left: 0.6em; opacity: 0.7; font-weight: 500; }
+
+.library .shelf-grid {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(10.5rem, 1fr));
+    gap: 2rem 1.9rem;
+}
+
+.library .shelf-grid li { margin: 0; min-width: 0; }
+
+.library .cover {
+    position: relative;
+    display: block;
+    aspect-ratio: 5 / 6;
+    overflow: hidden;
+    border-radius: 3px 9px 9px 3px;
+    color: var(--ink);
+    text-decoration: none;
+    background: linear-gradient(140deg,
+        color-mix(in oklab, var(--face) 80%, white) 0%,
+        var(--face) 55%,
+        color-mix(in oklab, var(--face) 88%, black) 100%);
+    box-shadow:
+        5px 6px 0 -1px var(--lib-pages),
+        5px 6px 0 0 rgba(0, 0, 0, 0.1),
+        0 12px 24px -6px rgba(0, 0, 0, 0.22);
+    transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.library a.cover:hover {
+    transform: translateY(-3px);
+    text-decoration: none;
+    box-shadow:
+        5px 6px 0 -1px var(--lib-pages),
+        5px 6px 0 0 rgba(0, 0, 0, 0.1),
+        0 18px 30px -6px rgba(0, 0, 0, 0.26);
+}
+
+.library .cover::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: 11px;
+    background: linear-gradient(90deg,
+        color-mix(in oklab, var(--spine) 85%, black),
+        var(--spine) 60%,
+        color-mix(in oklab, var(--spine) 70%, white));
+}
+
+.library .cover-title {
+    display: block;
+    padding: 1.2rem 1rem 0 1.75rem;
+    font-family: var(--lib-serif);
+    font-size: 1.25rem;
+    font-weight: 600;
+    line-height: 1.2;
+    overflow-wrap: anywhere;
+}
+
+.library .cover-title::after {
+    content: "";
+    display: block;
+    width: 1.9rem;
+    height: 2px;
+    margin-top: 0.75rem;
+    background: var(--spine);
+}
+
+.library .cover-count {
+    position: absolute;
+    left: 1.75rem;
+    bottom: 1rem;
+    font-size: 0.78rem;
+    opacity: 0.75;
+}
+
+.library .page-head .cover-title { font-size: 1.05rem; padding: 1rem 0.75rem 0 1.4rem; }
+.library .page-head .cover-count { left: 1.4rem; }
+
+.library .cover-label {
+    display: block;
+    margin-top: 0.8rem;
+    font-size: 0.92rem;
+    line-height: 1.35;
+    text-align: center;
+}
+
+/* A sheet: a page that opens to text, with its corner turned down. */
+.library .sheet {
+    position: relative;
+    display: block;
+    aspect-ratio: 5 / 6;
+    padding: 1.1rem 1.1rem 0;
+    overflow: hidden;
+    color: var(--ink);
+    text-decoration: none;
+    background: color-mix(in oklab, var(--face) 38%, var(--lib-pages));
+    clip-path: polygon(0 0, calc(100% - 1.6rem) 0, 100% 1.6rem, 100% 100%, 0 100%);
+    filter: drop-shadow(0 6px 10px rgba(0, 0, 0, 0.12)) drop-shadow(0 1px 1px rgba(0, 0, 0, 0.08));
+    transition: transform 0.18s ease;
+}
+
+.library .sheet::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 1.6rem;
+    height: 1.6rem;
+    background: linear-gradient(225deg, transparent 50%, color-mix(in oklab, var(--spine) 70%, var(--lib-pages)) 50%);
+}
+
+.library a.sheet:hover { transform: translateY(-3px); text-decoration: none; }
+
+/* A chapter with parts is a place: its own paper, pages behind it, no fold. */
+.library .sheet-room {
+    clip-path: none;
+    border-radius: 2px;
+    background: color-mix(in oklab, var(--face) 70%, var(--lib-pages));
+    box-shadow:
+        4px 4px 0 -1px var(--lib-pages), 4px 4px 0 0 rgba(0, 0, 0, 0.08),
+        8px 8px 0 -1px var(--lib-pages), 8px 8px 0 0 rgba(0, 0, 0, 0.07);
+    filter: none;
+    overflow: visible;
+}
+
+.library .sheet-room::after { display: none; }
+
+.library .sheet-number {
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    opacity: 0.55;
+}
+
+.library .sheet-title {
+    display: block;
+    margin-top: 0.35rem;
+    font-family: var(--lib-serif);
+    font-size: 1.1rem;
+    font-weight: 600;
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+}
+
+.library .sheet-description {
+    display: -webkit-box;
+    margin-top: 0.6rem;
+    font-family: var(--lib-serif);
+    font-size: 0.85rem;
+    line-height: 1.45;
+    opacity: 0.72;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* ── A book's contents, beside a page being read ── */
+
+.library .book-nav { font-size: 0.9rem; }
+
+.library .book-nav-up {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 3rem;
+    padding: 0 1rem;
+    color: var(--text);
+    font-weight: 500;
+    text-decoration: none;
+    border-bottom: 1px solid var(--lib-rule);
+    overflow: hidden;
+    white-space: nowrap;
+    text-overflow: ellipsis;
+}
+
+.library .book-nav-up::before { content: "‹"; font-size: 1.3rem; line-height: 1; margin-top: -0.1rem; }
+
+.library .book-nav-book {
+    display: block;
+    padding: 1rem 1rem 1rem 3.2rem;
+    position: relative;
+    color: var(--ink);
+    text-decoration: none;
+    background: linear-gradient(180deg,
+        color-mix(in oklab, var(--face) 55%, var(--bg)),
+        color-mix(in oklab, var(--face) 18%, var(--bg)));
+}
+
+.library .book-nav-book::before {
+    content: "";
+    position: absolute;
+    left: 1rem;
+    top: 50%;
+    width: 1.6rem;
+    height: 2rem;
+    transform: translateY(-50%);
+    border-radius: 2px 4px 4px 2px;
+    background: var(--face);
+    box-shadow: inset 4px 0 0 var(--spine), 2px 2px 0 -1px var(--lib-pages), 0 2px 4px rgba(0, 0, 0, 0.18);
+}
+
+.library .book-nav-title { display: block; font-family: var(--lib-serif); font-size: 1.05rem; font-weight: 600; line-height: 1.2; }
+.library .book-nav-count { display: block; font-size: 0.78rem; opacity: 0.7; }
+
+.library .book-nav-list,
+.library .book-nav-parts {
+    list-style: none;
+    margin: 0;
+    padding: 0.4rem 0;
+}
+
+.library .book-nav-parts { padding: 0; }
+
+.library .book-nav li { margin: 0; }
+
+.library .book-nav li a {
+    position: relative;
+    display: flex;
+    gap: 0.6rem;
+    padding: 0.55rem 1.1rem;
+    color: var(--text);
+    line-height: 1.35;
+    text-decoration: none;
+}
+
+.library .book-nav .book-nav-parts li a { padding-left: 2.7rem; font-size: 0.85rem; }
+
+.library .book-nav li a:hover { background: color-mix(in oklab, var(--text) 5%, transparent); }
+
+.library .book-nav-number {
+    flex: none;
+    width: 1rem;
+    padding-top: 0.1rem;
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    text-align: right;
+}
+
+.library .book-nav a[aria-current] {
+    background: color-mix(in oklab, var(--face) 38%, var(--bg));
+    color: var(--ink);
+    font-weight: 600;
+}
+
+.library .book-nav a[aria-current]::after {
+    content: "";
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--spine);
+}
+
+/* ── Pager and footer ── */
+
+.library .pager {
+    max-width: var(--lib-measure);
+    margin: 3rem auto 0;
+    padding: 1.25rem 1.5rem 0;
+    border-top: 1px solid var(--lib-rule);
+}
+
+.library .pager a { font-family: var(--lib-serif); font-size: 1.05rem; color: var(--ink); }
+.library.kind-front .pager,
+.library.kind-book .pager { display: none; }
+
+.library .site-footer {
+    margin: 4rem var(--lib-gutter) 0;
+    padding: 1.25rem 0 0;
+}
+
+.library.kind-page .site-footer { max-width: var(--lib-measure); margin-inline: auto; padding-inline: 1.5rem; }
+
+/* ── Narrow ── */
+
+@media (max-width: 40rem) {
+    .library .page-head-front,
+    .library .page-head-book {
+        padding: 1.5rem 1.25rem 1.25rem;
+    }
+    .library .page-head-front .cover,
+    .library .page-head-book .cover { display: none; }
+    .library { --lib-gutter: 1.25rem; }
+    .library.kind-front .lib-article,
+    .library.kind-book .lib-article { padding: 0 var(--lib-gutter); }
+    .library .shelf-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem 1.1rem; }
+    .library .cover-title { font-size: 1rem; padding: 0.9rem 0.6rem 0 1.3rem; }
+    .library .cover-count { left: 1.3rem; bottom: 0.7rem; }
+    .library .sheet-title { font-size: 0.98rem; }
+}
+
+@media print {
+    .library .lib-bar, .library .lib-contents, .library .lib-margin, .library .pager { display: none !important; }
+    .library .lib-room { display: block; }
+}

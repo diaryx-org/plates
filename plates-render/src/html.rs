@@ -13,9 +13,12 @@
 //! [`ShellSlots`] it does. Both shells are assembled from one set of slots
 //! precisely so a template cannot see a different page than the default does.
 
+use std::collections::HashMap;
+
 use crate::appearance::{FaviconAsset, ThemeAppearance};
 
 use crate::headings::render_toc;
+use crate::library::{LibraryContext, library_slots};
 use crate::links::root_prefix;
 use crate::nav::reading_order;
 use crate::page::{
@@ -159,6 +162,12 @@ pub struct PageContext<'a> {
     /// The site's footer document, on the same terms — the `site_footer`
     /// slot.
     pub site_footer: &'a str,
+    /// Every page in the render, by destination — what the library slots read
+    /// a shelf's colours and descriptions from. See [`crate::library`].
+    pub pages: &'a HashMap<String, &'a PublishedPage>,
+    /// This page is a generated front page whose body only lists what its
+    /// shelf already shows, so `content_below_title` leaves the list out.
+    pub listing_body: bool,
 }
 
 /// Assembles complete HTML documents from rendered page bodies.
@@ -567,6 +576,16 @@ impl HtmlRenderer {
         scripts.extend(script_tags(&page.scripts, &prefix));
 
         let order = reading_order(&ctx.nav.tree);
+        let library = library_slots(
+            page,
+            &LibraryContext {
+                nav: ctx.nav,
+                pages: ctx.pages,
+                site_title: ctx.site_title,
+                root_prefix: &prefix,
+                listing_body: ctx.listing_body,
+            },
+        );
 
         ShellSlots {
             lang: ctx.lang.to_string(),
@@ -592,6 +611,12 @@ impl HtmlRenderer {
             footer: footer_html(self.style.generator.as_ref()),
             scripts: join_tags(scripts),
             root_prefix: prefix,
+            page_kind: library.page_kind,
+            page_color: library.page_color,
+            page_head: library.page_head,
+            shelf: library.shelf,
+            book_nav: library.book_nav,
+            content_below_title: library.content_below_title,
         }
     }
 
@@ -749,6 +774,12 @@ fn get_base_css() -> &'static str {
     include_str!("html_format_css.css")
 }
 
+/// The built-in base stylesheet, for a caller that builds a theme on top of it
+/// rather than replacing it — [`crate::library::library_stylesheet`] is one.
+pub fn base_css() -> &'static str {
+    get_base_css()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -796,6 +827,8 @@ mod tests {
             source_markdown: String::new(),
             headings: vec![],
             toc: true,
+            color: None,
+            start_with: None,
         }
     }
 
@@ -935,8 +968,13 @@ mod tests {
             template,
             site_header: "",
             site_footer: "",
+            pages: &NO_PAGES,
+            listing_body: false,
         }
     }
+
+    static NO_PAGES: std::sync::LazyLock<HashMap<String, &'static PublishedPage>> =
+        std::sync::LazyLock::new(HashMap::new);
 
     fn empty_nav() -> SiteNavigation {
         SiteNavigation {

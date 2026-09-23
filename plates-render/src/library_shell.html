@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="{{lang}}">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{document_title}}</title>
+    {{{head}}}
+</head>
+<body class="library kind-{{page_kind}} tone-{{page_color}}">
+    <a class="skip-link" href="#content">Skip to content</a>
+    <input class="lib-state" type="checkbox" id="lib-contents" aria-label="Show or hide the contents">
+    <input class="lib-state" type="checkbox" id="lib-margin" aria-label="Show or hide the margin">
+    <header class="lib-bar">
+        <a class="lib-brand" href="{{root_prefix}}index.html"><span class="lib-brand-mark" aria-hidden="true"></span><span class="lib-brand-name">{{site_title}}</span></a>
+        <span class="lib-bar-space"></span>
+        <label class="lib-toggle lib-toggle-contents" for="lib-contents">Contents</label>
+        <label class="lib-toggle lib-toggle-margin" for="lib-margin">Margin</label>
+    </header>
+    <header class="site-header">{{{site_header}}}</header>
+    <div class="lib-room">
+        <aside class="lib-contents">{{{book_nav}}}</aside>
+        <main id="content" class="lib-main">
+            {{{page_head}}}
+            <article class="lib-article">
+                <div class="content">
+                    {{{content_below_title}}}
+                </div>
+            </article>
+            {{{shelf}}}
+            {{{pager}}}
+            <footer class="site-footer">{{{site_footer}}}{{{footer}}}</footer>
+        </main>
+        <aside class="lib-margin" id="margin" aria-label="Margin"></aside>
+    </div>
+    {{{scripts}}}
+</body>
+</html>

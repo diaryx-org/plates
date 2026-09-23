@@ -95,6 +95,27 @@ pub struct ShellSlots {
     /// `{{{scripts}}}` — the built-in interactivity script and the page's own
     /// `scripts:`, as a newline-separated run of tags indented four spaces.
     pub scripts: String,
+    /// `{{page_kind}}` — `front`, `book` (a page that holds pages) or `page`
+    /// (a page that is read), for a shell that lays the three out differently.
+    /// See [`crate::library`].
+    pub page_kind: String,
+    /// `{{page_color}}` — the colour name the page's room wears (`green`), or
+    /// empty. A shell writes it as a class: `class="tone-{{page_color}}"`.
+    pub page_color: String,
+    /// `{{{page_head}}}` — the band: a front page's or a book's cover, title,
+    /// description, counts and way in; on a page that is read, the book it is
+    /// in and its title.
+    pub page_head: String,
+    /// `{{{shelf}}}` — what the page holds, as covers and sheets. Empty on a
+    /// page that holds nothing.
+    pub shelf: String,
+    /// `{{{book_nav}}}` — the contents of the book this page is in, with a way
+    /// back to the front page. Empty outside a book.
+    pub book_nav: String,
+    /// `{{{content_below_title}}}` — [`content`](Self::content) without a
+    /// leading `<h1>` that repeats the page's title, for a shell that writes
+    /// the title in `page_head`.
+    pub content_below_title: String,
 }
 
 /// Whether a slot is text (escaped on the way in) or raw HTML.
@@ -122,6 +143,12 @@ const SLOTS: &[(&str, Kind)] = &[
     ("site_footer", Kind::Raw),
     ("footer", Kind::Raw),
     ("scripts", Kind::Raw),
+    ("page_kind", Kind::Text),
+    ("page_color", Kind::Text),
+    ("page_head", Kind::Raw),
+    ("shelf", Kind::Raw),
+    ("book_nav", Kind::Raw),
+    ("content_below_title", Kind::Raw),
 ];
 
 /// A shell template that could not be compiled. Carries a message written for
@@ -255,6 +282,12 @@ fn slot_value<'a>(slots: &'a ShellSlots, name: &str) -> &'a str {
         "site_footer" => &slots.site_footer,
         "footer" => &slots.footer,
         "scripts" => &slots.scripts,
+        "page_kind" => &slots.page_kind,
+        "page_color" => &slots.page_color,
+        "page_head" => &slots.page_head,
+        "shelf" => &slots.shelf,
+        "book_nav" => &slots.book_nav,
+        "content_below_title" => &slots.content_below_title,
         // Unreachable: `slot_index` accepted the name against the same table.
         _ => "",
     }
@@ -312,6 +345,12 @@ mod tests {
             site_footer: "<p>sf</p>".into(),
             footer: "<footer>f</footer>".into(),
             scripts: "<script>s</script>".into(),
+            page_kind: "book".into(),
+            page_color: "green".into(),
+            page_head: "<header>ph</header>".into(),
+            shelf: "<section>sh</section>".into(),
+            book_nav: "<nav>bn</nav>".into(),
+            content_below_title: "<p>below</p>".into(),
         }
     }
 
