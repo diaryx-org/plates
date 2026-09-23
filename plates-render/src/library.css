@@ -135,6 +135,24 @@ body.library {
 
 .library .lib-toggle:hover { background: color-mix(in oklab, var(--face) 25%, transparent); }
 
+/* A toggle a reader's annotation layer adds to the bar from outside the page
+   — the sealed reader's Margin button — which shows whenever it is there and
+   says whether its panel is open. */
+.library .lib-bar button.lib-toggle {
+    display: inline-flex;
+    background: none;
+    color: inherit;
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.library .lib-bar button.lib-toggle[aria-pressed="true"] {
+    background: color-mix(in oklab, var(--face) 40%, var(--bg));
+    border-color: color-mix(in oklab, var(--spine) 70%, transparent);
+    color: var(--ink);
+}
+
 .library.kind-page:has(.lib-contents:not(:empty)) .lib-toggle-contents,
 .library:has(.lib-margin:not(:empty)) .lib-toggle-margin {
     display: inline-flex;
