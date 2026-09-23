@@ -35,12 +35,19 @@ use crate::spec::{FRONT_PAGE, IndexDirectory, SitePlan, SiteSpec, finish};
 /// the census per site would walk the whole graph once per site to learn the
 /// same thing. A caller with no use for [`SitePlan::link_diagnostics`] passes
 /// `&[]`.
+///
+/// `own_page` is the audience's own page — the term node its gate value names,
+/// [`TermConfig::page`](crate::TermConfig::page) — or `None` for an archive
+/// whose audiences are not documents. It is always shared with the audience it
+/// describes, whatever its own `audience:` says, and it is the site's front
+/// page whenever the site names no other.
 pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
     ws: &Workspace<FS, Id, Ix>,
     spec: &SiteSpec,
     views: &[ViewSpec],
     root_doc: &Path,
     census: &[prov::CensusEntry],
+    own_page: Option<&Path>,
 ) -> Result<SitePlan> {
     // Resolve the index first: a front page that points at nothing is a mistake
     // worth reporting before spending a whole tree walk on the plan it would
@@ -71,7 +78,42 @@ pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
             other => Error::Export(other.to_string()),
         })?;
 
-    finish(spec, export, index.as_deref(), index_directory, census)
+    // The own page is outside the gate — it is admitted by what it is, not by
+    // what it says — so the hold the gate applies never saw it. A draft of it
+    // is a page nobody chose to open on yet.
+    let own_page = match own_page {
+        Some(page) if holds(ws, spec, page).await => None,
+        other => other,
+    };
+
+    finish(
+        spec,
+        export,
+        index.as_deref(),
+        index_directory,
+        own_page,
+        census,
+    )
+}
+
+/// Whether the site's hold field keeps `page` back: `draft: true`, or the
+/// string `"true"`, on the page itself.
+async fn holds<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    spec: &SiteSpec,
+    page: &Path,
+) -> bool {
+    let Some(field) = spec.hold.as_deref() else {
+        return false;
+    };
+    let Ok(doc) = ws.graph().document(page).await else {
+        return false;
+    };
+    match doc.meta.get(field) {
+        Some(prov::meta::Value::Bool(held)) => *held,
+        Some(prov::meta::Value::String(text)) => text.trim().eq_ignore_ascii_case("true"),
+        _ => false,
+    }
 }
 
 /// The field a site's gate is judged on when it names none.

@@ -238,16 +238,17 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
                     continue;
                 };
                 let peer_root_doc = peer.discovered.root_doc.clone();
-                let (peer_spec, term_warnings) = SiteSpec::from_export(export).with_term_config(
-                    read_term_config(
-                        &peer.workspace,
-                        &peer_root_doc,
-                        &peer.discovered.config,
-                        spec.gate_field(),
-                        spec.audience.trim(),
-                    )
-                    .await,
-                );
+                let term = read_term_config(
+                    &peer.workspace,
+                    &peer_root_doc,
+                    &peer.discovered.config,
+                    spec.gate_field(),
+                    spec.audience.trim(),
+                )
+                .await;
+                let peer_own_page = term.page.clone();
+                let (peer_spec, term_warnings) =
+                    SiteSpec::from_export(export).with_term_config(term);
                 warnings.extend(term_warnings.into_iter().map(|w| format!("{name}: {w}")));
 
                 let census = peer
@@ -261,6 +262,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
                     &peer.discovered.config.views,
                     &peer_root_doc,
                     &census,
+                    peer_own_page.as_deref(),
                 )
                 .await
                 .map_err(|e| Error::Mount {
@@ -677,7 +679,7 @@ mod tests {
         let root = Path::new("README.md");
         let census = prov::block_on(ws.census(root)).unwrap();
         let backlinks = prov::block_on(ws.backlinks(root)).unwrap();
-        let plan = prov::block_on(plan_site(&ws, &spec, &[], root, &census)).unwrap();
+        let plan = prov::block_on(plan_site(&ws, &spec, &[], root, &census, None)).unwrap();
         let id_by_path: HashMap<PathBuf, String> = [
             ("README.md", "kv2bv2m"),
             ("www/index.md", "x2q521g"),

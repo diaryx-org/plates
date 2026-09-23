@@ -183,18 +183,23 @@ pub fn build_sites(
         // not at all: half a declaration from a block and half from a term node
         // is a site nobody wrote, which is what the whole-block rule exists to
         // prevent.
-        let (spec, term_warnings) = match session.source {
-            Source::Declared => (spec.clone(), Vec::new()),
-            _ => spec.with_term_config(block_on(read_term_config(
-                &ws,
-                &session.root_doc,
-                &session.config,
-                spec.gate_field(),
-                // The value the gate compares, trimmed as prov trims it, so
-                // the term node found here is the term node the gate judged
-                // against.
-                spec.audience.trim(),
-            ))),
+        let (spec, term_warnings, own_page) = match session.source {
+            Source::Declared => (spec.clone(), Vec::new(), None),
+            _ => {
+                let term = block_on(read_term_config(
+                    &ws,
+                    &session.root_doc,
+                    &session.config,
+                    spec.gate_field(),
+                    // The value the gate compares, trimmed as prov trims it, so
+                    // the term node found here is the term node the gate judged
+                    // against.
+                    spec.audience.trim(),
+                ));
+                let own_page = term.page.clone();
+                let (spec, warnings) = spec.with_term_config(term);
+                (spec, warnings, own_page)
+            }
         };
         let spec = &spec;
 
@@ -204,6 +209,7 @@ pub fn build_sites(
             &session.config.views,
             &session.root_doc,
             &census,
+            own_page.as_deref(),
         ))
         .map_err(|e| format!("site {:?}: {e}", spec.name))?;
         // Where each `id:` link in prose lands: this archive's registry, in the

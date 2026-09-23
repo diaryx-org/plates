@@ -312,7 +312,9 @@ pub async fn collect_site<FS: Storage + Clone, Id, Ix: IdIndex>(
             if let Some(index) = plan.index.as_deref() {
                 docs.retain(|(path, _)| path != index);
             }
-            let mut collected = collect_documents(ws, &docs, &anchor, opts).await?;
+            let mut collected =
+                collect_documents_owning(ws, &docs, &anchor, opts, plan.own_page.as_deref())
+                    .await?;
             collected.attachments =
                 cover(ws, opts, dir, std::mem::take(&mut collected.attachments)).await;
             collected.verbatim_front_page = true;
@@ -332,7 +334,7 @@ pub async fn collect_site<FS: Storage + Clone, Id, Ix: IdIndex>(
             {
                 docs.push((index.to_path_buf(), true));
             }
-            collect_documents(ws, &docs, &anchor, opts).await
+            collect_documents_owning(ws, &docs, &anchor, opts, plan.own_page.as_deref()).await
         }
     }
 }
@@ -351,6 +353,14 @@ pub async fn collect_site<FS: Storage + Clone, Id, Ix: IdIndex>(
 /// is the rebasing `cover` was already doing for the files the manifest
 /// claims. Naming it once here is what makes the documents and the assets agree.
 pub fn anchor_of(plan: &SitePlan) -> PathBuf {
+    // An audience's own page fronts the site from wherever the vocabulary
+    // keeps it (`vocab/family.md`), and it links out the way any document
+    // does, from there. The site is the archive's, so it is anchored at the
+    // archive's root: anchoring at `vocab/` would publish nothing differently
+    // except the one directory nobody reads.
+    if plan.own_page.is_some() && plan.own_page == plan.index {
+        return PathBuf::new();
+    }
     match plan.index_directory.as_ref() {
         Some(dir) => dir.root.clone(),
         None => plan
@@ -448,6 +458,23 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
     docs: &[(PathBuf, bool)],
     anchor: &Path,
     opts: &CollectOptions<'_>,
+) -> Result<CollectedSite> {
+    collect_documents_owning(ws, docs, anchor, opts, None).await
+}
+
+/// The settings an audience's own page carries *for* its site, which are the
+/// author's and not the reader's: which page fronts the site, and the theme's
+/// paths. Stripped from that page's published copy.
+const OWN_PAGE_SETTINGS: &[&str] = &[crate::term::FRONT_PAGE_KEY, crate::term::TERM_SITE_KEY];
+
+/// [`collect_documents`], told which document is the audience's own page —
+/// [`SitePlan::own_page`] — so its site settings stay home.
+async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    docs: &[(PathBuf, bool)],
+    anchor: &Path,
+    opts: &CollectOptions<'_>,
+    own_page: Option<&Path>,
 ) -> Result<CollectedSite> {
     let mut sources = Vec::with_capacity(docs.len());
     let mut attachments = Vec::new();
@@ -552,6 +579,11 @@ pub async fn collect_documents<FS: Storage + Clone, Id, Ix: IdIndex>(
             .unwrap_or_else(prov::meta::Mapping::new);
         for key in opts.strip_keys {
             source_fm.shift_remove(*key);
+        }
+        if own_page == Some(path.as_path()) {
+            for key in OWN_PAGE_SETTINGS {
+                source_fm.shift_remove(*key);
+            }
         }
         // A mounted collection's front page is the mount's `index.html`, and
         // the render derives a page's destination from its source path and its
@@ -2290,5 +2322,170 @@ mod tests {
         assert_eq!(root.path, "fig/README.md");
         assert_eq!(root.children[0].path, "fig/index.md");
         assert_eq!(root.children[0].children[0].path, "fig/legal.md");
+    }
+
+    // ── The audience's own page ──────────────────────────────────────────────
+
+    /// A vault whose `audience` terms are documents: a family term node that
+    /// carries no `audience:` of its own, a book tagged for family, and a
+    /// private note.
+    fn circle_vault(family: &str) -> (Workspace<prov::InMemoryFs>, prov::Discovered) {
+        let fs = prov::InMemoryFs::default();
+        let write = |path: &str, text: &str| {
+            prov::block_on(fs.write_atomic(Path::new(path), text.as_bytes())).unwrap();
+        };
+        write(
+            "/v/prov.yaml",
+            "workspace_id: v\nroot: README.md\nid_storage: frontmatter\nfields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n    reify: true\n",
+        );
+        write(
+            "/v/README.md",
+            "---\ntitle: Vault\nconfig: prov.yaml\ncontents:\n- '[Book](/book.md)'\n- '[Secret](/secret.md)'\n- '[Audiences](/vocab/audiences.md)'\n---\n",
+        );
+        write(
+            "/v/vocab/audiences.md",
+            "---\ntitle: Audiences\npart_of: '[Vault](/README.md)'\ncontents:\n- '[Family](/vocab/family.md)'\n---\n",
+        );
+        write("/v/vocab/family.md", family);
+        write(
+            "/v/book.md",
+            "---\ntitle: Book\naudience: family\npart_of: '[Vault](/README.md)'\n---\nRead me.\n",
+        );
+        write(
+            "/v/secret.md",
+            "---\ntitle: Secret\npart_of: '[Vault](/README.md)'\n---\nNot for family.\n",
+        );
+        let prov::Discovery::Found(found) =
+            prov::block_on(prov::discover(&fs, Path::new("/v"))).unwrap()
+        else {
+            panic!("the vault should be found");
+        };
+        let ws = Workspace::builder(fs).root("/v").workspace_id("v").build();
+        (ws, found)
+    }
+
+    fn family_site(
+        ws: &Workspace<prov::InMemoryFs>,
+        found: &prov::Discovered,
+    ) -> Result<(SitePlan, CollectedSite)> {
+        let term = prov::block_on(crate::read_term_config(
+            ws,
+            &found.root_doc,
+            &found.config,
+            "audience",
+            "family",
+        ));
+        let own_page = term.page.clone();
+        let base = crate::SiteSpec {
+            name: "family".into(),
+            label: None,
+            audience: "family".into(),
+            gate_field: None,
+            hold: Some("draft".into()),
+            view: None,
+            index: None,
+            shell: None,
+            stylesheet: None,
+            lang: None,
+            syntaxes: Vec::new(),
+            header: None,
+            footer: None,
+        };
+        let (spec, _) = base.with_term_config(term);
+        let census = prov::block_on(ws.census(&found.root_doc)).unwrap();
+        let plan = prov::block_on(crate::plan_site(
+            ws,
+            &spec,
+            &[],
+            &found.root_doc,
+            &census,
+            own_page.as_deref(),
+        ))?;
+        let backlinks = prov::block_on(ws.backlinks(&found.root_doc)).unwrap();
+        let site = prov::block_on(collect_site(
+            ws,
+            &plan,
+            &CollectOptions {
+                audience: "family",
+                gate_field: "audience",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &backlinks,
+                census: &census,
+                spanning_root: Some(&found.root_doc),
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+                id_links: &NoIdLinks,
+                mount: "",
+            },
+        ))?;
+        Ok((plan, site))
+    }
+
+    /// The circle's own page fronts its site though it names no audience —
+    /// it is shared with the audience it describes by definition — from the
+    /// archive's root, with the settings it carries for the site left home.
+    #[test]
+    fn a_circles_own_page_fronts_its_site_and_keeps_its_settings_home() {
+        let (ws, found) = circle_vault(
+            "---\ntitle: The Harris Family Archive\nterm: family\npart_of: '[Audiences](/vocab/audiences.md)'\ncolor: green\nsite:\n  stylesheet: family.css\n---\nWelcome, family.\n",
+        );
+        let (plan, site) = family_site(&ws, &found).expect("the site plans");
+
+        assert_eq!(plan.index, Some(PathBuf::from("vocab/family.md")));
+        assert_eq!(
+            anchor_of(&plan),
+            PathBuf::new(),
+            "anchored at the archive's root"
+        );
+
+        let front = site
+            .sources
+            .iter()
+            .find(|s| s.is_index)
+            .expect("a front page");
+        assert_eq!(front.dest_path, "index.html");
+        assert!(front.source_markdown.contains("Welcome, family."));
+        assert!(front.source_markdown.contains("color: green"));
+        assert!(
+            !front.source_markdown.contains("site:"),
+            "{}",
+            front.source_markdown
+        );
+        assert!(!front.source_markdown.contains("family.css"));
+
+        let paths: Vec<&str> = site.sources.iter().map(|s| s.dest_path.as_str()).collect();
+        assert!(paths.contains(&"book.html"), "{paths:?}");
+        assert!(!paths.iter().any(|p| p.contains("secret")), "{paths:?}");
+    }
+
+    /// A circle that names a front page opens on it, and its own page — which
+    /// nobody tagged — is not published at all.
+    #[test]
+    fn a_named_front_page_wins_over_the_circles_own_page() {
+        let (ws, found) = circle_vault(
+            "---\ntitle: Family\nterm: family\npart_of: '[Audiences](/vocab/audiences.md)'\nfront_page: '[Book](/book.md)'\n---\nNotes.\n",
+        );
+        let (plan, site) = family_site(&ws, &found).expect("the site plans");
+        assert_eq!(plan.index, Some(PathBuf::from("book.md")));
+        let paths: Vec<&str> = site
+            .sources
+            .iter()
+            .map(|s| s.source_rel_path.as_str())
+            .collect();
+        assert!(!paths.iter().any(|p| p.contains("family")), "{paths:?}");
+    }
+
+    /// An own page the site's hold keeps back is a draft nobody chose to open
+    /// on, so the site opens on a generated page rather than refusing.
+    #[test]
+    fn a_held_own_page_leaves_the_site_to_a_generated_front_page() {
+        let (ws, found) = circle_vault(
+            "---\ntitle: Family\nterm: family\ndraft: true\npart_of: '[Audiences](/vocab/audiences.md)'\n---\nNot yet.\n",
+        );
+        let (plan, site) = family_site(&ws, &found).expect("the site plans");
+        assert_eq!(plan.index, None, "{plan:?}");
+        assert!(!site.sources.iter().any(|s| s.is_index));
     }
 }

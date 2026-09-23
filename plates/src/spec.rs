@@ -364,6 +364,15 @@ pub struct SitePlan {
     /// A front page the gate holds back is [`Error::SiteIndexNotVisible`], not a
     /// page quietly promoted past the disclosure rule.
     pub index: Option<PathBuf>,
+    /// The audience's own page — its term node — when the archive has one.
+    ///
+    /// It is shared with the audience it describes by definition, so it needs
+    /// no `audience:` of its own to publish, and it is the front page of a site
+    /// that names none. When it *is* the front page the site is anchored at the
+    /// archive's root rather than at the directory the term node sits in, and
+    /// the settings it carries for the site (`front_page:`, `site:`) are
+    /// stripped from its published copy.
+    pub own_page: Option<PathBuf>,
     /// Set when [`index`](Self::index) is a manifest node: the directory it
     /// covers, which *is* the site's front matter. See [`IndexDirectory`].
     ///
@@ -432,6 +441,7 @@ pub fn finish(
     export: ExportPlan,
     index: Option<&Path>,
     index_directory: Option<IndexDirectory>,
+    own_page: Option<&Path>,
     census: &[CensusEntry],
 ) -> Result<SitePlan> {
     // The site's frame is not an entry. A header or footer document the gate
@@ -505,7 +515,13 @@ pub fn finish(
             }
             Some(path.to_path_buf())
         }
-        None => None,
+        // No front page named, so the audience's own page is it — unless the
+        // site's hold keeps it back, which is a draft rather than a mistake:
+        // nobody chose it, so the site opens on a generated page instead of
+        // refusing to publish.
+        None => own_page
+            .filter(|page| !held.iter().any(|doc| doc.path.as_path() == *page))
+            .map(Path::to_path_buf),
     };
 
     // What the site publishes *as pages*, which is what bounds the link report:
@@ -524,6 +540,7 @@ pub fn finish(
         audience: spec.audience.clone(),
         entries,
         index,
+        own_page: own_page.map(Path::to_path_buf),
         index_directory,
         held,
         outside_view: export.outside_view,
@@ -644,6 +661,7 @@ mod tests {
             ),
             None,
             None,
+            None,
             &[],
         )
         .unwrap();
@@ -701,6 +719,7 @@ mod tests {
             plan_of(vec![entry("index.md"), entry("trip.md")], Vec::new()),
             Some(Path::new("index.md")),
             None,
+            None,
             &[],
         )
         .expect("a plan");
@@ -717,6 +736,7 @@ mod tests {
             &site("letters", "family"),
             plan_scoping_out(vec![entry("daily/monday.md")], vec!["daily.md"]),
             Some(Path::new("daily.md")),
+            None,
             None,
             &[],
         )
@@ -738,6 +758,7 @@ mod tests {
             &site("letters", "family"),
             plan_of(vec![entry("trip.md")], Vec::new()),
             Some(Path::new("index.md")),
+            None,
             None,
             &[],
         )
@@ -775,6 +796,7 @@ mod tests {
             plan_holding(vec![entry("trip.md")], vec!["half-written.md"]),
             None,
             None,
+            None,
             &[],
         )
         .expect("a plan");
@@ -803,6 +825,7 @@ mod tests {
             &holding("letters", "family", "draft"),
             plan_holding(vec![entry("trip.md")], vec!["index.md"]),
             Some(Path::new("index.md")),
+            None,
             None,
             &[],
         )
@@ -851,6 +874,7 @@ mod tests {
             ),
             None,
             None,
+            None,
             &[],
         )
         .expect("a plan");
@@ -887,6 +911,7 @@ mod tests {
             &site("letters", "family"),
             plan_scoping_out(vec![entry("daily/monday.md")], vec!["daily.md"]),
             Some(Path::new("daily.md")),
+            None,
             None,
             &[
                 broken("daily/monday.md"),
