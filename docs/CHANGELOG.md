@@ -41,6 +41,20 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.8.0 — 2026-09-22
+
+### Added
+
+- **render** — a library shell — a front page, books and chapters drawn as places, with a theme that draws them ([`ad52eb2`](https://github.com/diaryx-org/plates/commit/ad52eb2ee6272c7d026b7433c6585125f2472b78))
+- **plan** — an audience's own page fronts its site, shared with the audience it describes ([`b75e5af`](https://github.com/diaryx-org/plates/commit/b75e5afdfdc8b1af87402d80e5815976a9830e05))
+- **render** — the library bar shows a toggle a reader's layer adds to it ([`11e3080`](https://github.com/diaryx-org/plates/commit/11e3080183650b6699f254d4e6538dcdd033cb2a))
+
+### Fixed
+
+- **tasks** — open-tasks leaves out dropped tasks and the closed shelf ([`e35f1b6`](https://github.com/diaryx-org/plates/commit/e35f1b61a763e6fb5072cf9e33646a57db538110))
+- **render** — the library's bar says what its door says, and a shelf names no path ([`18d4f45`](https://github.com/diaryx-org/plates/commit/18d4f456c96f6b3f181a34ef9981149b87ed1cbb))
+
+
 ## v0.7.4 — 2026-09-21
 
 ### Added
