@@ -18,14 +18,13 @@ use std::collections::HashMap;
 use crate::appearance::{FaviconAsset, ThemeAppearance};
 
 use crate::headings::render_toc;
-use crate::library::{LibraryContext, library_slots};
 use crate::links::root_prefix;
 use crate::nav::reading_order;
 use crate::page::{
     html_escape, render_breadcrumb, render_full_breadcrumbs, render_pager, render_site_nav,
     title_to_anchor,
 };
-use crate::shell::{ShellSlots, ShellTemplate};
+use crate::shell::{ExtensionContext, ShellExtension, ShellSlots, ShellTemplate};
 use crate::types::{PageLayout, PublishedPage, SiteNavigation};
 
 /// Caller-supplied appearance for the rendered site.
@@ -162,15 +161,16 @@ pub struct PageContext<'a> {
     /// The site's footer document, on the same terms — the `site_footer`
     /// slot.
     pub site_footer: &'a str,
-    /// Every page in the render, by destination — what the library slots read
-    /// a shelf's colours and descriptions from. See [`crate::library`].
+    /// The caller's slots, filled for this page when it is rendered in a
+    /// caller's template. See [`ShellExtension`].
+    pub extension: Option<&'a dyn ShellExtension>,
+    /// Every page in the render, by destination — what an extension reads
+    /// the pages a page lists from.
     pub pages: &'a HashMap<String, &'a PublishedPage>,
-    /// What the library is called — its authored front page's title, else the
-    /// site's name. See [`crate::library::LibrarySlots::library_title`].
-    pub library_title: &'a str,
-    /// This page is a generated front page whose body only lists what its
-    /// shelf already shows, so `content_below_title` leaves the list out.
-    pub listing_body: bool,
+    /// What the front door says — see [`ExtensionContext::front_title`].
+    pub front_title: &'a str,
+    /// See [`ExtensionContext::generated_listing`].
+    pub generated_listing: bool,
 }
 
 /// Assembles complete HTML documents from rendered page bodies.
@@ -579,16 +579,22 @@ impl HtmlRenderer {
         scripts.extend(script_tags(&page.scripts, &prefix));
 
         let order = reading_order(&ctx.nav.tree);
-        let library = library_slots(
-            page,
-            &LibraryContext {
-                nav: ctx.nav,
-                pages: ctx.pages,
-                library_title: ctx.library_title,
-                root_prefix: &prefix,
-                listing_body: ctx.listing_body,
-            },
-        );
+        // Only a caller's template can name a caller's slot, so a page in the
+        // built-in shell never asks the extension for anything.
+        let extra = match (ctx.extension, ctx.template) {
+            (Some(extension), Some(_)) => extension.fill(
+                page,
+                &ExtensionContext {
+                    nav: ctx.nav,
+                    pages: ctx.pages,
+                    site_title: ctx.site_title,
+                    front_title: ctx.front_title,
+                    root_prefix: &prefix,
+                    generated_listing: ctx.generated_listing,
+                },
+            ),
+            _ => HashMap::new(),
+        };
 
         ShellSlots {
             lang: ctx.lang.to_string(),
@@ -614,13 +620,7 @@ impl HtmlRenderer {
             footer: footer_html(self.style.generator.as_ref()),
             scripts: join_tags(scripts),
             root_prefix: prefix,
-            page_kind: library.page_kind,
-            library_title: library.library_title,
-            page_color: library.page_color,
-            page_head: library.page_head,
-            shelf: library.shelf,
-            book_nav: library.book_nav,
-            content_below_title: library.content_below_title,
+            extra,
         }
     }
 
@@ -779,7 +779,7 @@ fn get_base_css() -> &'static str {
 }
 
 /// The built-in base stylesheet, for a caller that builds a theme on top of it
-/// rather than replacing it — [`crate::library::library_stylesheet`] is one.
+/// rather than replacing it, the way a [`ShellExtension`]'s theme usually does.
 pub fn base_css() -> &'static str {
     get_base_css()
 }
@@ -974,8 +974,9 @@ mod tests {
             site_header: "",
             site_footer: "",
             pages: &NO_PAGES,
-            library_title: "My Site",
-            listing_body: false,
+            extension: None,
+            front_title: "My Site",
+            generated_listing: false,
         }
     }
 

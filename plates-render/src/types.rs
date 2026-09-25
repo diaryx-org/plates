@@ -278,9 +278,10 @@ pub struct PublishedPage {
     /// `None` for every other page. A page of prose that embeds a photograph
     /// is still words: its opening is its first lines, not its first image.
     ///
-    /// A theme may show it where the page is listed (the library draws it on
-    /// the page's sheet); the file is the one the attachment page itself
-    /// embeds, so it ships whenever the page does.
+    /// A theme may show it where the page is listed — a
+    /// [`ShellExtension`](crate::shell::ShellExtension) drawing a page as a
+    /// card, say; the file is the one the attachment page itself embeds, so it
+    /// ships whenever the page does.
     pub picture: Option<String>,
 }
 

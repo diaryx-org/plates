@@ -12,6 +12,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use crate::frontmatter;
 use indexmap::IndexMap;
@@ -24,7 +25,7 @@ use crate::dates;
 
 use crate::html::{HtmlRenderer, PageContext, SiteStyle};
 use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
-use crate::shell::ShellTemplate;
+use crate::shell::{ShellExtension, ShellTemplate};
 use crate::types::{
     Heading, LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage, SiteNavNode,
 };
@@ -173,16 +174,9 @@ pub struct SiteOptions {
     /// | `site_footer` | raw | the site's [`footer`](Self::footer), rendered for this page |
     /// | `footer` | raw | the built-in attribution footer |
     /// | `scripts` | raw | the built-in interactivity script, then the page's `scripts:` |
-    /// | `page_kind` | text | `front`, `book` (holds pages) or `page` (is read) — see [`crate::library`] |
-    /// | `library_title` | text | the authored front page's title, else `site_title` |
-    /// | `page_color` | text | the colour name the page's room wears, or empty |
-    /// | `page_head` | raw | the band: cover, title, description, counts, the way in; or a read page's book and title |
-    /// | `shelf` | raw | what the page holds, as covers and sheets |
-    /// | `book_nav` | raw | the contents of the book the page is in, with a way back to the front page |
-    /// | `content_below_title` | raw | `content` without a leading `<h1>` that repeats the title |
     ///
-    /// [`crate::library::LIBRARY_SHELL`] is a shell built on the last six, and
-    /// [`crate::library::library_stylesheet`] the stylesheet it wants.
+    /// A [`shell_extension`](Self::shell_extension) adds slots of its own
+    /// beside these.
     ///
     /// `<title>` is not part of `head`, so a template decides where its own
     /// title tag goes. A page whose frontmatter says `layout: bare` or
@@ -288,6 +282,10 @@ pub struct SiteOptions {
     /// the `site_footer` slot. The built-in shell writes it before the
     /// attribution `footer` slot inside one `<footer>`.
     pub footer: Option<FrameDoc>,
+    /// Slots the caller adds to its [`template`](Self::template) and to every
+    /// shell a page names, filled per page. `None` is a site whose templates
+    /// name only the built-in slots. See [`ShellExtension`].
+    pub shell_extension: Option<Arc<dyn ShellExtension>>,
 }
 
 impl Default for SiteOptions {
@@ -310,6 +308,7 @@ impl Default for SiteOptions {
             identifiers: HashMap::new(),
             header: None,
             footer: None,
+            shell_extension: None,
         }
     }
 }
@@ -1083,9 +1082,14 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     // Compiled once for the whole site, not once per page: a template's errors
     // are about the template, and reporting them per page would say the same
     // thing as many times as the vault has entries.
+    let extra_slots = opts
+        .shell_extension
+        .as_deref()
+        .map(ShellExtension::slots)
+        .unwrap_or_default();
     let (template, template_error) = match opts.template.as_deref() {
         None => (None, None),
-        Some(source) => match ShellTemplate::parse(source) {
+        Some(source) => match ShellTemplate::parse_with(source, extra_slots) {
             Ok(compiled) => (Some(compiled), None),
             Err(err) => (None, Some(err.to_string())),
         },
@@ -1112,7 +1116,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 ));
                 None
             }
-            Some(source) => match ShellTemplate::parse(source) {
+            Some(source) => match ShellTemplate::parse_with(source, extra_slots) {
                 Ok(compiled) => Some(compiled),
                 Err(err) => {
                     page_shell_errors.push(format!(
@@ -1130,13 +1134,13 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
     let base_url = opts.base_url.as_deref().unwrap_or("");
     let writes_feeds = opts.generate_feeds && !base_url.is_empty();
 
-    // The library slots read a shelf's colours and descriptions off the pages
-    // it lists, so every page is found by where it lands.
+    // An extension reads what a page lists off the pages themselves, so every
+    // page is found by where it lands.
     let by_dest: HashMap<String, &PublishedPage> =
         pages.iter().map(|p| (p.dest_filename.clone(), p)).collect();
-    // The library is called what its door says: an authored front page's
-    // title. A generated front page is named after the site already.
-    let library_title = pages
+    // The front door says an authored front page's title. A generated front
+    // page is named after the site already.
+    let front_title = pages
         .iter()
         .find(|p| p.is_root)
         .filter(|_| !synthesized)
@@ -1223,12 +1227,12 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 template: shell,
                 site_header: &site_header,
                 site_footer: &site_footer,
+                extension: opts.shell_extension.as_deref(),
                 pages: &by_dest,
-                library_title: &library_title,
-                // A generated front page under containment is a list of what
-                // its shelf shows; grouped, its body is the grouping, which a
-                // shelf does not draw.
-                listing_body: synthesized
+                front_title: &front_title,
+                // A generated front page under containment is a list of the
+                // pages the nav holds; grouped, its body is the grouping.
+                generated_listing: synthesized
                     && i == 0
                     && matches!(opts.arrangement, Arrangement::Containment),
             },
@@ -4620,273 +4624,57 @@ mod tests {
         assert!(home.ends_with("[<p>F</p>\n]"), "got {home}");
     }
 
-    // ── The library shell ────────────────────────────────────────────────────
-
-    /// A circle's front page, a book of two chapters, a loose page, and two
-    /// HTML pages — one a whole document, one a fragment — rendered in the
-    /// library shell.
-    fn library_site() -> SiteRender {
-        let sources = vec![
-            src(
-                "vocab/family.md",
-                "---\ntitle: The Harris Family Archive\ncolor: green\ndescription: Letters and talks.\nstart_with: '[Inspirational Writing](id:iw0001)'\n---\n# The Harris Family Archive\n\nWelcome, family.\n",
-                true,
-            ),
-            src(
-                "iw.md",
-                "---\ntitle: Inspirational Writing\nid: iw0001\ncolor: purple\ncontents:\n  - '[Serenity](a.md)'\n  - '[Birds](b.md)'\n---\n# Inspirational Writing\n\nA folder of writings.\n",
-                false,
-            ),
-            src(
-                "a.md",
-                "---\ntitle: The Serenity Prayer\npart_of: '[Inspirational Writing](iw.md)'\ncolor: red\ndescription: Niebuhr, as usually quoted\n---\n# The Serenity Prayer\n\nGod, grant me the serenity.\n",
-                false,
-            ),
-            src(
-                "b.md",
-                "---\ntitle: The Snow-White Birds\npart_of: '[Inspirational Writing](iw.md)'\n---\nNo heading here.\n",
-                false,
-            ),
-            src(
-                "about.md",
-                "---\ntitle: About\n---\n# Something else\n\nHi.\n",
-                false,
-            ),
-            src(
-                "poster.html",
-                "---\ntitle: Poster\n---\n<!DOCTYPE html>\n<html><body><p>mine</p></body></html>\n",
-                false,
-            ),
-            src(
-                "note.html",
-                "---\ntitle: Note\n---\n<p>a fragment</p>\n",
-                false,
-            ),
-        ];
-        render_site(
-            &sources,
-            &SiteOptions {
-                template: Some(crate::library::LIBRARY_SHELL.to_string()),
-                generate_seo: false,
-                generate_feeds: false,
-                ..SiteOptions::default()
-            },
-        )
-    }
-
-    fn page_html<'r>(render: &'r SiteRender, dest: &str) -> &'r str {
-        &render
-            .pages
-            .iter()
-            .find(|p| p.dest_filename == dest)
-            .unwrap_or_else(|| {
-                panic!(
-                    "no {dest} in {:?}",
-                    render
-                        .pages
-                        .iter()
-                        .map(|p| &p.dest_filename)
-                        .collect::<Vec<_>>()
-                )
-            })
-            .html
-    }
-
-    /// The front page is a band in its own colour, a welcome without its
-    /// repeated title, a way in, and a shelf: books as covers in theirs, loose
-    /// pages as sheets on the front page's paper.
-    #[test]
-    fn a_front_page_in_the_library_shell_is_a_band_a_welcome_and_a_shelf() {
-        let render = library_site();
-        assert!(
-            render.template_error.is_none(),
-            "{:?}",
-            render.template_error
-        );
-        let html = page_html(&render, "index.html");
-
-        assert!(
-            html.contains(r#"class="library kind-front tone-green""#),
-            "{html}"
-        );
-        assert!(html.contains("page-head page-head-front"));
-        assert!(html.contains(r#"<p class="page-description">Letters and talks.</p>"#));
-        assert!(
-            html.contains(
-                r#"<a class="start-with" href="iw.html">Start with Inspirational Writing</a>"#
-            ),
-            "{html}"
-        );
-
-        let content = html.split(r#"<div class="content">"#).nth(1).unwrap();
-        let content = content.split("</div>").next().unwrap();
-        assert!(content.contains("Welcome, family."));
-        assert!(
-            !content.contains("<h1"),
-            "the title is the band's: {content}"
-        );
-
-        assert!(html.contains(r#"<a class="cover tone-purple" href="iw.html"><span class="cover-title">Inspirational Writing</span><span class="cover-count">2 chapters</span></a>"#), "{html}");
-        assert!(html.contains(r#"<h2 class="shelf-heading" id="shelf-books">Books <span class="shelf-count">1</span></h2>"#));
-        assert!(
-            html.contains(r#"<a class="sheet tone-green" href="about.html""#),
-            "a loose page sits on the front page's paper: {html}"
-        );
-        assert!(html.contains("1 book"));
-    }
-
-    /// A book is a band in its own colour and its chapters as numbered sheets
-    /// on its paper, with no contents panel beside it.
-    #[test]
-    fn a_book_lists_its_chapters_as_numbered_sheets_on_its_own_paper() {
-        let render = library_site();
-        let html = page_html(&render, "iw.html");
-        assert!(
-            html.contains(r#"class="library kind-book tone-purple""#),
-            "{html}"
-        );
-        assert!(html.contains(r#"<a class="sheet tone-purple" href="a.html"><span class="sheet-number">1</span><span class="sheet-title">The Serenity Prayer</span><span class="sheet-description">Niebuhr, as usually quoted</span></a>"#), "{html}");
-        assert!(html.contains(r#"<span class="sheet-number">2</span><span class="sheet-title">The Snow-White Birds</span>"#));
-        assert!(
-            html.contains("Start reading"),
-            "a book with no start_with begins at its first chapter"
-        );
-    }
-
-    /// A chapter that is a picture — an attachment sidecar over an image —
-    /// opens to the picture on its book's shelf, by a path from the root so it
-    /// reaches the payload beside the sidecar, not beside the book. A chapter
-    /// of prose that embeds a photograph keeps its description, a HEIC most
-    /// browsers cannot draw keeps its title alone, and a payload the site does
-    /// not ship is not drawn at all.
-    #[test]
-    fn a_chapter_that_is_a_picture_opens_to_it_on_the_shelf() {
-        let sources = vec![
-            src(
-                "index.md",
-                "---\ntitle: Family\ncontents:\n  - '[Album](album/album.md)'\n---\nHello.\n",
-                true,
-            ),
-            src(
-                "album/album.md",
-                "---\ntitle: Album\npart_of: /index.md\ncontents:\n  - attachments/beach.jpg.yaml\n  - attachments/phone.heic.yaml\n  - attachments/secret.png.yaml\n  - trip.md\n---\nPictures.\n",
-                false,
-            ),
-            src(
-                "album/attachments/beach.jpg.md",
-                "---\ntitle: The Beach\ncontent: beach.jpg\nattachment: true\npart_of: /album/album.md\n---\n",
-                false,
-            ),
-            src(
-                "album/attachments/phone.heic.md",
-                "---\ntitle: From the Phone\ncontent: phone.heic\nattachment: true\npart_of: /album/album.md\n---\n",
-                false,
-            ),
-            src(
-                "album/attachments/secret.png.md",
-                "---\ntitle: Kept Back\ncontent: secret.png\nattachment: true\npart_of: /album/album.md\n---\n",
-                false,
-            ),
-            src(
-                "album/trip.md",
-                "---\ntitle: The Trip\ndescription: We drove.\npart_of: /album/album.md\n---\n![](attachments/beach.jpg)\n",
-                false,
-            ),
-        ];
-        let render = render_site(
-            &sources,
-            &SiteOptions {
-                template: Some(crate::library::LIBRARY_SHELL.to_string()),
-                published_files: Some(
-                    [
-                        "album/attachments/beach.jpg",
-                        "album/attachments/phone.heic",
-                    ]
-                    .into_iter()
-                    .map(String::from)
-                    .collect(),
-                ),
-                generate_seo: false,
-                generate_feeds: false,
-                ..SiteOptions::default()
-            },
-        );
-        let html = page_html(&render, "album/index.html");
-        assert!(
-            html.contains(r#"<span class="sheet-title">The Beach</span><span class="sheet-picture"><img src="../album/attachments/beach.jpg" alt="" loading="lazy"></span></a>"#),
-            "{html}"
-        );
-        assert!(
-            html.contains(
-                r#"<a class="sheet sheet-pictured" href="../album/attachments/beach.jpg.html">"#
-            ),
-            "{html}"
-        );
-        assert!(
-            html.contains(r#"<span class="sheet-title">From the Phone</span></a>"#),
-            "{html}"
-        );
-        assert!(
-            html.contains(r#"<span class="sheet-title">Kept Back</span></a>"#),
-            "{html}"
-        );
-        assert!(
-            html.contains(r#"<span class="sheet-title">The Trip</span><span class="sheet-description">We drove.</span></a>"#),
-            "{html}"
-        );
-        assert_eq!(
-            html.matches(r#"class="sheet-picture""#).count(),
-            1,
-            "{html}"
-        );
-    }
-
-    /// A chapter is read in its book's room: the book's colour whatever its
-    /// own says, the book above its title, and the book's contents beside it
-    /// with this chapter marked.
-    #[test]
-    fn a_chapter_is_read_in_its_books_colour_beside_the_books_contents() {
-        let render = library_site();
-        let html = page_html(&render, "a.html");
-        assert!(
-            html.contains(r#"class="library kind-page tone-purple""#),
-            "the room, not the page's own red: {html}"
-        );
-        assert!(html.contains(r#"<p class="page-eyebrow"><a href="iw.html">Inspirational Writing</a> <span class="page-chapter">Chapter 1</span></p>"#), "{html}");
-        assert!(
-            html.contains(
-                r#"<a class="book-nav-up" href="index.html">The Harris Family Archive</a>"#
-            )
-        );
-        assert!(html.contains(r#"<a href="a.html" aria-current="page"><span class="book-nav-number">1</span><span class="book-nav-label">The Serenity Prayer</span></a>"#), "{html}");
-        assert!(
-            html.contains(r#"<aside class="lib-margin" id="margin" aria-label="Margin"></aside>"#)
-        );
-        let content = html.split(r#"<div class="content">"#).nth(1).unwrap();
-        assert!(!content.split("</div>").next().unwrap().contains("<h1"));
-    }
-
-    /// Only a leading heading that *says the title* gives way to the band; a
-    /// first heading that says something else is the author's and stays.
-    #[test]
-    fn a_first_heading_that_is_not_the_title_stays_in_the_text() {
-        let render = library_site();
-        let html = page_html(&render, "about.html");
-        assert!(html.contains("Something else"), "{html}");
-        assert!(html.contains(r#"<h1 class="page-title">About</h1>"#));
-    }
-
     /// An HTML page that is a whole document publishes as itself; a fragment
     /// sits in the site's frame like any body.
     #[test]
     fn an_html_page_that_is_a_whole_document_is_itself_and_a_fragment_is_framed() {
-        let render = library_site();
+        let sources = vec![
+            src(
+                "index.md",
+                "---
+title: Home
+---
+Hi.
+",
+                true,
+            ),
+            src(
+                "poster.html",
+                "---
+title: Poster
+---
+<!DOCTYPE html>
+<html><body><p>mine</p></body></html>
+",
+                false,
+            ),
+            src(
+                "note.html",
+                "---
+title: Note
+---
+<p>a fragment</p>
+",
+                false,
+            ),
+        ];
+        let render = render_site(&sources, &SiteOptions::default());
+        let html = |dest: &str| {
+            &render
+                .pages
+                .iter()
+                .find(|p| p.dest_filename == dest)
+                .unwrap()
+                .html
+        };
         assert_eq!(
-            page_html(&render, "poster.html"),
-            "<!DOCTYPE html>\n<html><body><p>mine</p></body></html>\n"
+            html("poster.html"),
+            "<!DOCTYPE html>
+<html><body><p>mine</p></body></html>
+"
         );
-        let note = page_html(&render, "note.html");
-        assert!(note.contains(r#"class="library kind-page"#), "{note}");
+        let note = html("note.html");
+        assert!(note.starts_with("<!DOCTYPE html>"), "{note}");
         assert!(note.contains("<p>a fragment</p>"));
     }
 
@@ -4924,41 +4712,153 @@ mod tests {
         assert_eq!(color_name("a\" onmouseover=\"x"), None);
     }
 
-    /// A site's declared name stays its name — in `<title>`, in feeds — while
-    /// the library's bar says what its door says: the authored front page's
-    /// title.
+    /// A caller's extension: its slots compile in the site's template, fill
+    /// per page from the page, its nav and every other page, and see the facts
+    /// a theme draws from — here, which listed pages are pictures. An image
+    /// attachment's `picture` is its payload from the root; a HEIC, a page of
+    /// prose that embeds a photograph, and a payload the site does not ship
+    /// have none.
     #[test]
-    fn the_library_is_called_what_its_front_page_says() {
+    fn an_extension_fills_its_slots_from_the_pages_a_page_lists() {
+        use crate::shell::{ExtensionContext, SlotKind};
+
+        struct Cards;
+        impl ShellExtension for Cards {
+            fn slots(&self) -> &[(&'static str, SlotKind)] {
+                &[("cards", SlotKind::Raw), ("front", SlotKind::Text)]
+            }
+            fn fill(
+                &self,
+                page: &PublishedPage,
+                cx: &ExtensionContext<'_>,
+            ) -> HashMap<String, String> {
+                fn current(nodes: &[SiteNavNode]) -> Option<&SiteNavNode> {
+                    nodes.iter().find_map(|n| {
+                        if n.is_current {
+                            Some(n)
+                        } else {
+                            current(&n.children)
+                        }
+                    })
+                }
+                let current = current(&cx.nav.tree);
+                let cards = current
+                    .map(|node| {
+                        node.children
+                            .iter()
+                            .map(|child| {
+                                let picture = cx
+                                    .pages
+                                    .get(&child.href)
+                                    .and_then(|p| p.picture.as_deref())
+                                    .unwrap_or("-");
+                                format!("[{}|{}{picture}]", child.title, cx.root_prefix)
+                            })
+                            .collect::<String>()
+                    })
+                    .unwrap_or_default();
+                HashMap::from([
+                    ("cards".to_string(), cards),
+                    (
+                        "front".to_string(),
+                        format!("{} <{}>", cx.front_title, page.title),
+                    ),
+                ])
+            }
+        }
+
         let sources = vec![
             src(
-                "vocab/family.md",
-                "---\ntitle: The Harris Family Archive\n---\nWelcome.\n",
+                "index.md",
+                "---\ntitle: Family\ncontents:\n  - '[Album](album/album.md)'\n---\nHello.\n",
                 true,
             ),
-            src("book.md", "---\ntitle: Book\n---\nText.\n", false),
+            src(
+                "album/album.md",
+                "---\ntitle: Album\npart_of: /index.md\ncontents:\n  - attachments/beach.jpg.yaml\n  - attachments/phone.heic.yaml\n  - attachments/secret.png.yaml\n  - trip.md\n---\nPictures.\n",
+                false,
+            ),
+            src(
+                "album/attachments/beach.jpg.md",
+                "---\ntitle: The Beach\ncontent: beach.jpg\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/attachments/phone.heic.md",
+                "---\ntitle: From the Phone\ncontent: phone.heic\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/attachments/secret.png.md",
+                "---\ntitle: Kept Back\ncontent: secret.png\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/trip.md",
+                "---\ntitle: The Trip\npart_of: /album/album.md\n---\n![](attachments/beach.jpg)\n",
+                false,
+            ),
         ];
         let render = render_site(
             &sources,
             &SiteOptions {
-                template: Some(crate::library::LIBRARY_SHELL.to_string()),
-                site_title: Some("Family".into()),
+                template: Some("{{front}}|{{{cards}}}|{{{content}}}".to_string()),
+                shell_extension: Some(Arc::new(Cards)),
+                published_files: Some(
+                    [
+                        "album/attachments/beach.jpg",
+                        "album/attachments/phone.heic",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                ),
                 generate_seo: false,
                 generate_feeds: false,
                 ..SiteOptions::default()
             },
         );
-        let book = page_html(&render, "book.html");
-        assert!(book.contains("<title>Book - Family</title>"), "{book}");
         assert!(
-            book.contains(r#"<span class="lib-brand-name">The Harris Family Archive</span>"#),
-            "{book}"
+            render.template_error.is_none(),
+            "{:?}",
+            render.template_error
+        );
+        let album = &render
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "album/index.html")
+            .unwrap()
+            .html;
+        assert!(
+            album.starts_with(
+                "Family &lt;Album&gt;|[The Beach|../album/attachments/beach.jpg]\
+                 [From the Phone|../-][Kept Back|../-][The Trip|../-]|"
+            ),
+            "{album}"
         );
     }
 
-    /// The built-in shell reads none of the library slots, so a site that
-    /// never asked for the library is the page it was.
+    /// A slot no extension declares is a template error, and the site falls
+    /// back to the built-in shell rather than losing its pages.
     #[test]
-    fn the_built_in_shell_writes_none_of_the_library() {
+    fn a_slot_nobody_declared_is_a_template_error() {
+        let sources = vec![src("index.md", "---\ntitle: Home\n---\nHi.\n", true)];
+        let render = render_site(
+            &sources,
+            &SiteOptions {
+                template: Some("{{{shelf}}}".to_string()),
+                ..SiteOptions::default()
+            },
+        );
+        let err = render.template_error.expect("an unknown slot");
+        assert!(err.contains("unknown shell slot `shelf`"), "{err}");
+        assert!(render.pages[0].html.starts_with("<!DOCTYPE html>"));
+    }
+
+    /// The built-in shell draws no colour and keeps the title heading: a
+    /// page's `color:` is a fact for a caller's theme, not a style of this one.
+    #[test]
+    fn the_built_in_shell_writes_no_colour() {
         let sources = vec![src(
             "index.md",
             "---\ntitle: Home\ncolor: green\n---\n# Home\n\nHi.\n",
