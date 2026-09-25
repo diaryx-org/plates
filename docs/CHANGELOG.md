@@ -41,6 +41,21 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.9.0 — 2026-09-24
+
+### Breaking
+
+- **render** — a caller's theme fills shell slots of its own, and the library theme leaves ([`da4705e`](https://github.com/diaryx-org/plates/commit/da4705e890e983fe149c576462bfa99167b6a375))
+
+### Added
+
+- **render** — a chapter that is a picture opens to it on the library shelf ([`8e46e67`](https://github.com/diaryx-org/plates/commit/8e46e6739225722772e7a78d2a9bc7236074eb10))
+
+### Behavioural changes
+
+- in the library theme, a sheet for an image attachment page shows the picture (class `sheet-pictured`, `<span class="sheet-picture"><img>`) instead of its description.
+
+
 ## v0.8.0 — 2026-09-22
 
 ### Added
