@@ -39,6 +39,20 @@ pub fn payload_of(frontmatter: &Mapping) -> Option<&str> {
     (flagged || prov::document::is_opaque_payload(Path::new(content))).then_some(content)
 }
 
+/// The payload, when it is a picture a page can show in place of its words —
+/// an image by the same extension rule the embed uses, less the formats most
+/// browsers cannot draw (HEIC and HEIF), where a listing would show a broken
+/// image instead of the title and description it would otherwise have.
+pub fn picture_of(frontmatter: &Mapping) -> Option<&str> {
+    payload_of(frontmatter).filter(|payload| {
+        kind_of(payload) == Kind::Image
+            && !Path::new(payload)
+                .extension()
+                .and_then(|e| e.to_str())
+                .is_some_and(|e| e.eq_ignore_ascii_case("heic") || e.eq_ignore_ascii_case("heif"))
+    })
+}
+
 /// What kind of thing the payload is, from its name alone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Kind {

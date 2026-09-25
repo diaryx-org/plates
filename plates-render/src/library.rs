@@ -420,19 +420,36 @@ fn sheet(
         (Some(n), false) => format!("<span class=\"sheet-number\">{n}</span>"),
         (None, _) => String::new(),
     };
-    let description = page
-        .and_then(|p| p.description.as_deref())
-        .filter(|d| !d.trim().is_empty())
-        .map(|d| {
-            format!(
-                "<span class=\"sheet-description\">{}</span>",
-                html_escape(d)
-            )
-        })
-        .unwrap_or_default();
+    // A page that is a picture opens to the picture, where a page of prose
+    // opens to its description: one or the other, never both, since the space
+    // is one paragraph tall. Decorative to a screen reader — the title beside
+    // it already says what it is.
+    let picture = page.and_then(|p| p.picture.as_deref());
+    let opening = match picture {
+        Some(src) => format!(
+            "<span class=\"sheet-picture\"><img src=\"{}{}\" alt=\"\" loading=\"lazy\"></span>",
+            cx.root_prefix,
+            html_escape(src)
+        ),
+        None => page
+            .and_then(|p| p.description.as_deref())
+            .filter(|d| !d.trim().is_empty())
+            .map(|d| {
+                format!(
+                    "<span class=\"sheet-description\">{}</span>",
+                    html_escape(d)
+                )
+            })
+            .unwrap_or_default(),
+    };
     format!(
-        "    <li><a class=\"sheet{room}{tone}\" href=\"{prefix}{href}\">{number}<span class=\"sheet-title\">{title}</span>{description}</a></li>",
+        "    <li><a class=\"sheet{room}{pictured}{tone}\" href=\"{prefix}{href}\">{number}<span class=\"sheet-title\">{title}</span>{opening}</a></li>",
         room = if room { " sheet-room" } else { "" },
+        pictured = if picture.is_some() {
+            " sheet-pictured"
+        } else {
+            ""
+        },
         tone = tone_class(tone),
         prefix = cx.root_prefix,
         href = html_escape(&node.href),

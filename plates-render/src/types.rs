@@ -273,6 +273,15 @@ pub struct PublishedPage {
     /// resolved against this render set like `part_of:`, so it is `None` when
     /// it names a page this site does not publish.
     pub start_with: Option<NavLink>,
+    /// The picture this page *is*, as a path below the site root — the
+    /// payload of an attachment sidecar over an image a browser draws, and
+    /// `None` for every other page. A page of prose that embeds a photograph
+    /// is still words: its opening is its first lines, not its first image.
+    ///
+    /// A theme may show it where the page is listed (the library draws it on
+    /// the page's sheet); the file is the one the attachment page itself
+    /// embeds, so it ships whenever the page does.
+    pub picture: Option<String>,
 }
 
 /// Whether an HTML body is a whole document rather than a fragment: its first
