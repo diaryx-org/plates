@@ -498,6 +498,9 @@ fn assemble(
                 .collect(),
             header: theme.header.clone(),
             footer: theme.footer.clone(),
+            // A declared shell names only the built-in slots: the CLI carries
+            // no theme of its own to add any.
+            shell_extension: None,
         },
     );
 

@@ -26,7 +26,6 @@ pub mod dates;
 pub mod frontmatter;
 pub mod headings;
 pub mod html;
-pub mod library;
 mod links;
 pub mod nav;
 pub mod page;
@@ -51,10 +50,11 @@ pub use html::{
     Generator, HtmlRenderer, ISLAND_CHILD_SCRIPT, ISLAND_CHILD_SCRIPT_FILENAME, PageContext,
     SiteStyle, base_css,
 };
-pub use library::{LIBRARY_CSS, LIBRARY_SHELL, library_stylesheet};
 pub use links::{percent_decode, root_prefix, transform_links};
 pub use nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
-pub use shell::{ShellError, ShellSlots, ShellTemplate};
+pub use shell::{
+    ExtensionContext, ShellError, ShellExtension, ShellSlots, ShellTemplate, SlotKind,
+};
 #[cfg(feature = "syntax-highlighting")]
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
 pub use types::{

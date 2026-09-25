@@ -39,8 +39,21 @@
 //! silently escaped `<div>`. Anything that is not a well-formed slot reference —
 //! `{{` in an inline script, a CSS block, a `{{}}` with no name — passes through
 //! literally.
+//!
+//! ## Slots a caller adds
+//!
+//! A caller with a theme of its own — one that draws the site's containment as
+//! something more than a sidebar — declares further slots through a
+//! [`ShellExtension`] on [`SiteOptions`](crate::site::SiteOptions). They are
+//! named and kinded up front, so a template that misspells one is still a
+//! compile error rather than an empty hole, and they are filled per page from
+//! the same facts the built-in slots are: the page, its nav, and every other
+//! page in the render. A built-in name always means the built-in slot.
+
+use std::collections::HashMap;
 
 use crate::page::html_escape;
+use crate::types::{PublishedPage, SiteNavigation};
 
 /// The named values a shell template is filled with.
 ///
@@ -95,39 +108,21 @@ pub struct ShellSlots {
     /// `{{{scripts}}}` — the built-in interactivity script and the page's own
     /// `scripts:`, as a newline-separated run of tags indented four spaces.
     pub scripts: String,
-    /// `{{page_kind}}` — `front`, `book` (a page that holds pages) or `page`
-    /// (a page that is read), for a shell that lays the three out differently.
-    /// See [`crate::library`].
-    pub page_kind: String,
-    /// `{{library_title}}` — what the library is called: its authored front
-    /// page's title, else [`site_title`](Self::site_title). For a shell's
-    /// bar, where the reader should see the name they were shown at the door.
-    pub library_title: String,
-    /// `{{page_color}}` — the colour name the page's room wears (`green`), or
-    /// empty. A shell writes it as a class: `class="tone-{{page_color}}"`.
-    pub page_color: String,
-    /// `{{{page_head}}}` — the band: a front page's or a book's cover, title,
-    /// description, counts and way in; on a page that is read, the book it is
-    /// in and its title.
-    pub page_head: String,
-    /// `{{{shelf}}}` — what the page holds, as covers and sheets. Empty on a
-    /// page that holds nothing.
-    pub shelf: String,
-    /// `{{{book_nav}}}` — the contents of the book this page is in, with a way
-    /// back to the front page. Empty outside a book.
-    pub book_nav: String,
-    /// `{{{content_below_title}}}` — [`content`](Self::content) without a
-    /// leading `<h1>` that repeats the page's title, for a shell that writes
-    /// the title in `page_head`.
-    pub content_below_title: String,
+    /// The values of a [`ShellExtension`]'s slots, by name. A slot the
+    /// extension declared and left out here renders empty.
+    pub extra: HashMap<String, String>,
 }
 
 /// Whether a slot is text (escaped on the way in) or raw HTML.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Kind {
+pub enum SlotKind {
+    /// `{{name}}`: HTML-escaped where it is filled.
     Text,
+    /// `{{{name}}}`: written verbatim.
     Raw,
 }
+
+use SlotKind as Kind;
 
 /// Every slot a template may name, with its kind. The order is the order the
 /// error message lists them in.
@@ -147,13 +142,6 @@ const SLOTS: &[(&str, Kind)] = &[
     ("site_footer", Kind::Raw),
     ("footer", Kind::Raw),
     ("scripts", Kind::Raw),
-    ("page_kind", Kind::Text),
-    ("library_title", Kind::Text),
-    ("page_color", Kind::Text),
-    ("page_head", Kind::Raw),
-    ("shelf", Kind::Raw),
-    ("book_nav", Kind::Raw),
-    ("content_below_title", Kind::Raw),
 ];
 
 /// A shell template that could not be compiled. Carries a message written for
@@ -183,6 +171,8 @@ enum Segment {
     /// An index into [`SLOTS`], resolved at compile time so rendering is a
     /// lookup rather than a second parse.
     Slot(usize),
+    /// A [`ShellExtension`] slot, by name.
+    Extra(String, SlotKind),
 }
 
 /// A compiled shell template.
@@ -198,6 +188,12 @@ impl ShellTemplate {
     /// Compile a template, rejecting unknown slot names and slots written with
     /// the wrong braces for their kind.
     pub fn parse(source: &str) -> Result<Self, ShellError> {
+        Self::parse_with(source, &[])
+    }
+
+    /// Compile a template that may also name `extra` slots — a
+    /// [`ShellExtension`]'s [`slots`](ShellExtension::slots).
+    pub fn parse_with(source: &str, extra: &[(&str, SlotKind)]) -> Result<Self, ShellError> {
         let bytes = source.as_bytes();
         let mut segments = Vec::new();
         let mut literal = String::new();
@@ -209,11 +205,11 @@ impl ShellTemplate {
                 && bytes[i + 1] == b'{'
                 && let Some((name, raw, consumed)) = scan_slot(&source[i..])
             {
-                let index = slot_index(name, raw)?;
+                let segment = slot_segment(name, raw, extra)?;
                 if !literal.is_empty() {
                     segments.push(Segment::Literal(std::mem::take(&mut literal)));
                 }
-                segments.push(Segment::Slot(index));
+                segments.push(segment);
                 i += consumed;
                 continue;
             }
@@ -238,10 +234,11 @@ impl ShellTemplate {
                 Segment::Slot(index) => {
                     let (name, kind) = SLOTS[*index];
                     let value = slot_value(slots, name);
-                    match kind {
-                        Kind::Text => out.push_str(&html_escape(value)),
-                        Kind::Raw => out.push_str(value),
-                    }
+                    push_value(&mut out, kind, value);
+                }
+                Segment::Extra(name, kind) => {
+                    let value = slots.extra.get(name).map(String::as_str).unwrap_or("");
+                    push_value(&mut out, *kind, value);
                 }
             }
         }
@@ -249,18 +246,33 @@ impl ShellTemplate {
     }
 }
 
-/// Look a slot name up, checking that the braces match its kind.
-fn slot_index(name: &str, raw: bool) -> Result<usize, ShellError> {
-    let Some(index) = SLOTS.iter().position(|(n, _)| *n == name) else {
-        let known: Vec<&str> = SLOTS.iter().map(|(n, _)| *n).collect();
+fn push_value(out: &mut String, kind: SlotKind, value: &str) {
+    match kind {
+        Kind::Text => out.push_str(&html_escape(value)),
+        Kind::Raw => out.push_str(value),
+    }
+}
+
+/// Look a slot name up — the built-in table first, then `extra` — checking
+/// that the braces match its kind.
+fn slot_segment(name: &str, raw: bool, extra: &[(&str, SlotKind)]) -> Result<Segment, ShellError> {
+    let (segment, kind) = if let Some(index) = SLOTS.iter().position(|(n, _)| *n == name) {
+        (Segment::Slot(index), SLOTS[index].1)
+    } else if let Some((_, kind)) = extra.iter().find(|(n, _)| *n == name) {
+        (Segment::Extra(name.to_string(), *kind), *kind)
+    } else {
+        let known: Vec<&str> = SLOTS
+            .iter()
+            .map(|(n, _)| *n)
+            .chain(extra.iter().map(|(n, _)| *n))
+            .collect();
         return Err(ShellError(format!(
             "unknown shell slot `{name}`. Known slots: {}",
             known.join(", ")
         )));
     };
-    let (_, kind) = SLOTS[index];
     match (kind, raw) {
-        (Kind::Text, false) | (Kind::Raw, true) => Ok(index),
+        (Kind::Text, false) | (Kind::Raw, true) => Ok(segment),
         (Kind::Text, true) => Err(ShellError(format!(
             "shell slot `{name}` is text and is HTML-escaped; write it as {{{{{name}}}}}"
         ))),
@@ -287,16 +299,46 @@ fn slot_value<'a>(slots: &'a ShellSlots, name: &str) -> &'a str {
         "site_footer" => &slots.site_footer,
         "footer" => &slots.footer,
         "scripts" => &slots.scripts,
-        "page_kind" => &slots.page_kind,
-        "library_title" => &slots.library_title,
-        "page_color" => &slots.page_color,
-        "page_head" => &slots.page_head,
-        "shelf" => &slots.shelf,
-        "book_nav" => &slots.book_nav,
-        "content_below_title" => &slots.content_below_title,
         // Unreachable: `slot_index` accepted the name against the same table.
         _ => "",
     }
+}
+
+/// Slots a caller adds to the shell, and how to fill them for a page.
+///
+/// This is where a theme that is *about* the site's shape lives — one that
+/// draws a front page, the books it holds and a book's chapters as places. The
+/// crate supplies the facts ([`PublishedPage::color`], [`PublishedPage::picture`],
+/// the nav tree, every page by destination); the extension decides what they
+/// look like. A site with no extension renders exactly as it would without
+/// this trait existing.
+pub trait ShellExtension: Send + Sync {
+    /// Every slot this extension fills, with its kind. A template may name
+    /// these beside the built-in ones; a name the built-in table already has
+    /// is the built-in slot, and never reaches [`fill`](Self::fill).
+    fn slots(&self) -> &[(&'static str, SlotKind)];
+
+    /// The slots' values for one page. Called only for a page rendered in a
+    /// caller's template, since the built-in shell names none of them.
+    fn fill(&self, page: &PublishedPage, cx: &ExtensionContext<'_>) -> HashMap<String, String>;
+}
+
+/// Everything about the site a [`ShellExtension`] reads besides the page.
+pub struct ExtensionContext<'a> {
+    /// This page's nav tree, current page marked, and its breadcrumbs.
+    pub nav: &'a SiteNavigation,
+    /// Every page in the render, by destination.
+    pub pages: &'a HashMap<String, &'a PublishedPage>,
+    /// The site's name, as the `site_title` slot has it.
+    pub site_title: &'a str,
+    /// What the front door says: the authored front page's title, or the
+    /// site's name when the front page was generated.
+    pub front_title: &'a str,
+    /// `../` per level of depth, as the `root_prefix` slot has it.
+    pub root_prefix: &'a str,
+    /// The page is a generated front page whose body only lists the pages the
+    /// nav already holds — a body a theme drawing those pages may leave out.
+    pub generated_listing: bool,
 }
 
 /// Read a slot reference off the front of `s`, which is known to start `{{`.
@@ -351,13 +393,10 @@ mod tests {
             site_footer: "<p>sf</p>".into(),
             footer: "<footer>f</footer>".into(),
             scripts: "<script>s</script>".into(),
-            page_kind: "book".into(),
-            library_title: "Lib".into(),
-            page_color: "green".into(),
-            page_head: "<header>ph</header>".into(),
-            shelf: "<section>sh</section>".into(),
-            book_nav: "<nav>bn</nav>".into(),
-            content_below_title: "<p>below</p>".into(),
+            extra: HashMap::from([
+                ("shelf".to_string(), "<ul>books</ul>".to_string()),
+                ("tone".to_string(), "a&b".to_string()),
+            ]),
         }
     }
 
@@ -426,6 +465,32 @@ mod tests {
         let source = "<style>a{b:c}</style><script>if(x){{y()}}</script>{{}}{ {a} }";
         let t = ShellTemplate::parse(source).unwrap();
         assert_eq!(t.render(&slots()), source);
+    }
+
+    /// An extension's slots compile beside the built-in ones, fill from
+    /// [`ShellSlots::extra`], are kinded like any other, and are still
+    /// unknown to a template compiled without them.
+    #[test]
+    fn a_callers_slots_are_named_kinded_and_filled() {
+        let extra = [
+            ("shelf", Kind::Raw),
+            ("tone", Kind::Text),
+            ("unfilled", Kind::Raw),
+        ];
+        let t =
+            ShellTemplate::parse_with("{{{shelf}}}|{{tone}}|{{{unfilled}}}|{{{content}}}", &extra)
+                .unwrap();
+        assert_eq!(t.render(&slots()), "<ul>books</ul>|a&amp;b||<p>Hello</p>");
+
+        let err = ShellTemplate::parse_with("{{shelf}}", &extra).unwrap_err();
+        assert!(err.message().contains("raw HTML"), "{err}");
+        let err = ShellTemplate::parse("{{{shelf}}}").unwrap_err();
+        assert!(
+            err.message().contains("unknown shell slot `shelf`"),
+            "{err}"
+        );
+        let err = ShellTemplate::parse_with("{{shelv}}", &extra).unwrap_err();
+        assert!(err.message().contains("shelf, tone"), "{err}");
     }
 
     #[test]
