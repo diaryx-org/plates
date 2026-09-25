@@ -30,8 +30,8 @@ judgment about the change that no subject can carry. Write one trailer per
 observable difference, as prose someone can act on.
 
 plates publishes three crates — `plates-render`, `plates`, and `plates-cli` —
-which move together on the one version in `Cargo.toml`. Nothing is published on
-a tag: `cargo publish --workspace` is a command somebody runs deliberately.
+which move together on the one version in `Cargo.toml`. A `v*.*.*` tag publishes
+all three to crates.io, through `.github/workflows/publish.yml`.
 
 ## Unreleased
 
