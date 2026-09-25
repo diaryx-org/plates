@@ -76,9 +76,9 @@ given `--push`. What this repository states for itself is in
 [`.config/release.toml`](.config/release.toml) and nothing else; the rest is that
 tool's defaults.
 
-Nothing runs on the tag. Publishing is `cargo publish --workspace`, run
-deliberately, which orders the three crates by dependency and waits on the index
-between them.
+The tag is what publishes: [`publish.yml`](.github/workflows/publish.yml) runs
+`cargo publish --workspace` on every `v*.*.*` tag, which orders the three crates
+by dependency and waits on the index between them.
 
 ## License
 
