@@ -1356,6 +1356,20 @@ fn page_skeleton(
     let scripts = resolve_asset_paths(fm, "scripts", &current_path);
     let start_with = frontmatter::get_string(fm, "start_with")
         .and_then(|l| resolve_link(l, &current_path, path_to_filename, title_map, resolver));
+    // Resolved like `styles:` — against the sidecar, to a path below the root —
+    // because the page that shows it is the parent, not the sidecar.
+    let picture = crate::attachment::picture_of(fm)
+        .map(|payload| {
+            let link = prov::Link::parse_path_only(payload);
+            prov::link::resolve(&current_path, &link.target)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|p| {
+            opts.published_files
+                .as_ref()
+                .is_none_or(|files| files.contains(p))
+        });
 
     PublishedPage {
         source_path: current_path,
@@ -1411,6 +1425,7 @@ fn page_skeleton(
         toc: fm.get("toc").and_then(|v| v.as_bool()).unwrap_or(true),
         color: frontmatter::get_string(fm, "color").and_then(color_name),
         start_with,
+        picture,
     }
 }
 
@@ -1803,6 +1818,7 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         toc: true,
         color: None,
         start_with: None,
+        picture: None,
     }
 }
 
@@ -4734,6 +4750,94 @@ mod tests {
         assert!(
             html.contains("Start reading"),
             "a book with no start_with begins at its first chapter"
+        );
+    }
+
+    /// A chapter that is a picture — an attachment sidecar over an image —
+    /// opens to the picture on its book's shelf, by a path from the root so it
+    /// reaches the payload beside the sidecar, not beside the book. A chapter
+    /// of prose that embeds a photograph keeps its description, a HEIC most
+    /// browsers cannot draw keeps its title alone, and a payload the site does
+    /// not ship is not drawn at all.
+    #[test]
+    fn a_chapter_that_is_a_picture_opens_to_it_on_the_shelf() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Family\ncontents:\n  - '[Album](album/album.md)'\n---\nHello.\n",
+                true,
+            ),
+            src(
+                "album/album.md",
+                "---\ntitle: Album\npart_of: /index.md\ncontents:\n  - attachments/beach.jpg.yaml\n  - attachments/phone.heic.yaml\n  - attachments/secret.png.yaml\n  - trip.md\n---\nPictures.\n",
+                false,
+            ),
+            src(
+                "album/attachments/beach.jpg.md",
+                "---\ntitle: The Beach\ncontent: beach.jpg\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/attachments/phone.heic.md",
+                "---\ntitle: From the Phone\ncontent: phone.heic\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/attachments/secret.png.md",
+                "---\ntitle: Kept Back\ncontent: secret.png\nattachment: true\npart_of: /album/album.md\n---\n",
+                false,
+            ),
+            src(
+                "album/trip.md",
+                "---\ntitle: The Trip\ndescription: We drove.\npart_of: /album/album.md\n---\n![](attachments/beach.jpg)\n",
+                false,
+            ),
+        ];
+        let render = render_site(
+            &sources,
+            &SiteOptions {
+                template: Some(crate::library::LIBRARY_SHELL.to_string()),
+                published_files: Some(
+                    [
+                        "album/attachments/beach.jpg",
+                        "album/attachments/phone.heic",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                ),
+                generate_seo: false,
+                generate_feeds: false,
+                ..SiteOptions::default()
+            },
+        );
+        let html = page_html(&render, "album/index.html");
+        assert!(
+            html.contains(r#"<span class="sheet-title">The Beach</span><span class="sheet-picture"><img src="../album/attachments/beach.jpg" alt="" loading="lazy"></span></a>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(
+                r#"<a class="sheet sheet-pictured" href="../album/attachments/beach.jpg.html">"#
+            ),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="sheet-title">From the Phone</span></a>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="sheet-title">Kept Back</span></a>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="sheet-title">The Trip</span><span class="sheet-description">We drove.</span></a>"#),
+            "{html}"
+        );
+        assert_eq!(
+            html.matches(r#"class="sheet-picture""#).count(),
+            1,
+            "{html}"
         );
     }
 

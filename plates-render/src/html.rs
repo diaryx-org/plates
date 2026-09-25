@@ -833,6 +833,7 @@ mod tests {
             toc: true,
             color: None,
             start_with: None,
+            picture: None,
         }
     }
 
