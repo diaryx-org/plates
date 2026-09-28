@@ -258,9 +258,9 @@ checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fig"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7851c277261b742c3958c482ef3d762d460fb7286890c3ca2ff2a17655a9d23a"
+checksum = "ef4a4bcf8186e7cc52ec1ed4e472cb77878692527ad91454b8457e51c7a19adf"
 dependencies = [
  "fig-macros",
  "fig-sys",
@@ -270,9 +270,9 @@ dependencies = [
 
 [[package]]
 name = "fig-macros"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6787e57b070d93f9005406dbd7758f75dc58cf8b37193d18b51a858990c9425b"
+checksum = "cdcdd51d1c3f5ff641454e7c75b3d8eb7f55ce7886a70855321e073d8d266004"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -281,18 +281,18 @@ dependencies = [
 
 [[package]]
 name = "fig-schema"
-version = "0.3.0"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1a35f21dad45b4318ee9850ddc6d89ff9043971c8e4ec934e11988885a02b3a6"
+checksum = "2fbbb9f9c0c455439ad47f6ea858e6302da0aca21ef88a6977edd25715cb9331"
 dependencies = [
  "fig",
 ]
 
 [[package]]
 name = "fig-sys"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77025202ee774d64cb9f65664456b11a30483b4afaba2042a7049ee3d07b8c7d"
+checksum = "7fdc9aa1c7bebfd173577c331e8c53d4e2a5a01622d6b307b0f5464087f4ff3e"
 dependencies = [
  "fig-sys-linux-arm64-gnu",
  "fig-sys-linux-x64-gnu",
@@ -303,33 +303,33 @@ dependencies = [
 
 [[package]]
 name = "fig-sys-linux-arm64-gnu"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1dd2f87336414bebd700de027d73643aad8233f5f5d9f38095b42f4a9777d868"
+checksum = "2662f139818979bc4e2d67fd44e309b481fc80d74ab325da028eff3e4f6b4759"
 
 [[package]]
 name = "fig-sys-linux-x64-gnu"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c82efb10916b8bae0b8b06864531a5ed59c9b9dcb00fe22b5ee1ec7f56cb52e2"
+checksum = "1f19c8849e66e88610b1c5fef33531dbefca7869f29328eeb6c3952de6642828"
 
 [[package]]
 name = "fig-sys-macos-arm64"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2606faade4c97de8b7206b1a3adfdc944dff3f405882fbfd64e783ce0a3ca0b"
+checksum = "bd566c2d89a42634ab1a9fa14da2aef648f64984532763b99b20a6d67b8ef087"
 
 [[package]]
 name = "fig-sys-wasm32"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b75e57d0ae43a0b32ae2b4300114d30503863da75a4c609f8d978f29cf3956eb"
+checksum = "3494d0a476225d8b5c37190051e24a4556121376a3f91c4edcd8b95e89ce9cee"
 
 [[package]]
 name = "fig-sys-windows-x64-msvc"
-version = "4.0.0"
+version = "5.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7f4c42715367913c17341acfcdd87057bb212acdd28167891576df4fdb560d3"
+checksum = "23c5ed649e0c9f18715893960ba6cc8f252615d40df349d28a3a817e50e29743"
 
 [[package]]
 name = "flate2"
@@ -504,9 +504,9 @@ dependencies = [
 
 [[package]]
 name = "prov"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3e9cae8649e83fc998fffb22bed4bf11cbe94b59cb006bcd1c89cffb1c0220bf"
+checksum = "7a0476daf8a07fd295fe03be183d907968f0b8eb850623b89e24f624f8d8325b"
 dependencies = [
  "edtf-normalize",
  "fig",
@@ -524,9 +524,9 @@ dependencies = [
 
 [[package]]
 name = "prov-config"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "27885c0cb3344b9ea1debd8ba14488c33274b2673fa91410f6a5286114685a76"
+checksum = "2173f0a0cc285270d39d64faa1e50eef0cb03d82e25aa1e38d456f7df651e235"
 dependencies = [
  "fig",
  "fig-schema",
@@ -539,9 +539,9 @@ dependencies = [
 
 [[package]]
 name = "prov-exports"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8e736341238b5f204595c2300cc17380c2567cd75915eefe92c6f4cb0082c0a5"
+checksum = "170bbff65bace27df9f2358349b267e5f5db17067c17a7cedbc5c5231a9aaffc"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -549,9 +549,9 @@ dependencies = [
 
 [[package]]
 name = "prov-graph"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4f9e6d9e3b30d6301db46452d73c00fd10e853afa05cf8a787f81fd5723c63c5"
+checksum = "48b22d447f8c7425f471c0f4a9b094641829dbe2bd746063c2db5c91eb980e7d"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -564,9 +564,9 @@ dependencies = [
 
 [[package]]
 name = "prov-store"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7873fddcfe5bd8f841a67f2b4cd236474b916680ddc702e96e0a9f1fd3c6d215"
+checksum = "eb052024d3346f7678595c1c98a8d6772a84ead687f4375b40df7997a36fc17f"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -575,9 +575,9 @@ dependencies = [
 
 [[package]]
 name = "prov-views"
-version = "0.15.2"
+version = "0.15.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f490a297b113b723671a340d194429ee79b20f7498c3c3c8004f6ce49120555b"
+checksum = "9045927b3ca12affd46b78c5b7f4fb980c8885e4ad2d7976f3102cc2b7845e8a"
 dependencies = [
  "edtf-core",
  "prov-graph",
