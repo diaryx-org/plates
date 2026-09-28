@@ -1,6 +1,6 @@
 ---
 title: How this workspace is organized
-generated_by: prov 0.12.0
+generated_by: prov 0.15.3
 ---
 
 # How this workspace is organized
@@ -72,7 +72,7 @@ here is simply broken — worth noting, not a reason to stop reading.
 
 ## How the files relate to each other
 
-Six relations are used here. Follow **`contents`** from `README.md` to
+Ten relations are used here. Follow **`contents`** from `README.md` to
 reach every document; that is the spine, and every file sits at exactly
 one place along it.
 
@@ -82,6 +82,10 @@ one place along it.
 | `part_of` | the document that contains this one | one | `contents` |
 | `links` | arbitrary cross-references to other documents | many | `link_of` |
 | `link_of` | documents that cross-reference this one | many | `links` |
+| `replaces` | documents this one supersedes | many | `replaced_by` |
+| `replaced_by` | documents that supersede this one | many | `replaces` |
+| `derived_from` | documents this one was made from | many | `derivations` |
+| `derivations` | documents made from this one | many | `derived_from` |
 | `front_page` | the page that greets a reader of this audience | one | `fronts` |
 | `fronts` | audiences this document greets | many | `front_page` |
 
@@ -91,8 +95,9 @@ nothing is lost — the pair is simply inconsistent until someone repairs
 it.
 
 `part_of` holds exactly one target, which is what makes the spine a tree
-with a single top. `links`, `link_of`, `front_page` and `fronts` are laid
-over that tree and may point anywhere; follow them for meaning, never to
+with a single top. `links`, `link_of`, `replaces`, `replaced_by`,
+`derived_from`, `derivations`, `front_page` and `fronts` are laid over
+that tree and may point anywhere; follow them for meaning, never to
 discover what is here.
 
 ## Fields with fixed vocabularies
@@ -202,8 +207,9 @@ already depend on them:
 - **`updated`** — maintained automatically, and in a fixed format.
 
 The relation fields — `contents`, `part_of`, `links`, `link_of`,
-`front_page` and `fronts` — are meant to be edited by hand. That is the
-whole point of keeping them in the files.
+`replaces`, `replaced_by`, `derived_from`, `derivations`, `front_page` and
+`fronts` — are meant to be edited by hand. That is the whole point of
+keeping them in the files.
 
 ---
 
