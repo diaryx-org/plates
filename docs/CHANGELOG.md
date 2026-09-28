@@ -41,6 +41,20 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.9.1 — 2026-09-28
+
+### Breaking
+
+- **deps** — move to fig 5 ([`8b9f4ba`](https://github.com/diaryx-org/plates/commit/8b9f4baa214b9f46bafe759593d647d6ea2b0264))
+
+### Behavioural changes
+
+- plates now requires `fig = "5"` and a prov built on
+it. A consumer still pinned to fig 4.x resolves two copies of fig —
+refused outright, since fig-sys links the one native library; move the
+consumer's own pin to 5 alongside.
+
+
 ## v0.9.0 — 2026-09-24
 
 ### Breaking
