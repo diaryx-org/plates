@@ -1830,10 +1830,10 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
 /// Group pages for a grouped arrangement. Date groups come back newest first,
 /// field groups alphabetically; the ungrouped bucket is always last so a page
 /// missing its grouping value is still reachable rather than dropped.
-fn group_entries<'p>(
-    pages: &'p [PublishedPage],
+fn group_entries(
+    pages: &[PublishedPage],
     descending: bool,
-) -> Vec<(String, Vec<&'p PublishedPage>)> {
+) -> Vec<(String, Vec<&PublishedPage>)> {
     let mut groups: BTreeMap<String, Vec<&PublishedPage>> = BTreeMap::new();
     let mut ungrouped: Vec<&PublishedPage> = Vec::new();
 
