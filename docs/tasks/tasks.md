@@ -3,7 +3,7 @@ title: Tasks
 part_of: '[plates](/README.md)'
 contents:
 - '[Say when a site declaration is not being read](/docs/tasks/unread-site-declaration.md)'
-- '[Follow prov''s vocabulary shape and term holds](/docs/tasks/follow-prov-vocabulary-shape-and-term-holds.md)'
+- '[Follow prov''s vocabulary shape, term holds and field stamps](/docs/tasks/follow-prov-vocabulary-shape-and-term-holds.md)'
 audience: public
 ---
 

@@ -1,5 +1,5 @@
 ---
-title: Follow prov's vocabulary shape and term holds
+title: Follow prov's vocabulary shape, term holds and field stamps
 part_of: '[Tasks](/docs/tasks/tasks.md)'
 status: open
 author: adammharris
@@ -8,12 +8,12 @@ updated: 2026-09-28
 audience: public
 ---
 
-# Follow prov's vocabulary shape and term holds
+# Follow prov's vocabulary shape, term holds and field stamps
 
-prov's next release changes two things plates reads, and plates does not
-compile against it until both are followed. Neither is released yet: the
-commits are prov's `ca99ba6` and `6953dfd` on `main`, and this task starts
-when a prov version carrying them is on crates.io.
+prov's next release changes three things plates reads, and plates does not
+compile against it until they are followed. None is released yet: the
+commits are prov's `ca99ba6`, `6953dfd` and `cee829b` on `main`, and this
+task starts when a prov version carrying them is on crates.io.
 
 ## What changed in prov
 
@@ -30,9 +30,16 @@ vocabulary governing it — `hold: status` keeps a `status: draft` page home.
 `&TermHolds`, so a caller that never asks the vocabulary cannot publish every
 draft by accident. `Workspace::export_plan` is the whole plan with it in.
 
+**A field declares its own stamp.** The top-level `updated:` and `created:`
+config keys are no longer read; the stamped fields are declared as
+`fields.<name>.stamp: edit` and `create`, and `WorkspaceConfig` answers
+`updated_field()` and `created_field()`. A workspace still writing the old
+keys stamps nothing.
+
 ## The work
 
-1. Move the `prov` pin in `Cargo.toml` to the release carrying both commits.
+1. Move the `prov` pin in `Cargo.toml` to the release carrying all three
+   commits.
 2. [`plan.rs`](/plates/src/plan.rs) calls `prov::exports::plan(ws.graph(), …)`;
    call `ws.export_plan(root_doc, &to_export(spec), views)` instead, so a site
    and every mounted peer hold drafts back by term as well as by `true`.
@@ -51,9 +58,20 @@ draft by accident. `Workspace::export_plan` is the whole plan with it in.
    record of what was argued.
 5. Say in the site spec's `hold` documentation ([`spec.rs`](/plates/src/spec.rs))
    that a term can hold as well as the literal `true`.
+6. Replace the top-level `updated: updated` and `created: created` in plates'
+   own `prov.yaml` with `fields.updated.stamp: edit` and
+   `fields.created.stamp: create`, so the repository keeps stamping.
+7. A page's dates are read by literal name — `created` and `updated` in
+   [`plates-render/src/site.rs`](/plates-render/src/site.rs) — where the
+   workspace now says which fields it stamps. Read them through
+   `created_field()`/`updated_field()`, keeping the literal names as the
+   fallback for a workspace that declares no stamp, so an archive stamping
+   `modified` shows its dates.
 
 ## Done when
 
 plates builds and its CI passes against the new prov, a site whose export
 holds on `status` leaves a `status: draft` page out of the build and lists it
-as held, and `reify` appears nowhere in plates outside `docs/proposals/`.
+as held, `reify` appears nowhere in plates outside `docs/proposals/`, plates'
+own `prov.yaml` declares its stamps on the fields, and a page in an archive
+stamping `modified` shows that date.
