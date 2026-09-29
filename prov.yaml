@@ -10,7 +10,6 @@ references:
   target: path
   label: false
 id_storage: both
-updated: updated
 identity: lazy
 fixity: attachments
 recycle_bin: true
@@ -30,7 +29,6 @@ fields:
   audience:
     values: closed
     vocabulary: '[Audiences](/vocab/audiences.md)'
-    reify: true
   status:
   - under: '[[Tasks]]'
     values: closed
@@ -41,34 +39,26 @@ fields:
     vocabulary: '[Proposal statuses](/vocab/proposal-statuses.yaml)'
     default: draft
   created:
-    type: datetime
+    stamp: create
   updated:
-    type: datetime
+    stamp: edit
 exports:
   docs:
     label: plates
     gate:
       field: audience
       value: public
-created: created
 views:
   open-tasks:
     label: Open tasks
-    group: status
-    under: '[[Tasks]]'
-    where:
-      has: status
-      not:
-        any-of:
-          - equals: { status: done }
-          - equals: { status: dropped }
+    where: under('[[Tasks]]') && present(status) && !(status in ['done', 'dropped'])
+    key: status
   proposals:
     label: Proposals
-    group: status
-    under: '[[Proposals]]'
-    where: { has: status }
+    where: under('[[Proposals]]') && present(status)
+    key: status
   work:
     label: All work
-    group: status
-    where: { has: status }
+    where: present(status)
+    key: status
 root: README.md

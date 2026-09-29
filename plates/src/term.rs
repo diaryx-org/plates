@@ -2,8 +2,8 @@
 //!
 //! A gate is a field and a value. When the archive declares that field's values
 //! against a *reified* vocabulary — `fields.audience.vocabulary` pointing at an
-//! index node, `reify: true` — the value is not a string in a table: it is a
-//! document. That document is where the render-facing half of a site belongs,
+//! index node whose children are the terms, rather than at a flat `terms:`
+//! store — the value is not a string in a table: it is a document. That document is where the render-facing half of a site belongs,
 //! because it is the one place in the archive that already means "this
 //! audience", with a body to write down who they are and backlinks saying what
 //! is published to them.
@@ -29,8 +29,8 @@
 //! The rest of a site's declaration arrives as a [`SiteSpec`](crate::SiteSpec) the
 //! caller built, deliberately (see [`crate`]'s module docs). This pass is
 //! different in kind:
-//! it reads no vocabulary of its own. `fields`, `vocabulary`, `reify`, the
-//! spanning relation the terms hang off and the term key itself are all prov's,
+//! it reads no vocabulary of its own. `fields`, `vocabulary`, the store's
+//! shape, the spanning relation the terms hang off and the term key itself are all prov's,
 //! and the *only* keys named here are the two that carry payload prov declines
 //! to interpret — [`FRONT_PAGE_KEY`] and [`TERM_SITE_KEY`]. So it needs a
 //! workspace and prov's config rather than a config file, which is why it lives
@@ -165,10 +165,11 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
     let Some(spec) = config.field(gate_field) else {
         return TermConfig::default();
     };
-    // `reify` is the load-bearing half. A flat vocabulary's terms are rows in a
-    // store, with nowhere to hang a stylesheet and no node to front a site from,
-    // so there is nothing here to read.
-    let Some(pointer) = spec.vocabulary.as_deref().filter(|_| spec.reify) else {
+    // A flat vocabulary's terms are rows in a store, with nowhere to hang a
+    // stylesheet and no node to front a site from, so there is nothing here to
+    // read — and `reified_term_path` finds no node in one, so the pointer alone
+    // is the question.
+    let Some(pointer) = spec.vocabulary.as_deref() else {
         return TermConfig::default();
     };
     // An unreadable archive is not this pass's to report: the same walk is about

@@ -70,7 +70,7 @@ which is most of them; say something about one that declared it somewhere plates
   and what the site fell back to without them.
 - A site whose gate field declares a vocabulary that is **not** reified,
   or is reified with no node for the gate's value, warns once — with the two cases told apart,
-  since the fix differs (`reify: true` on the field, versus a node for the term).
+  since the fix differs (point the field at an index of term documents, versus a node for the term).
 - A site with no front page from any source is reported as anchored at the archive root
   with a synthesized index, so the fallback is visible rather than inferred from the output.
 - An archive that declares nothing render-facing anywhere stays silent.

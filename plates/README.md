@@ -77,7 +77,7 @@ and what the other two crates do, is
   header or footer document is kept out of the plan's entries by
   `spec::finish`: it frames every page and is not one.
 - **The term node.** When a gate's field declares a *reified* vocabulary
-  (`fields.<field>.vocabulary` with `reify: true`), its value is a document, and
+  (`fields.<field>.vocabulary` pointing at an index of term documents), its value is a document, and
   that document is where a site's front page and render settings are written:
   `front_page:` at top level, `shell`/`stylesheet`/`header`/`footer`/`lang`/
   `syntaxes` under `site:`. `term::read_term_config` reads them — no dialect of ours, only prov's

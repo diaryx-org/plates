@@ -628,7 +628,7 @@ mod tests {
         write(
             &fs,
             "/org/fig/prov.yaml",
-            "workspace_id: fig\nroot: README.md\nid_storage: frontmatter\nexports:\n  docs:\n    gate:\n      field: audience\n      value: public\nfields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n    reify: true\n",
+            "workspace_id: fig\nroot: README.md\nid_storage: frontmatter\nexports:\n  docs:\n    gate:\n      field: audience\n      value: public\nfields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n",
         );
         write(
             &fs,

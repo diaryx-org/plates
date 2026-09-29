@@ -94,7 +94,7 @@ pub struct RenderedPage {
     pub scripts: Vec<String>,
 }
 
-pub use crate::types::{Arrangement, Grain, Grouping, serve_at_dest};
+pub use crate::types::{Arrangement, Expression, Grain, serve_at_dest};
 
 /// Options controlling a site render.
 pub struct SiteOptions {
@@ -635,10 +635,9 @@ fn collect_context(
             .or_else(|| frontmatter::get_string(&fm, "updated"))
             .filter(|d| !d.is_empty())
             .map(String::from);
-        let group_keys = match &opts.arrangement {
-            Arrangement::Containment => Vec::new(),
-            Arrangement::Grouped(grouping) => grouping.keys_of(&YamlValue::Mapping(fm.clone())),
-        };
+        let group_keys = opts
+            .arrangement
+            .keys_of(Path::new(&s.path), &YamlValue::Mapping(fm.clone()));
 
         // …unless the caller walked the archive's own spanning relation, which
         // is a better answer to the same question and is applied below.
@@ -874,7 +873,7 @@ fn groups_of(
     by_path: &HashMap<PathBuf, JsonValue>,
     arrangement: &Arrangement,
 ) -> Vec<JsonValue> {
-    let Arrangement::Grouped(grouping) = arrangement else {
+    let Arrangement::Grouped(key) = arrangement else {
         return Vec::new();
     };
     // The view name is prov's handle for the selection and nothing here reads
@@ -883,15 +882,18 @@ fn groups_of(
         view: String::new(),
         rows: order
             .iter()
-            .filter_map(|key| {
+            .filter_map(|path| {
                 Some(Row {
-                    path: key.clone(),
-                    meta: meta_of.get(key)?.clone(),
+                    path: path.clone(),
+                    id: None,
+                    ancestors: Vec::new(),
+                    meta: meta_of.get(path)?.clone(),
                 })
             })
             .collect(),
+        failures: Vec::new(),
     };
-    prov::views::group(&selection, grouping)
+    prov::views::group(&selection, key)
         .groups
         .into_iter()
         .map(|group| {
@@ -1351,10 +1353,9 @@ fn page_skeleton(
     // the view spec's to answer now — including the two spellings a field
     // permits (`people: Grandpa` and `people: [Grandpa, Nan]`), which prov
     // reads the same way.
-    let group_keys = match &opts.arrangement {
-        Arrangement::Containment => Vec::new(),
-        Arrangement::Grouped(grouping) => grouping.keys_of(&YamlValue::Mapping(fm.clone())),
-    };
+    let group_keys = opts
+        .arrangement
+        .keys_of(&current_path, &YamlValue::Mapping(fm.clone()));
 
     let styles = resolve_asset_paths(fm, "styles", &current_path);
     let scripts = resolve_asset_paths(fm, "scripts", &current_path);
@@ -1770,8 +1771,8 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
             let roots = forest_roots(pages, &opts.outline);
             (render_entry_list(&roots), nav_links(&roots))
         }
-        Arrangement::Grouped(grouping) => {
-            let groups = group_entries(pages, grouping);
+        Arrangement::Grouped(_) => {
+            let groups = group_entries(pages, opts.arrangement.is_chronological());
             let ordered: Vec<&PublishedPage> = groups
                 .iter()
                 .flat_map(|(_, ps)| ps.iter().copied())
@@ -1831,7 +1832,7 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
 /// missing its grouping value is still reachable rather than dropped.
 fn group_entries<'p>(
     pages: &'p [PublishedPage],
-    grouping: &Grouping,
+    descending: bool,
 ) -> Vec<(String, Vec<&'p PublishedPage>)> {
     let mut groups: BTreeMap<String, Vec<&PublishedPage>> = BTreeMap::new();
     let mut ungrouped: Vec<&PublishedPage> = Vec::new();
@@ -1852,12 +1853,8 @@ fn group_entries<'p>(
         }
     }
 
-    // A calendar reads newest-first, an A–Z index reads A-first. That used to
-    // fall out of matching the `Date` variant; with the variant gone it is a
-    // question about the *grain*, which is the more honest place for it — a view
-    // over `taken_on` by month is just as chronological as one over `created`,
-    // and the field name was never what made it so.
-    let descending = matches!(grouping.by, Some(Grain::Year | Grain::Month | Grain::Day));
+    // A calendar reads newest-first, an A–Z index reads A-first: `descending`
+    // is the grain's answer (`Arrangement::is_chronological`), not the field's.
     let mut out: Vec<(String, Vec<&PublishedPage>)> = groups.into_iter().collect();
     if descending {
         out.reverse();
@@ -2158,14 +2155,9 @@ mod tests {
     /// here because it is a declaration a vault makes rather than something
     /// this crate knows: the layer that owns a vault's vocabulary names the
     /// same three fields, above this one.
-    fn date_grouping(by: Grain) -> Grouping {
-        Grouping {
-            keys: ["date_of_document", "created", "updated"]
-                .iter()
-                .map(|k| (*k).to_string())
-                .collect(),
-            by: Some(by),
-        }
+    fn date_grouping(by: &str) -> Expression {
+        Expression::parse(&format!("{by}(first(date_of_document, created, updated))"))
+            .expect("a date key")
     }
 
     #[test]
@@ -2950,7 +2942,7 @@ mod tests {
             src("mid.md", &entry("Mid", "2025-05-05"), false),
         ];
         let opts = SiteOptions {
-            arrangement: Arrangement::Grouped(date_grouping(Grain::Year)),
+            arrangement: Arrangement::Grouped(date_grouping("year")),
             ..SiteOptions::default()
         };
 
@@ -2978,7 +2970,7 @@ mod tests {
             src("b.md", &entry("B", "2026-08-01"), false),
         ];
         let opts = SiteOptions {
-            arrangement: Arrangement::Grouped(date_grouping(Grain::Month)),
+            arrangement: Arrangement::Grouped(date_grouping("month")),
             ..SiteOptions::default()
         };
         let index = synthesize_index(&build_pages(&sources, &opts), &opts);
@@ -2995,7 +2987,7 @@ mod tests {
         let list = "---\ntitle: Trip\npeople:\n  - Nan\n  - Grandpa\n---\nBody.\n";
         let sources = vec![src("lunch.md", scalar, false), src("trip.md", list, false)];
         let opts = SiteOptions {
-            arrangement: Arrangement::Grouped(Grouping::field("people")),
+            arrangement: Arrangement::Grouped(Expression::parse("people").unwrap()),
             ..SiteOptions::default()
         };
 
@@ -3027,7 +3019,7 @@ mod tests {
             src("undated.md", "---\ntitle: Undated\n---\nBody.\n", false),
         ];
         let opts = SiteOptions {
-            arrangement: Arrangement::Grouped(date_grouping(Grain::Year)),
+            arrangement: Arrangement::Grouped(date_grouping("year")),
             ..SiteOptions::default()
         };
         let index = synthesize_index(&build_pages(&sources, &opts), &opts);
@@ -3881,7 +3873,7 @@ mod tests {
             src("a.md", "---\ntitle: A\npeople: Ada\n---\nA.\n", false),
         ];
         let opts = SiteOptions {
-            arrangement: Arrangement::Grouped(Grouping::field("people")),
+            arrangement: Arrangement::Grouped(Expression::parse("people").unwrap()),
             ..SiteOptions::default()
         };
 
