@@ -41,6 +41,24 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.10.0 — 2026-09-29
+
+### Breaking
+
+- **deps** — prov 0.16, where a view's grouping is a CEL key ([`2283376`](https://github.com/diaryx-org/plates/commit/2283376eaa4d5687bc5f2c20c31e51efa8ba4593))
+
+### Fixed
+
+- clippy error ([`38c964d`](https://github.com/diaryx-org/plates/commit/38c964d0ccd6aadee91ac57f7c47b1e4a6b3c04b))
+
+### Behavioural changes
+
+- a page a grouped arrangement's key cannot be
+evaluated on is ungrouped rather than failing the build.
+
+- under an export whose `hold` names a field with a
+vocabulary, a page whose value is a term declaring `holds: true` is held.
+
 ## v0.9.1 — 2026-09-28
 
 ### Breaking
