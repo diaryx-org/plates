@@ -65,7 +65,8 @@ pub async fn plan_site<FS: Storage + Clone, Id, Ix: IdIndex>(
         None => None,
     };
 
-    let export = prov::exports::plan(ws.graph(), &to_export(spec), views, root_doc)
+    let export = ws
+        .export_plan(root_doc, &to_export(spec), views)
         .await
         .map_err(|e| match e {
             // prov's "this export names a view nobody declared" is this layer's

@@ -90,7 +90,8 @@ pub struct SiteSpec {
     pub gate_field: Option<String>,
     /// The document field this site reads a *not yet* out of — prov's
     /// [`hold`](prov::exports::ExportSpec::hold). A document the gate admits
-    /// that declares `true` under this field is held: off the site, and named
+    /// that declares `true` under this field — or, when the field has a
+    /// vocabulary, a term that declares `holds: true` — is held: off the site, and named
     /// in [`SitePlan::held`] rather than lost among the documents the gate
     /// refused.
     ///

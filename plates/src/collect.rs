@@ -2336,7 +2336,7 @@ mod tests {
         };
         write(
             "/v/prov.yaml",
-            "workspace_id: v\nroot: README.md\nid_storage: frontmatter\nfields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n    reify: true\n",
+            "workspace_id: v\nroot: README.md\nid_storage: frontmatter\nfields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n",
         );
         write(
             "/v/README.md",

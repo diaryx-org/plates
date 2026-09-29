@@ -20,7 +20,6 @@
 //!   audience:
 //!     values: closed
 //!     vocabulary: '[Audiences](/vocab/audiences.md)'
-//!     reify: true
 //! ```
 //!
 //! A gate on some field other than [`plates::AUDIENCE_FIELD`] is not a special

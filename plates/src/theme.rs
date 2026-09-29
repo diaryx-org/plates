@@ -190,7 +190,7 @@ pub fn arrangement_for(spec: &SiteSpec, views: &[ViewSpec]) -> Arrangement {
     spec.view
         .as_deref()
         .and_then(|name| views.iter().find(|v| v.name == name))
-        .map(|view| Arrangement::Grouped(view.group.clone()))
+        .map(|view| Arrangement::Grouped(view.key.clone()))
         .unwrap_or_default()
 }
 

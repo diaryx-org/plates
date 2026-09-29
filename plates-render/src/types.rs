@@ -9,6 +9,9 @@
 
 use std::path::{Path, PathBuf};
 
+use prov::Value as YamlValue;
+use prov::views::Row;
+
 /// Options for publishing.
 #[derive(Debug, Clone)]
 pub struct PublishOptions {
@@ -443,7 +446,8 @@ pub struct PublishResult {
     pub attachments_copied: usize,
 }
 
-/// What a grouped arrangement sorts entries into groups by.
+/// What a grouped arrangement sorts entries into groups by: a view's `key:`,
+/// the CEL expression prov groups the vault's own lens with.
 ///
 /// prov's own, not a mirror of it. This used to be a redeclaration — the crate
 /// sits below the workspace layer and must stay portable to
@@ -453,11 +457,13 @@ pub struct PublishResult {
 /// published archive reads differently from the vault it came from.
 ///
 /// Since prov 0.5 the grouping engine is `prov-views`, which reaches nothing
-/// that can write and is already in this crate's dependency graph. So the way to
-/// keep the two identical is to stop having two: the published site now groups
-/// through the same [`Grouping::keys_of`] the vault does, and "identical" is a
+/// that can write and is already in this crate's dependency graph — and since
+/// prov 0.16 a view's grouping is an expression (`month(first(date_of_document,
+/// created))`) whose evaluator is portable too. So the published site groups
+/// through the same [`Evaluator::keys`] the vault does, and "identical" is a
 /// fact rather than a promise two copies make to each other.
-pub use prov::views::{Grain, Grouping};
+pub use prov::grain::Grain;
+pub use prov::views::{Evaluator, Expression, KeyShape};
 
 /// How a site is arranged — the render-side half of a site's `view:`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -470,7 +476,40 @@ pub enum Arrangement {
     /// Entries are gathered into groups. The generated index shows the groups;
     /// the nav lists entries in group order rather than by containment, because
     /// a site that declared an arrangement asked for one.
-    Grouped(Grouping),
+    Grouped(Expression),
+}
+
+impl Arrangement {
+    /// The group keys a page with frontmatter `meta` goes under: none for
+    /// containment, and none for a page the key cannot be evaluated on, which
+    /// then reads as ungrouped rather than failing the build.
+    ///
+    /// A page here has no ancestry — the render side sees pages, not the
+    /// spine — so a key reading `doc.ancestors` sees an empty list.
+    pub fn keys_of(&self, path: &Path, meta: &YamlValue) -> Vec<String> {
+        let Arrangement::Grouped(key) = self else {
+            return Vec::new();
+        };
+        let row = Row {
+            path: path.to_path_buf(),
+            id: None,
+            ancestors: Vec::new(),
+            meta: meta.clone(),
+        };
+        Evaluator::new().keys(key, &row).unwrap_or_default()
+    }
+
+    /// Whether the groups are dates cut to a grain, which read newest first.
+    /// A calendar reads newest-first, an A–Z index reads A-first, and the
+    /// grain is what says which — a view over `taken_on` by month is just as
+    /// chronological as one over `created`.
+    pub fn is_chronological(&self) -> bool {
+        matches!(
+            self,
+            Arrangement::Grouped(key)
+                if matches!(key.key_shape(), KeyShape::Cut(Grain::Year | Grain::Month | Grain::Day, _))
+        )
+    }
 }
 
 /// Normalize a frontmatter `serve_at:` value into a path below the site root,

@@ -112,14 +112,13 @@ exports:
 fields:
   audience:
     values: closed                # an unknown value is a `prov check` finding
-    vocabulary: '[Audiences](/vocab/audiences.md)'
-    reify: true                   # each term is a node, not a row
+    vocabulary: '[Audiences](/vocab/audiences.md)'   # an index whose children are the terms
 ```
 
 | Export key | |
 |---|---|
 | `gate` | **Required**, both halves. `field` is the document field judged and `value` is what admits a document; prov offers no default for either. A gate on `clearance` is not a special case, it is the gate. |
-| `hold` | A document field the site reads a *not yet* out of. A page the gate admits that declares `true` under it stays off the site and is reported as held; absent, nothing is held. |
+| `hold` | A document field the site reads a *not yet* out of. A page the gate admits that declares `true` under it — or, when the field has a vocabulary, a term marked `holds: true` (`hold: status` keeps a `status: draft` page home) — stays off the site and is reported as held; absent, nothing is held. |
 | `label` | What a person calls the site. Defaults to the name, humanized. |
 | `view` | A prov view, by its key under `views:`. Its arrangement becomes the site's; absent, the gate's whole set arranged by containment. |
 
@@ -129,7 +128,7 @@ routinely one its members should never read off a URL.
 
 ### The term node
 
-`reify: true` makes the vocabulary an index node whose `contents:` are the terms,
+A vocabulary pointer at an index node (a document without the `vocabulary:` marker) makes its `contents:` the terms,
 each an ordinary document with a body, a stable id and backlinks. The term whose
 `term:` (or, absent that, `title:`) is the gate's value is the one plates reads:
 
