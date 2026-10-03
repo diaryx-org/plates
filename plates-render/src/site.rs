@@ -1532,6 +1532,16 @@ fn render_body(
         return values;
     }
 
+    // A manifest node's body is the files it covers, on the same terms.
+    if let Some(rows) = crate::manifest::rows_of(fm, current_path, opts.published_files.as_ref()) {
+        let prefix = crate::links::root_prefix(&page.dest_filename);
+        let (html, markdown) = crate::manifest::render(&rows, &prefix);
+        page.rendered_body = html;
+        page.markdown_body = markdown;
+        values.insert("headings".into(), JsonValue::Array(Vec::new()));
+        return values;
+    }
+
     // Always present so `:::each{of=headings}` over a page with none produces
     // nothing rather than an error — and a body that *names* it is expanded
     // twice below, because a page's headings are not known until its template
@@ -4138,6 +4148,53 @@ mod tests {
 
         assert!(!alpha.html.contains("Has a sequel"), "got {}", alpha.html);
         assert!(!alpha.html.contains("private"), "got {}", alpha.html);
+    }
+
+    /// A manifest node's page lists the files its collected copy carries, each
+    /// linked relative to the page — and leaves out a row the site does not
+    /// ship.
+    #[test]
+    fn a_manifest_node_lists_its_files_relative_to_the_page() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n  - \"[Photos](/archive/photos.yaml)\"\n---\nH.\n",
+                true,
+            ),
+            src(
+                "archive/photos.yaml",
+                "---\ntitle: Photos\npart_of: \"/index.md\"\nmanifest:\n  root: /archive/photos/\n  files:\n  - path: lake.jpg\n    title: The lake\n  - path: gone.jpg\n  - path: scan.pdf\n---\n",
+                false,
+            ),
+        ];
+        let opts = SiteOptions {
+            published_files: Some(
+                ["archive/photos/lake.jpg", "archive/photos/scan.pdf"]
+                    .map(String::from)
+                    .into(),
+            ),
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let photos = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "archive/photos.html")
+            .unwrap()
+            .html;
+
+        assert!(
+            photos.contains(
+                r#"<a href="../archive/photos/lake.jpg"><img src="../archive/photos/lake.jpg" alt="The lake" loading="lazy"></a>"#
+            ),
+            "got {photos}"
+        );
+        assert!(
+            photos.contains(r#"<li><a href="../archive/photos/scan.pdf">scan.pdf</a></li>"#),
+            "got {photos}"
+        );
+        assert!(!photos.contains("gone.jpg"), "got {photos}");
     }
 
     /// What a page's relations point at is in its head as well as in reach of

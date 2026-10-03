@@ -27,6 +27,7 @@ pub mod frontmatter;
 pub mod headings;
 pub mod html;
 mod links;
+pub mod manifest;
 pub mod nav;
 pub mod page;
 pub mod shell;

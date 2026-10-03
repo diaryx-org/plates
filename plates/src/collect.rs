@@ -4,7 +4,7 @@
 //! read once, its body filtered for the gate's audience, its frontmatter
 //! stripped of what must not travel and stamped with whatever the caller asks
 //! for; every file those documents drag along — a referenced image, an
-//! `attachments:` entry, a page's own stylesheet, a covered directory's assets —
+//! `attachments:` entry, a page's own stylesheet, the files a manifest covers —
 //! is found, weighed, and named at the address it will be served from.
 //!
 //! No HTML is produced here. What comes out is [`CollectedSite`], and a
@@ -26,6 +26,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use prov::prov_graph::manifest::{MANIFEST_KEY, Manifest};
 use prov::{IdIndex, Storage, Workspace};
 
 use plates_render::visibility::{Audience, filter_body};
@@ -435,6 +436,44 @@ async fn cover<FS: Storage + Clone, Id, Ix: IdIndex>(
     out
 }
 
+/// A manifest node's `manifest:` as its collected copy carries it: not the path
+/// of the document holding the rows, which the renderer could not read, but the
+/// rows themselves.
+///
+/// The shape is the manifest document's own — `root` and `files`, each row its
+/// `path` and whatever else it says about its file — so a template reading it
+/// reads what `prov` wrote. Two things change on the way:
+///
+/// - **`root` is written from the site's root** (`/photos/`), in the coordinates
+///   [`weigh_attachment`] ships each file at. The manifest wrote it relative to
+///   itself, and the node, the manifest and the covered directory need not
+///   share a directory.
+/// - **The digests stay home.** A row's `hash` is a fixity baseline for the
+///   vault; the page has no use for it, and on an archive of ten thousand
+///   photographs it is most of the bytes.
+fn inline_manifest(
+    manifest_doc: &Path,
+    mut manifest: Manifest,
+    anchor: &Path,
+    mount: &str,
+) -> prov::meta::Value {
+    let root = rebase(&manifest.covered_root(manifest_doc), anchor)
+        .to_string_lossy()
+        .replace('\\', "/");
+    manifest.root = if root.is_empty() {
+        format!("/{mount}")
+    } else {
+        format!("/{mount}{root}/")
+    };
+    for row in &mut manifest.files {
+        row.hash = None;
+    }
+    // `to_mapping` writes the document, title first; the rows have no title.
+    let mut mapping = manifest.to_mapping("");
+    mapping.shift_remove("title");
+    prov::meta::Value::Mapping(mapping)
+}
+
 /// Collect an explicit list of documents: read each one, filter its body for
 /// the gate's audience, strip the keys that must not travel, stamp whatever the
 /// caller asks for, and gather the files they reference.
@@ -534,6 +573,43 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             }
         }
 
+        // A manifest node is the bulk form of a sidecar, and publishes on the
+        // same terms: a page the renderer fills with a listing of the covered
+        // files (`plates_render::manifest`), and every file the manifest names
+        // shipped at its own path. The rows travel in the collected copy —
+        // see [`inline_manifest`] — because the renderer reads no files.
+        //
+        // A front page that is a manifest node never reaches here; it is the
+        // site's covered directory, shipped by [`cover`].
+        let inlined = match parsed.manifest_attr() {
+            Some(_) => ws.manifest_of(path).await.map_err(|e| Error::Document {
+                path: path.clone(),
+                reason: e.to_string(),
+            })?,
+            None => None,
+        };
+        let inlined = match inlined {
+            Some((manifest_doc, manifest)) => {
+                for row in &manifest.files {
+                    let canonical = manifest
+                        .file_path(&manifest_doc, row)
+                        .to_string_lossy()
+                        .into_owned();
+                    if !seen_attachments.insert(canonical.clone()) {
+                        continue;
+                    }
+                    // Best-effort, as every attachment is: a row whose file has
+                    // vanished is drift for `prov manifest` to report, and the
+                    // listing leaves it out (`SiteOptions::published_files`).
+                    if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
+                        attachments.push(attachment);
+                    }
+                }
+                Some(inline_manifest(&manifest_doc, manifest, anchor, opts.mount))
+            }
+            None => None,
+        };
+
         // Which *parts* of this document leave. The plan already decided that
         // the document does; this reads the same audience name against the
         // regions inside it, in the document's own grammar.
@@ -585,6 +661,12 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             for key in OWN_PAGE_SETTINGS {
                 source_fm.shift_remove(*key);
             }
+        }
+        // In place, so a caller that stripped `manifest` keeps it stripped.
+        if let Some(inlined) = inlined
+            && let Some(slot) = source_fm.get_mut(MANIFEST_KEY)
+        {
+            *slot = inlined;
         }
         // A mounted collection's front page is the mount's `index.html`, and
         // the render derives a page's destination from its source path and its
@@ -2082,6 +2164,63 @@ mod tests {
         );
         assert_eq!(scan[0].mime_type, "application/pdf");
         assert_eq!(scan[0].bytes.as_deref(), Some(&b"%PDF-1.7"[..]));
+    }
+
+    /// A manifest node the plan admitted is a page, and ships every file its
+    /// manifest covers though no page embeds one. The rows travel in its
+    /// collected copy in place of the manifest's path, rooted at the site, with
+    /// what a row says about its file kept and its digest left behind.
+    #[test]
+    fn a_planned_manifest_node_ships_every_file_it_covers() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [family]\ncontents:\n- archive/photos.yaml\n---\nHome.\n",
+            ),
+            (
+                "archive/photos.yaml",
+                "title: Photos\nmanifest: photos.manifest.yaml\naudience: [family]\npart_of: /index.md\n",
+            ),
+            (
+                "archive/photos.manifest.yaml",
+                "title: Photos — manifest\nroot: photos/\nfiles:\n- path: 2019/lake.jpg\n  hash: sha256:00\n  title: The lake\n- path: scan.pdf\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        for (path, bytes) in [
+            ("archive/photos/2019/lake.jpg", &b"JPG"[..]),
+            ("archive/photos/scan.pdf", &b"%PDF-1.7"[..]),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), bytes)).unwrap();
+        }
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let site = try_collect(&ws, &["index.md", "archive/photos.yaml"]).unwrap();
+
+        let mut shipped: Vec<_> = site
+            .attachments
+            .iter()
+            .map(|a| a.dest_rel.as_str())
+            .collect();
+        shipped.sort();
+        assert_eq!(
+            shipped,
+            ["archive/photos/2019/lake.jpg", "archive/photos/scan.pdf"]
+        );
+        let page = site
+            .sources
+            .iter()
+            .find(|s| s.dest_path == "archive/photos.html")
+            .expect("the node is a page of the site");
+        let fm = &page.source_markdown;
+        assert!(fm.contains("root: /archive/photos/"), "{fm}");
+        assert!(fm.contains("path: 2019/lake.jpg"), "{fm}");
+        assert!(fm.contains("title: The lake"), "{fm}");
+        assert!(!fm.contains("hash:"), "{fm}");
+        assert!(!fm.contains("photos.manifest.yaml"), "{fm}");
     }
 
     /// The other route to the same bytes — a page that embeds the payload —
