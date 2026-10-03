@@ -458,6 +458,70 @@ pub fn generate_identity_meta(page: &PublishedPage, extra: &[String]) -> String 
     tags.join("\n    ")
 }
 
+/// The `<link>` tags naming what a page's declared relations point at: one
+/// `DC.relation` each, the vault's own name for the relation in
+/// `data-relation`.
+///
+/// A body template has always been able to read these as `relations`; this is
+/// the same edges for whatever reads the *page* rather than its body — a
+/// reader's script that wants a document's transcription, a crawler following
+/// a translation. It is what lets a page say "my transcript is there" without a
+/// script guessing from titles.
+///
+/// Why not `rel="transcription"`: a vault names its relations, and `rel` is a
+/// vocabulary browsers *act on*. A vault entitled to call a relation
+/// `stylesheet`, `icon` or `preload` would have its pages fetch the target as
+/// one. `DC.relation` is Dublin Core's element for "a related resource", in the
+/// schema [`generate_identity_meta`] already declares, and no browser does
+/// anything with it; the name the vault chose goes where only a reader looks.
+///
+/// `relations` is the page's half of the render's context — relation name to
+/// entry records — which is already narrowed to what this site publishes, so
+/// a target the gate held back is not named here either. Relations come out in
+/// name order and targets in path order, because two builds of one archive are
+/// the same bytes. Each `href` is site-relative, made page-relative with
+/// `root_prefix`.
+///
+/// `declare_schema` writes the `schema.DC` link first, for a page whose
+/// identity tags did not — a document with relations but no identifier. Empty
+/// when there are no relations, so a page without any is the page it was.
+#[cfg(feature = "templating")]
+pub fn generate_relation_links(
+    relations: &serde_json::Value,
+    root_prefix: &str,
+    declare_schema: bool,
+) -> String {
+    let Some(by_name) = relations.as_object() else {
+        return String::new();
+    };
+    let mut tags = Vec::new();
+    for (name, targets) in by_name {
+        for target in targets.as_array().into_iter().flatten() {
+            let Some(href) = target.get("href").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let title = target
+                .get("title")
+                .and_then(|v| v.as_str())
+                .map(|t| format!(r#" title="{}""#, html_escape(t)))
+                .unwrap_or_default();
+            tags.push(format!(
+                r#"<link rel="DC.relation" data-relation="{}" href="{}{}"{title}>"#,
+                html_escape(name),
+                html_escape(root_prefix),
+                html_escape(href),
+            ));
+        }
+    }
+    if tags.is_empty() {
+        return String::new();
+    }
+    if declare_schema {
+        tags.insert(0, format!(r#"<link rel="schema.DC" href="{DC_SCHEMA}">"#));
+    }
+    tags.join("\n    ")
+}
+
 /// Find the best og:image for a page.
 fn find_og_image(page: &PublishedPage) -> Option<String> {
     const IMAGE_EXTENSIONS: &[&str] = &[".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"];
