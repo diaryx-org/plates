@@ -44,13 +44,17 @@ pub fn payload_of(frontmatter: &Mapping) -> Option<&str> {
 /// browsers cannot draw (HEIC and HEIF), where a listing would show a broken
 /// image instead of the title and description it would otherwise have.
 pub fn picture_of(frontmatter: &Mapping) -> Option<&str> {
-    payload_of(frontmatter).filter(|payload| {
-        kind_of(payload) == Kind::Image
-            && !Path::new(payload)
-                .extension()
-                .and_then(|e| e.to_str())
-                .is_some_and(|e| e.eq_ignore_ascii_case("heic") || e.eq_ignore_ascii_case("heif"))
-    })
+    payload_of(frontmatter).filter(|payload| is_drawable(payload))
+}
+
+/// Whether a browser can draw the file as a picture: an image by extension,
+/// less HEIC and HEIF. What a manifest's listing shows as a gallery, too.
+pub(crate) fn is_drawable(path: &str) -> bool {
+    kind_of(path) == Kind::Image
+        && !Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("heic") || e.eq_ignore_ascii_case("heif"))
 }
 
 /// What kind of thing the payload is, from its name alone.

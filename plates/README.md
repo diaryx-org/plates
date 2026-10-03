@@ -46,7 +46,10 @@ and what the other two crates do, is
 - **The reference scan.** Which files a page drags along: link targets,
   `src`/`href`/`srcset` attributes, and the frontmatter `attachments:`,
   `styles:` and `scripts:` lists. Grammar-blind, so Markdown, Djot and HTML all
-  work through one scanner.
+  work through one scanner. Two kinds of node bring files without a reference:
+  an attachment sidecar ships its payload, and a manifest node ships every file
+  its manifest covers, with the rows carried in its collected frontmatter so
+  `plates-render` can list them on its page.
 - **Destinations.** Path-to-URL shaping, `serve_at:` claims, and refusing two
   documents that claim one address rather than letting one quietly overwrite the
   other. The shaping is `plates_render::output_filename`, called rather than
