@@ -16,6 +16,9 @@ homepage = "https://github.com/diaryx-org/plates"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 authors = ["Adam Harris"]
+# Not on crates.io. plates is consumed from git, and its prov dependency is a
+# git one, which crates.io would refuse anyway.
+publish = false
 
 [workspace.dependencies]
 # The archive engine. Everything this workspace knows about *which* documents
@@ -41,7 +44,12 @@ authors = ["Adam Harris"]
 # would publish the drafts it says to hold. 0.18 is twig 4's prov: the `twig`
 # plates reaches through `prov::twig` is whatever prov is on, so prov's twig
 # major is plates' too.
-prov = { version = "0.18.0", default-features = false }
+#
+# From git, not crates.io: prov is an org repository that does not publish, and
+# every repository that builds against it names this same source — `branch =
+# "main"`, written identically — so a graph holding plates and prov side by side
+# has one prov in it, at the commit its own Cargo.lock records.
+prov = { git = "https://github.com/diaryx-org/prov", branch = "main", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.
