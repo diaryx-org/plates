@@ -240,6 +240,12 @@ answers from it (`DigestMemo`); one with nowhere to keep an answer passes
 *and* modification time both still match, which is the same test prov's fixity
 cache applies.
 
+The same port answers for a file that is not on this disk at all — a photograph
+a phone left in the cloud, whose digest and length the workspace's history still
+knows. `DigestMemo::elsewhere` describes it, and it is collected as a recalled
+file is, with no bytes, rather than skipped and then pruned from the site by the
+next publish. A file that is on disk is always weighed from the disk.
+
 ## Features
 
 Defaults to `yaml`, and forwards its metadata-format features to `prov`, which

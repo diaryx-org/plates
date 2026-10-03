@@ -74,17 +74,23 @@ pub struct Attachment {
     pub dest_rel: String,
     /// Where the payload lives, workspace-relative — the answer to "read it
     /// after all", for a caller that needs the bytes collection never read.
+    ///
+    /// Possibly a path with nothing at it yet: a file the digest memo described
+    /// as [held elsewhere](crate::digest::DigestMemo::elsewhere) is collected
+    /// from that description, and a caller that needs its bytes brings them in
+    /// to this path, or from wherever they are kept, before reading.
     pub source_path: PathBuf,
     /// The file's digest, in whatever spelling
     /// [`CollectOptions::digest`](crate::collect::CollectOptions::digest)
     /// produces.
     pub hash: String,
-    /// Size of the file, from its stat. What a preview quotes before any of
-    /// this has been read.
+    /// Size of the file, from its stat — or from the memo, for a file held
+    /// elsewhere. What a preview quotes before any of this has been read.
     pub len: u64,
     /// The payload, when collection read it — because no digest was remembered
     /// for this file at this stat. `None` means unread: the bytes are whatever
-    /// [`source_path`](Self::source_path) holds.
+    /// [`source_path`](Self::source_path) holds, or will hold once a file held
+    /// elsewhere is brought in.
     pub bytes: Option<Vec<u8>>,
     /// MIME type, guessed from the extension.
     pub mime_type: String,

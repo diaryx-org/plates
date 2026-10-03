@@ -108,7 +108,7 @@ pub use collect::{
     collect_documents, collect_site, declared_dest, mime_type_from_ext, rebase, sanitize_component,
     sanitize_rel_path,
 };
-pub use digest::{DigestMemo, NoDigests, mtime_ms};
+pub use digest::{DigestMemo, Elsewhere, NoDigests, mtime_ms};
 pub use error::{Error, Result};
 pub use links::{LinkDiagnostic, LinkProblem, link_diagnostics};
 pub use mount::{MountOptions, MountReport, Mounted, collect_mounted};

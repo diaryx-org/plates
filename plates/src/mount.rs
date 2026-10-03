@@ -53,6 +53,7 @@ use prov::{Boundary, Descent, IdIndex, PeerResolver, Refusal, Storage, Workspace
 use crate::collect::{
     CollectOptions, RegistryLinks, anchor_of, collect_site, collected_source_path,
 };
+use crate::digest::DigestMemo;
 use crate::error::{Error, Result};
 use crate::plan::plan_site;
 use crate::source::{Attachment, CollectedSite};
@@ -123,9 +124,11 @@ struct Realm {
 /// function changes about them for each collection is written on
 /// [`CollectOptions::mount`] and [`CollectOptions::id_links`] — the rest travel
 /// as given, so the audience, the stamp and the digest memo are one policy
-/// across the whole site. [`CollectOptions::spanning_root`] is taken over: the
-/// outline of a mounted site is the federated tree, built here, and the inner
-/// collections walk none of their own.
+/// across the whole site — except that a peer's collection is never asked the
+/// memo's [`elsewhere`](crate::DigestMemo::elsewhere), whose answers are about
+/// the origin's files alone. [`CollectOptions::spanning_root`] is taken over:
+/// the outline of a mounted site is the federated tree, built here, and the
+/// inner collections walk none of their own.
 ///
 /// A peer that opens but cannot be planned is [`Error::Mount`], naming it,
 /// because the fix is a declaration in the other repository and building the
@@ -329,6 +332,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         .map(|a| a.dest_rel.clone())
         .collect();
 
+    let lent = Lent(opts.digests);
     let mut mounts = Vec::new();
     for o in &opened {
         let realm = &realms[&o.index];
@@ -360,7 +364,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
             backlinks: &backlinks,
             census: &census,
             spanning_root: None,
-            digests: opts.digests,
+            digests: &lent,
             digest: opts.digest,
             id_links: &links,
             mount: &o.prefix,
@@ -421,6 +425,32 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         mounts,
         warnings,
     })
+}
+
+/// The origin's digest memo, as a peer's collection is lent it: every question
+/// but [`elsewhere`](DigestMemo::elsewhere).
+///
+/// A memo is keyed by workspace-relative path and knows nothing of which
+/// workspace a path is in, so a peer's `img/a.png` and the origin's are one key
+/// to it. For [`recall`](DigestMemo::recall) that has always been tolerable,
+/// because an answer is served only when the file's stat still matches the
+/// one it was remembered at, and a different file at the same path rarely
+/// does. [`elsewhere`](DigestMemo::elsewhere) has no stat to check — it is
+/// asked precisely because there is no file — so lending it would describe a
+/// file missing from the peer with whatever the origin keeps under that name,
+/// and publish the origin's photograph in the peer's place. What the origin
+/// holds in the cloud is the origin's; a peer's absent file is skipped, as it
+/// was before the question existed.
+struct Lent<'a>(&'a dyn DigestMemo);
+
+impl DigestMemo for Lent<'_> {
+    fn recall(&self, rel: &Path, len: u64, mtime_ms: Option<i64>) -> Option<String> {
+        self.0.recall(rel, len, mtime_ms)
+    }
+
+    fn remember(&self, rel: &Path, len: u64, mtime_ms: Option<i64>, hash: &str) {
+        self.0.remember(rel, len, mtime_ms, hash);
+    }
 }
 
 /// The origin's options with the two per-collection fields replaced.
@@ -775,6 +805,90 @@ mod tests {
         assert_eq!(fig_node.children[0].children[0].path, "fig/docs.md");
         // The refused edge stays as written and names no page.
         assert_eq!(front.children[2].path, "id:twig/9tz497d");
+    }
+
+    /// A memory that says every file it is asked about is held elsewhere, and
+    /// writes down who asked.
+    #[derive(Default)]
+    struct AllElsewhere(std::cell::RefCell<Vec<PathBuf>>);
+
+    impl DigestMemo for AllElsewhere {
+        fn recall(&self, _rel: &Path, _len: u64, _mtime_ms: Option<i64>) -> Option<String> {
+            None
+        }
+        fn remember(&self, _rel: &Path, _len: u64, _mtime_ms: Option<i64>, _hash: &str) {}
+        fn elsewhere(&self, rel: &Path) -> Option<crate::digest::Elsewhere> {
+            self.0.borrow_mut().push(rel.to_path_buf());
+            Some(crate::digest::Elsewhere {
+                hash: format!("origin's {}", rel.display()),
+                len: 1,
+            })
+        }
+    }
+
+    /// The origin's memo describes the origin's files and nobody else's. Its
+    /// own page's photograph, left in the cloud, ships from the memo; the
+    /// peer's missing logo — at a path the memo would gladly answer for, since
+    /// a memo cannot tell one workspace's `www/logo.png` from another's — is
+    /// skipped, as it was before the question existed.
+    #[test]
+    fn a_peer_is_never_described_from_the_origins_memo_of_elsewhere() {
+        let (fs, peers) = org_and_fig();
+        write(
+            &fs,
+            "/org/www/about.md",
+            "---\ntitle: About\nid: 4sptdg2\naudience: public\npart_of: '[Diaryx](/www/index.md)'\n---\n![p](photo.jpg)\n",
+        );
+        prov::block_on(fs.remove_file(Path::new("/org/fig/www/logo.png"))).unwrap();
+        let ws: Workspace<prov::InMemoryFs> = Workspace::builder(fs)
+            .root("/org")
+            .workspace_id("org")
+            .build();
+        let spec = SiteSpec {
+            index: Some("[Site](/www/index.md)".into()),
+            ..site("www", "public")
+        };
+        let root = Path::new("README.md");
+        let census = prov::block_on(ws.census(root)).unwrap();
+        let plan = prov::block_on(plan_site(&ws, &spec, &[], root, &census, None)).unwrap();
+        let memo = AllElsewhere::default();
+        let opts = CollectOptions {
+            audience: "public",
+            gate_field: "audience",
+            strip_keys: &[],
+            stamp: &NoStamp,
+            id_by_path: &HashMap::new(),
+            backlinks: &BTreeMap::new(),
+            census: &census,
+            spanning_root: Some(root),
+            digests: &memo,
+            digest: |_| String::new(),
+            id_links: &NoIdLinks,
+            mount: "",
+        };
+
+        let mounted = prov::block_on(collect_mounted(
+            &ws,
+            &spec,
+            &plan,
+            root,
+            &opts,
+            &MountOptions {
+                peers: &peers,
+                descent: Descent::default(),
+            },
+        ))
+        .unwrap();
+
+        assert_eq!(mounted.mounts.len(), 1, "{:?}", mounted.warnings);
+        let shipped: Vec<(&str, &str)> = mounted
+            .site
+            .attachments
+            .iter()
+            .map(|a| (a.dest_rel.as_str(), a.hash.as_str()))
+            .collect();
+        assert_eq!(shipped, vec![("photo.jpg", "origin's www/photo.jpg")]);
+        assert_eq!(*memo.0.borrow(), vec![PathBuf::from("www/photo.jpg")]);
     }
 
     #[test]
