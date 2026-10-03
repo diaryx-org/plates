@@ -41,6 +41,23 @@ _No commits since the last tag._
 
 <!-- git-cliff:end -->
 
+## v0.11.0 — 2026-10-03
+
+### Breaking
+
+- **deps** — move to prov 0.18 and twig 4 ([`b5ee223`](https://github.com/diaryx-org/plates/commit/b5ee223629921b9fa869bd12f4280e6458ac2c41))
+
+### Added
+
+- **collect** — describe a file held elsewhere from the memo, rather than skipping it ([`6947690`](https://github.com/diaryx-org/plates/commit/69476903160ce05947c67b86ab7474f8984b4f21))
+
+### Behavioural changes
+
+- an inline `:vis` region nested inside another
+  (`:vis[a :vis[b]{.x} c]{.y}`) is filtered from the inside out where it
+  was refused with `Error::Malformed`.
+
+
 ## v0.10.0 — 2026-09-29
 
 ### Breaking
