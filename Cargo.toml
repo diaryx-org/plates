@@ -38,8 +38,10 @@ authors = ["Adam Harris"]
 # `hold`: `SiteSpec::hold` is exactly prov's, and a site over an archive that
 # declares one publishes less than its gate admits — a floor rather than a
 # preference for the fourth time, since planning the same archive against 0.10
-# would publish the drafts it says to hold.
-prov = { version = "0.17.0", default-features = false }
+# would publish the drafts it says to hold. 0.18 is twig 4's prov: the `twig`
+# plates reaches through `prov::twig` is whatever prov is on, so prov's twig
+# major is plates' too.
+prov = { version = "0.18.0", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
 # its own configuration. No parser backend is requested here — the format
 # features forward to prov, which forwards to the same fig.
