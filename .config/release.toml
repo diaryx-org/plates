@@ -8,9 +8,6 @@ release_branch = "main"
 # What to run before cutting. Each repo owns its own CI; this names it.
 verify = "cargo xtask ci"
 
-# What pushing the tag sets off. The warning printed before the push is handed
-# back to you is composed from this. The GitHub release is still cut by
-# `release` itself, from the machine that pushed the tag.
-[[tag_starts]]
-workflow = "publish.yml"
-does = "uploads every publishable crate to crates.io"
+# Not on crates.io: plates is consumed from git, by commit, so a tag is a name
+# for a commit and sets nothing off. 0.11.0 was the last version uploaded.
+publishes = false
