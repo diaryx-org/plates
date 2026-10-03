@@ -82,15 +82,16 @@ pub enum Error {
     },
     /// A region the parser could not read as one.
     ///
-    /// The signature of twig's one structural gap here: it does not nest
-    /// *inline* directives, so the outer half of `:vis[a :vis[b]{.x} c]{.y}`
-    /// parses as a bare `:vis` carrying neither attributes nor an interior,
-    /// while `a`, `c` and the `{.y}` that scoped them stay outside it as prose.
+    /// A `:vis` carrying neither attributes nor an interior. Before twig 4 that
+    /// was what the outer half of a nested inline region,
+    /// `:vis[a :vis[b]{.x} c]{.y}`, parsed as, with `a`, `c` and the `{.y}`
+    /// that scoped them left outside it as prose; twig 4 nests inline
+    /// directives, and such a region now filters from the inside out.
     ///
-    /// Unwrapping that marker would delete the word `:vis` and publish
-    /// everything it was scoping — a leak with no marker left behind for
+    /// Unwrapping a bare marker would delete the word `:vis` and publish
+    /// whatever it was meant to scope — a leak with no marker left behind for
     /// [`Residue`](Self::Residue) to find, which is why it is caught here by
-    /// shape instead. Nested *block* regions are unaffected and work.
+    /// shape instead.
     Malformed {
         /// The source of the region that could not be read.
         found: String,
@@ -104,9 +105,8 @@ impl std::fmt::Display for Error {
             Self::Edit(e) => write!(f, "visibility filter could not edit the body: {e}"),
             Self::Malformed { found } => write!(
                 f,
-                "a `{MARKER}` region could not be read as one ({found}) — an inline region \
-                 nested inside another inline region is not supported; use a block region \
-                 (`:::{MARKER}`) for the outer one"
+                "a `{MARKER}` region could not be read as one ({found}) — it names no \
+                 audience and scopes no text"
             ),
             Self::Residue { found } => write!(
                 f,
@@ -494,13 +494,27 @@ mod tests {
         );
     }
 
-    /// twig does not nest inline directives, and the half-parsed result would
-    /// otherwise publish the text it was scoping with only the marker removed.
-    /// Refused by shape, since no marker survives for the residue check to find.
+    /// Inline regions nest as block regions do, resolving from the inside out:
+    /// a region the reader is not in takes everything inside it, an inner
+    /// region they are in included.
     #[test]
-    fn a_nested_inline_region_is_refused_rather_than_half_filtered() {
+    fn nested_inline_regions_resolve_from_the_inside_out() {
         let body = "A :vis[secret :vis[inner]{.public} end]{.family}\n";
-        let err = filter_body(body, ContentFormat::Markdown, only(&["public"])).unwrap_err();
+        let out = filter_body(body, ContentFormat::Markdown, only(&["public"])).unwrap();
+        assert_eq!(out, "A \n");
+        let out = filter_body(body, ContentFormat::Markdown, only(&["family"])).unwrap();
+        assert_eq!(out, "A secret  end\n");
+        let out = filter_body(body, ContentFormat::Markdown, only(&["public", "family"])).unwrap();
+        assert_eq!(out, "A secret inner end\n");
+    }
+
+    /// A marker with neither an interior nor an audience is refused by shape:
+    /// unwrapping it would delete the word and leave nothing for the residue
+    /// check to find.
+    #[test]
+    fn a_bare_marker_is_refused() {
+        let err =
+            filter_body("A :vis end\n", ContentFormat::Markdown, only(&["public"])).unwrap_err();
         assert!(matches!(err, Error::Malformed { .. }), "{err:?}");
     }
 
