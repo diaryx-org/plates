@@ -2770,7 +2770,7 @@ mod tests {
         assert!(
             archive
                 .html
-                .contains(r#"<a href="../archive/attachments/scan.pdf.html">The Scan</a>"#),
+                .contains(r#"<a href="../archive/attachments/scan.pdf.html" data-source="archive/attachments/scan.pdf.md">The Scan</a>"#),
             "listed by the page that holds it: {}",
             archive.html
         );
@@ -4078,8 +4078,10 @@ mod tests {
             .find(|p| p.dest_filename == "a.html")
             .unwrap();
 
-        assert!(alpha.html.contains("b.md"), "got {}", alpha.html);
-        assert!(!alpha.html.contains("c.md"), "got {}", alpha.html);
+        // The body, since the nav names every page's source.
+        let content = &alpha.html[alpha.html.find(r#"<div class="content">"#).unwrap()..];
+        assert!(content.contains("b.md"), "got {content}");
+        assert!(!content.contains("c.md"), "got {content}");
         assert!(
             out.body_template_errors.is_empty(),
             "{:?}",
@@ -4195,6 +4197,47 @@ mod tests {
             "got {photos}"
         );
         assert!(!photos.contains("gone.jpg"), "got {photos}");
+    }
+
+    /// A nav link carries what a theme needs to draw its page where it is
+    /// listed: the colour the page names, if any, and its source path.
+    #[test]
+    fn a_nav_link_says_what_colour_its_page_is_and_where_it_came_from() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n  - \"[Blog](/Blog/Blog.md)\"\n---\nH.\n",
+                true,
+            ),
+            src(
+                "Blog/Blog.md",
+                "---\ntitle: Blog\ncolor: green\npart_of: \"/index.md\"\ncontents:\n  - \"[Post](/Blog/post.md)\"\n---\nB.\n",
+                false,
+            ),
+            src(
+                "Blog/post.md",
+                "---\ntitle: Post\npart_of: \"/Blog/Blog.md\"\n---\nP.\n",
+                false,
+            ),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap()
+            .html;
+
+        assert!(
+            home.contains(r#"<a href="Blog/index.html" data-color="green" data-source="Blog/Blog.md">Blog</a>"#),
+            "got {home}"
+        );
+        // A page that names no colour says only where it came from.
+        assert!(
+            home.contains(r#"<a href="Blog/post.html" data-source="Blog/post.md">Post</a>"#),
+            "got {home}"
+        );
     }
 
     /// What a page's relations point at is in its head as well as in reach of

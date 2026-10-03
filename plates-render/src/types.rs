@@ -422,6 +422,12 @@ pub struct SiteNavNode {
     pub is_current: bool,
     /// Whether this node is an ancestor of the current page
     pub is_ancestor_of_current: bool,
+    /// The page's colour name, as [`PublishedPage::color`] has it.
+    pub color: Option<String>,
+    /// The page's source path below the workspace root, `/`-separated — the
+    /// key a theme that gives an uncoloured page a stable colour of its own
+    /// hashes, so it can agree with the app that draws the same vault.
+    pub source: String,
     /// Child nodes
     pub children: Vec<SiteNavNode>,
 }

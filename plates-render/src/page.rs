@@ -138,11 +138,20 @@ pub fn render_site_nav(nav: &SiteNavigation, site_title: &str, root_prefix: &str
                 ""
             };
 
+            // What a theme needs to draw the page where it is listed without
+            // fetching it: the colour it names, and the path an uncoloured
+            // page's colour is derived from.
+            let color = node
+                .color
+                .as_deref()
+                .map(|c| format!(r#" data-color="{}""#, html_escape(c)))
+                .unwrap_or_default();
             let link = format!(
-                r#"<a href="{prefix}{href}"{aria}>{title}</a>"#,
+                r#"<a href="{prefix}{href}"{aria}{color} data-source="{source}">{title}</a>"#,
                 prefix = prefix,
                 href = html_escape(&node.href),
                 aria = aria,
+                source = html_escape(&node.source),
                 title = html_escape(&node.title),
             );
 
@@ -1216,6 +1225,8 @@ mod tests {
             href: href.to_string(),
             is_current: false,
             is_ancestor_of_current: false,
+            color: None,
+            source: href.replace(".html", ".md"),
             children,
         }
     }
@@ -1254,7 +1265,9 @@ mod tests {
         );
         // The root's children are the top of the list, and `index.html` is
         // not a row anywhere in it.
-        assert!(html.contains(r#"<ul class="nav-list"><li><a href="../a.html">a</a></li>"#));
+        assert!(html.contains(
+            r#"<ul class="nav-list"><li><a href="../a.html" data-source="a.md">a</a></li>"#
+        ));
         assert_eq!(
             html.matches("index.html").count(),
             2,
@@ -1300,13 +1313,13 @@ mod tests {
         let html = render_site_nav(&rooted_nav(), "My Site", "../");
         assert!(
             html.contains(
-                r#"<li class="nav-section nav-ancestor"><details open><summary><a href="../b.html">b</a></summary><ul class="nav-list"><li class="nav-current"><a href="../b/leaf.html" aria-current="page">b/leaf</a></li></ul></details></li>"#
+                r#"<li class="nav-section nav-ancestor"><details open><summary><a href="../b.html" data-source="b.md">b</a></summary><ul class="nav-list"><li class="nav-current"><a href="../b/leaf.html" aria-current="page" data-source="b/leaf.md">b/leaf</a></li></ul></details></li>"#
             ),
             "the ancestor is open: {html}"
         );
         assert!(
             html.contains(
-                r#"<li class="nav-section"><details><summary><a href="../c.html">c</a></summary>"#
+                r#"<li class="nav-section"><details><summary><a href="../c.html" data-source="c.md">c</a></summary>"#
             ),
             "the other section is closed: {html}"
         );
@@ -1324,7 +1337,7 @@ mod tests {
         let html = render_site_nav(&nav, "My Site", "");
         assert!(
             html.contains(
-                r#"<li class="nav-section nav-current"><details open><summary><a href="b.html" aria-current="page">b</a></summary>"#
+                r#"<li class="nav-section nav-current"><details open><summary><a href="b.html" aria-current="page" data-source="b.md">b</a></summary>"#
             ),
             "got {html}"
         );
@@ -1344,7 +1357,9 @@ mod tests {
         let html = render_site_nav(&nav, "Notes", "");
         assert!(html.contains(r#"<a class="site-masthead" href="index.html">Notes</a>"#));
         assert!(
-            html.contains(r#"<summary><a href="daily.html">daily</a></summary>"#),
+            html.contains(
+                r#"<summary><a href="daily.html" data-source="daily.md">daily</a></summary>"#
+            ),
             "the forest root is a row: {html}"
         );
     }

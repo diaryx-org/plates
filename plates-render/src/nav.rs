@@ -351,8 +351,22 @@ fn node_for(page: &PublishedPage, label: Option<&str>, children: Vec<SiteNavNode
         href: page.dest_filename.clone(),
         is_current: false,
         is_ancestor_of_current: false,
+        color: page.color.clone(),
+        source: source_key(&page.source_path),
         children,
     }
+}
+
+/// A source path as the vault spells it: relative, `/` between components
+/// whatever the platform, so the same page has the same key on every machine.
+fn source_key(path: &std::path::Path) -> String {
+    path.components()
+        .filter_map(|c| match c {
+            std::path::Component::Normal(s) => Some(s.to_string_lossy()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 /// Build `page`'s children from the containment, recursively.
@@ -415,6 +429,8 @@ pub fn nav_for_page(
                 href: node.href.clone(),
                 is_current,
                 is_ancestor_of_current: is_ancestor,
+                color: node.color.clone(),
+                source: node.source.clone(),
                 children,
             });
         }
