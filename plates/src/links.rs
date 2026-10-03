@@ -128,6 +128,14 @@ impl LinkProblem {
 /// set of documents this site serves, which is all that narrows the report — a
 /// broken link in a document the site does not publish is somebody else's build
 /// to fix.
+///
+/// prov resolves a path against the disk, so a link to a file whose bytes are
+/// [held elsewhere](crate::digest::DigestMemo::elsewhere) is `Broken` in the
+/// census and is reported here, although collection ships the file. The report
+/// is left to say so rather than taught otherwise: it changes nothing a site
+/// publishes, and a caller planning on a device that leaves files elsewhere is
+/// the one that knows to read [`LinkProblem::Broken`] against its own memo, or
+/// to plan without a census as a caller with no use for the report does.
 pub fn link_diagnostics<'a>(
     census: &[CensusEntry],
     published: impl IntoIterator<Item = &'a Path>,

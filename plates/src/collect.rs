@@ -30,7 +30,7 @@ use prov::{IdIndex, Storage, Workspace};
 
 use plates_render::visibility::{Audience, filter_body};
 
-use crate::digest::{self, DigestMemo};
+use crate::digest::{self, DigestMemo, Elsewhere};
 use crate::error::{Error, Result};
 use crate::source::{Attachment, CollectedSite, SourceFile};
 use crate::spec::{IndexDirectory, SitePlan};
@@ -241,7 +241,8 @@ pub struct CollectOptions<'a> {
     /// It costs one more walk of the reachable set. Inside a read scope that is
     /// a walk of prov's memo rather than of the disk.
     pub spanning_root: Option<&'a Path>,
-    /// What each attachment hashed to last time. See [`crate::digest`].
+    /// What each attachment hashed to last time, and what is known of one
+    /// whose bytes are not on this disk. See [`crate::digest`].
     pub digests: &'a dyn DigestMemo,
     /// How an attachment's bytes are digested when the memo does not recognize
     /// it.
@@ -685,7 +686,8 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
                 attachments.push(attachment);
             }
             // Missing/unreadable attachment: skip. Best-effort on purpose — a
-            // broken reference should not fail a whole build.
+            // broken reference should not fail a whole build. (A file the memo
+            // says is held elsewhere is not missing; `weigh` describes it.)
         }
 
         sources.push(SourceFile {
@@ -1034,8 +1036,20 @@ async fn weigh_attachment<FS: Storage + Clone, Id, Ix: IdIndex>(
 /// a file on disk, and the same file published under two names must not be
 /// hashed twice.
 ///
-/// `None` for a file that cannot be stat'ed or read — the caller skips it, as
-/// it always has.
+/// A file the stat finds **nothing** at is not yet given up on. The memo is
+/// asked whether this workspace has it somewhere else
+/// ([`DigestMemo::elsewhere`]) — a photograph a phone left in the cloud — and
+/// one it describes is collected exactly as a recalled file is: its digest, its
+/// length, no bytes. Skipping it instead is what used to make a publish from
+/// such a device prune the photograph from a site it was still part of. The
+/// order is the point: the stat comes first, so a file that is here is always
+/// weighed from the disk, whatever the memo believes.
+///
+/// `None` for a file that is neither here nor described as elsewhere, or that
+/// cannot be stat'ed or read for any reason other than its absence — the caller
+/// skips it, as it always has. A stat that *fails*, rather than finding
+/// nothing, is not a question about where the file is, and an answer from the
+/// memo would paper over a disk that is refusing to say.
 async fn weigh<FS: Storage + Clone, Id, Ix: IdIndex>(
     ws: &Workspace<FS, Id, Ix>,
     opts: &CollectOptions<'_>,
@@ -1043,8 +1057,24 @@ async fn weigh<FS: Storage + Clone, Id, Ix: IdIndex>(
     source: PathBuf,
 ) -> Option<Attachment> {
     let abs = ws.fs_path(&source);
-    let meta = ws.fs().metadata(&abs).await.ok()?;
     let mime_type = mime_type_from_ext(&source);
+    let meta = match ws.fs().metadata(&abs).await {
+        Ok(meta) => meta,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Not remembered afterwards: there is no stat to validate a
+            // remembered digest against, and the memo already knows.
+            let Elsewhere { hash, len } = opts.digests.elsewhere(&source)?;
+            return Some(Attachment {
+                dest_rel,
+                source_path: source,
+                hash,
+                len,
+                bytes: None,
+                mime_type,
+            });
+        }
+        Err(_) => return None,
+    };
     let mtime = digest::mtime_ms(&meta);
 
     if let Some(hash) = opts.digests.recall(&source, meta.len(), mtime) {
@@ -2146,6 +2176,184 @@ mod tests {
             site.attachments
         );
         assert!(site.withheld.is_empty());
+    }
+
+    /// What a light device's memory knows: some files are not on this disk,
+    /// and what each of them is. It recalls nothing, and writes down whatever
+    /// it is asked to remember, so a test can say what was never remembered.
+    #[derive(Default)]
+    struct HeldElsewhere {
+        held: HashMap<PathBuf, Elsewhere>,
+        remembered: std::cell::RefCell<Vec<PathBuf>>,
+    }
+
+    impl HeldElsewhere {
+        fn holding(rel: &str, hash: &str, len: u64) -> Self {
+            Self {
+                held: [(
+                    PathBuf::from(rel),
+                    Elsewhere {
+                        hash: hash.to_string(),
+                        len,
+                    },
+                )]
+                .into_iter()
+                .collect(),
+                ..Self::default()
+            }
+        }
+    }
+
+    impl DigestMemo for HeldElsewhere {
+        fn recall(&self, _rel: &Path, _len: u64, _mtime_ms: Option<i64>) -> Option<String> {
+            None
+        }
+        fn remember(&self, rel: &Path, _len: u64, _mtime_ms: Option<i64>, _hash: &str) {
+            self.remembered.borrow_mut().push(rel.to_path_buf());
+        }
+        fn elsewhere(&self, rel: &Path) -> Option<Elsewhere> {
+            self.held.get(rel).cloned()
+        }
+    }
+
+    /// Collect `admitted` with `digests` as the memory, digesting whatever is
+    /// read as a string that says it was — so a hash that came from the disk
+    /// cannot be mistaken for one that came from the memo.
+    fn collect_remembering(
+        ws: &Workspace<prov::InMemoryFs>,
+        admitted: &[&str],
+        digests: &dyn DigestMemo,
+    ) -> CollectedSite {
+        let docs: Vec<(PathBuf, bool)> = admitted
+            .iter()
+            .map(|p| (PathBuf::from(p), *p == "index.md"))
+            .collect();
+        prov::block_on(collect_documents(
+            ws,
+            &docs,
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                gate_field: "audience",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &HashMap::new(),
+                backlinks: &BTreeMap::new(),
+                census: &[],
+                spanning_root: None,
+                digests,
+                digest: |bytes| format!("read {} bytes", bytes.len()),
+                id_links: &NoIdLinks,
+                mount: "",
+            },
+        ))
+        .unwrap()
+    }
+
+    /// The phone's case. A page embeds a photograph whose bytes were left in
+    /// the cloud: nothing is on disk at `img/a.png`, and the memo knows what is
+    /// there. The site ships it, described from the memo with no bytes, exactly
+    /// as a recalled file is — and nothing is remembered, since there was no
+    /// stat to remember it against.
+    #[test]
+    fn a_file_held_elsewhere_is_described_from_the_memo() {
+        let ws = vault(&[("index.md", "---\ntitle: Home\n---\n![a](img/a.png)\n")]);
+        let memo = HeldElsewhere::holding("img/a.png", "5e1f", 4096);
+
+        let site = collect_remembering(&ws, &["index.md"], &memo);
+        assert_eq!(site.attachments.len(), 1, "{:?}", site.attachments);
+        let photo = &site.attachments[0];
+        assert_eq!(photo.dest_rel, "img/a.png");
+        assert_eq!(photo.source_path, PathBuf::from("img/a.png"));
+        assert_eq!((photo.hash.as_str(), photo.len), ("5e1f", 4096));
+        assert_eq!(photo.bytes, None);
+        assert_eq!(photo.mime_type, "image/png");
+        assert!(memo.remembered.borrow().is_empty());
+    }
+
+    /// The same absent file, and a memo with nothing to say about it: skipped,
+    /// as every missing file always was.
+    #[test]
+    fn an_absent_file_the_memo_does_not_know_is_still_skipped() {
+        let ws = vault(&[("index.md", "---\ntitle: Home\n---\n![a](img/a.png)\n")]);
+
+        let site = collect_remembering(&ws, &["index.md"], &crate::digest::NoDigests);
+        assert!(site.attachments.is_empty(), "{:?}", site.attachments);
+
+        let memo = HeldElsewhere::holding("img/other.png", "5e1f", 4096);
+        let site = collect_remembering(&ws, &["index.md"], &memo);
+        assert!(site.attachments.is_empty(), "{:?}", site.attachments);
+    }
+
+    /// The disk wins. A file that is here is weighed from the disk, whatever
+    /// the memo would say of it elsewhere — read, digested, remembered.
+    #[test]
+    fn a_file_on_disk_is_weighed_from_the_disk_whatever_the_memo_says() {
+        let ws = vault(&[
+            ("index.md", "---\ntitle: Home\n---\n![a](img/a.png)\n"),
+            ("img/a.png", "PNG!"),
+        ]);
+        let memo = HeldElsewhere::holding("img/a.png", "5e1f", 4096);
+
+        let site = collect_remembering(&ws, &["index.md"], &memo);
+        assert_eq!(site.attachments.len(), 1, "{:?}", site.attachments);
+        let photo = &site.attachments[0];
+        assert_eq!((photo.hash.as_str(), photo.len), ("read 4 bytes", 4));
+        assert_eq!(photo.bytes.as_deref(), Some(&b"PNG!"[..]));
+        assert_eq!(*memo.remembered.borrow(), vec![PathBuf::from("img/a.png")]);
+    }
+
+    /// A sidecar the plan admits ships its payload by its own claim, with no
+    /// page embedding it — and a payload held elsewhere ships on the same
+    /// terms. The sidecar itself is a text file and always here; only the
+    /// bytes it describes are away.
+    #[test]
+    fn a_planned_sidecar_ships_a_payload_held_elsewhere() {
+        let ws = vault(&[
+            (
+                "index.md",
+                "---\ntitle: Home\ncontents:\n- attachments/scan.pdf.yaml\n---\nHome.\n",
+            ),
+            (
+                "attachments/scan.pdf.yaml",
+                "title: Scan\ncontent: scan.pdf\nattachment: true\npart_of: /index.md\n",
+            ),
+        ]);
+        let memo = HeldElsewhere::holding("attachments/scan.pdf", "9d0c", 812);
+
+        let site = collect_remembering(&ws, &["index.md", "attachments/scan.pdf.yaml"], &memo);
+        assert!(
+            site.sources
+                .iter()
+                .any(|s| s.source_rel_path == "attachments/scan.pdf.md"),
+            "the sidecar is still a page"
+        );
+        assert_eq!(site.attachments.len(), 1, "{:?}", site.attachments);
+        let scan = &site.attachments[0];
+        assert_eq!(scan.dest_rel, "attachments/scan.pdf");
+        assert_eq!((scan.hash.as_str(), scan.len), ("9d0c", 812));
+        assert_eq!(scan.bytes, None);
+    }
+
+    /// Being away does not get a file past its sidecar. One that says it is for
+    /// another audience is withheld before anyone asks where its bytes are.
+    #[test]
+    fn a_file_held_elsewhere_is_still_withheld_by_its_sidecar() {
+        let ws = vault(&[
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [public]\n---\n![p](attachments/private.jpg)\n",
+            ),
+            (
+                "attachments/private.jpg.yaml",
+                "title: Private\ncontent: private.jpg\nattachment: true\naudience: [family]\n",
+            ),
+        ]);
+        let memo = HeldElsewhere::holding("attachments/private.jpg", "77aa", 2048);
+
+        let site = collect_remembering(&ws, &["index.md"], &memo);
+        assert!(site.attachments.is_empty(), "{:?}", site.attachments);
+        assert_eq!(site.withheld, vec!["attachments/private.jpg".to_string()]);
     }
 
     /// …and naming no root collects no outline, which leaves the render layer

@@ -45,6 +45,32 @@
 //! was touched again. It cannot corrupt an upload — every byte that is *sent*
 //! is read fresh at materialize time, never
 //! recalled — and it cannot leak one, since a digest names no content.
+//!
+//! # A file held elsewhere
+//!
+//! The same memory is asked one more question, about a file that is **not on
+//! this disk at all**. A workspace synced to a light device — a phone that left
+//! its photographs in the cloud — has files whose bytes live somewhere else
+//! while its history still knows exactly what they are: which digest, how
+//! long. To a collector that only stats, such a file is indistinguishable from
+//! one that was deleted, so it used to be skipped; a publish then found the
+//! photograph on the server but not in the site, and pruned it. The only way
+//! round that was to fetch every photograph before every publish, which is the
+//! cost this whole module exists to avoid, paid in downloads instead of reads.
+//!
+//! [`DigestMemo::elsewhere`] answers it. A file the memo describes as
+//! [`Elsewhere`] is collected as a recalled one is — a digest and a length, no
+//! bytes — and a diff treats it exactly as it treats any unchanged attachment.
+//! The disk still wins: the question is asked only after a stat has said the
+//! file is not there, so a file that is present is weighed as it always was,
+//! whatever the memo would have said about it.
+//!
+//! The cost of a wrong answer is the same shape as a stale digest's, and
+//! slightly larger. A digest the server already holds publishes nothing new.
+//! One it does not hold names an upload whose bytes this device does not have,
+//! and the layer that materializes the upload has to fetch them from wherever
+//! they are kept or refuse — which is that layer's to decide, because only it
+//! knows where "elsewhere" is.
 
 use std::path::Path;
 
@@ -69,6 +95,43 @@ pub trait DigestMemo {
     /// decline (no room, no usable mtime); a memory is an optimization and
     /// every caller is already correct without one.
     fn remember(&self, rel: &Path, len: u64, mtime_ms: Option<i64>, hash: &str);
+
+    /// What is known of `rel`, a file this workspace has whose bytes are not on
+    /// this disk — left in the cloud by a light device, say — or `None` when
+    /// nothing is. See the [module docs](self#a-file-held-elsewhere).
+    ///
+    /// Asked only after a stat has found nothing at `rel`, so it never
+    /// overrides a file that is present, and never about a file some other
+    /// workspace keeps: a [mount](crate::mount) lends a peer's collection the
+    /// memo's [`recall`](Self::recall) and [`remember`](Self::remember), but not
+    /// this. An answer is not remembered, because there is no stat to remember
+    /// it against.
+    ///
+    /// The default answers `None`, which is what every memory that predates
+    /// the question says: a file that is not here is skipped, as it always was.
+    fn elsewhere(&self, rel: &Path) -> Option<Elsewhere> {
+        let _ = rel;
+        None
+    }
+}
+
+/// What a [`DigestMemo`] knows of a file whose bytes are not on this disk:
+/// enough to describe it to a diff without reading it, which is exactly what a
+/// recalled digest is for a file that is.
+///
+/// Keeping it true is the implementor's. Nothing here can check either field —
+/// there is nothing on the disk to check them against — and a collected
+/// attachment carries them to the diff as they were given.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Elsewhere {
+    /// The file's digest, in the spelling
+    /// [`CollectOptions::digest`](crate::CollectOptions::digest) produces —
+    /// lowercase-hex SHA-256, as for [`DigestMemo::recall`] — so it compares
+    /// with a `content_hash` exactly as a digest of the file read here would.
+    pub hash: String,
+    /// The file's length in bytes, which a preview quotes as it quotes a
+    /// stat's.
+    pub len: u64,
 }
 
 /// A memory that remembers nothing — every attachment is read and hashed.
@@ -169,5 +232,15 @@ mod tests {
         let memo = NoDigests;
         memo.remember(Path::new("a.png"), 1, Some(1), "abc");
         assert_eq!(memo.recall(Path::new("a.png"), 1, Some(1)), None);
+        assert_eq!(memo.elsewhere(Path::new("a.png")), None);
+    }
+
+    /// A memory written before the question was asked answers it the way
+    /// `NoDigests` does, without a line of its own.
+    #[test]
+    fn a_memo_that_says_nothing_of_elsewhere_knows_nothing_there() {
+        let memo = Map::default();
+        memo.remember(Path::new("img/a.png"), 7, Some(1), "abc");
+        assert_eq!(memo.elsewhere(Path::new("img/a.png")), None);
     }
 }
