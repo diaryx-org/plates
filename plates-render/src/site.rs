@@ -1194,6 +1194,23 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 .map(Vec::as_slice)
                 .unwrap_or_default(),
         );
+        // What this page's declared relations point at, for whatever reads
+        // the page rather than its body: the same edges a template reads as
+        // `relations`, already narrowed to what this site publishes.
+        let relation_links = prepared
+            .collected
+            .relations
+            .get(&PathBuf::from(links::sanitize_rel_path(
+                &p.source_path.to_string_lossy(),
+            )))
+            .map(|relations| {
+                page::generate_relation_links(
+                    relations,
+                    &links::root_prefix(&p.dest_filename),
+                    identity.is_empty(),
+                )
+            })
+            .unwrap_or_default();
         // Advertised on exactly the condition the files are written under
         // below. The tags used to hang off `generate_feeds` alone, so a render
         // with no base URL — every published site, since no client sent one —
@@ -1220,6 +1237,7 @@ pub fn render_site(sources: &[SourceDoc], opts: &SiteOptions) -> SiteRender {
                 nav: &nav,
                 seo_meta: &seo,
                 identity_meta: &identity,
+                relation_links: &relation_links,
                 feed_links: &feeds,
                 // The page's own language when it declared one, and the site's
                 // otherwise — the same shape as its own shell above, for the
@@ -4120,6 +4138,91 @@ mod tests {
 
         assert!(!alpha.html.contains("Has a sequel"), "got {}", alpha.html);
         assert!(!alpha.html.contains("private"), "got {}", alpha.html);
+    }
+
+    /// What a page's relations point at is in its head as well as in reach of
+    /// its body: a `DC.relation` link per target, the vault's name for the
+    /// relation beside it, its href relative to the page — so a reader's script
+    /// can follow `transcription` without a template having printed it.
+    #[test]
+    fn a_relation_is_linked_from_the_head_relative_to_the_page() {
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src(
+                "scans/notes.md",
+                "---\ntitle: Notes & all\n---\nN.\n",
+                false,
+            ),
+            SourceDoc {
+                outbound: edges(&[
+                    ("transcription", "scans/notes.md"),
+                    ("sequel", "private.md"),
+                ]),
+                ..src("scans/scan.md", "---\ntitle: Scan\n---\nS.\n", false)
+            },
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let page = |dest: &str| {
+            &out.pages
+                .iter()
+                .find(|p| p.dest_filename == dest)
+                .unwrap()
+                .html
+        };
+        let scan = page("scans/scan.html");
+
+        assert!(
+            scan.contains(
+                r#"<link rel="DC.relation" data-relation="transcription" href="../scans/notes.html" title="Notes &amp; all">"#
+            ),
+            "got {scan}"
+        );
+        // Declared once, whether or not an identifier declared it first.
+        assert_eq!(scan.matches(r#"rel="schema.DC""#).count(), 1, "got {scan}");
+        // A target this site does not publish is not named, here or anywhere.
+        assert!(
+            !scan.contains("sequel") && !scan.contains("private"),
+            "got {scan}"
+        );
+        // And a page with no relations gains nothing.
+        assert!(!page("scans/notes.html").contains("DC.relation"));
+    }
+
+    /// A page that has an identifier declares the schema with it, and its
+    /// relations do not declare it a second time.
+    #[test]
+    fn relations_beside_an_identifier_share_its_schema() {
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\nH.\n", true),
+            src("b.md", "---\ntitle: Beta\n---\nB.\n", false),
+            SourceDoc {
+                outbound: edges(&[("sequel", "b.md")]),
+                ..src("a.md", "---\ntitle: Alpha\nid: x8qqhzx\n---\nA.\n", false)
+            },
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let alpha = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "a.html")
+            .unwrap()
+            .html;
+
+        assert!(
+            alpha.contains(r#"<meta name="DC.identifier""#),
+            "got {alpha}"
+        );
+        assert!(
+            alpha.contains(r#"data-relation="sequel" href="b.html""#),
+            "got {alpha}"
+        );
+        assert_eq!(
+            alpha.matches(r#"rel="schema.DC""#).count(),
+            1,
+            "got {alpha}"
+        );
     }
 
     /// The `{{ }}` migration: a brace outside a link destination publishes as

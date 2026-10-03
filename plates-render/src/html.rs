@@ -148,6 +148,10 @@ pub struct PageContext<'a> {
     /// when it is empty, so a page whose document has no identifier is
     /// byte-for-byte the page it was.
     pub identity_meta: &'a str,
+    /// Pre-rendered `<link rel="DC.relation">` tags — what this page's declared
+    /// relations point at, as `page::generate_relation_links` writes them —
+    /// or empty, in which case the head is unchanged.
+    pub relation_links: &'a str,
     /// Pre-rendered feed `<link>` tags, or empty.
     pub feed_links: &'a str,
     /// BCP 47 language tag for `<html lang="…">`.
@@ -237,6 +241,10 @@ fn script_tags(scripts: &[String], prefix: &str) -> Vec<String> {
 /// blank line in every head on the site.
 fn identity_tags(ctx: &PageContext<'_>) -> Option<String> {
     (!ctx.identity_meta.is_empty()).then(|| ctx.identity_meta.to_string())
+}
+
+fn relation_tags(ctx: &PageContext<'_>) -> Option<String> {
+    (!ctx.relation_links.is_empty()).then(|| ctx.relation_links.to_string())
 }
 
 fn join_tags(tags: Vec<String>) -> String {
@@ -561,6 +569,7 @@ impl HtmlRenderer {
             ctx.feed_links.to_string(),
         ];
         head.extend(identity_tags(ctx));
+        head.extend(relation_tags(ctx));
         head.extend(style_link_tags(&page.styles, &prefix));
 
         let mut scripts = vec![format!(
@@ -636,6 +645,7 @@ impl HtmlRenderer {
             ctx.feed_links.to_string(),
         ];
         head.extend(identity_tags(ctx));
+        head.extend(relation_tags(ctx));
         head.extend(style_link_tags(&page.styles, &prefix));
 
         format!(
@@ -968,6 +978,7 @@ mod tests {
             nav,
             seo_meta: "",
             identity_meta: "",
+            relation_links: "",
             feed_links: "",
             lang: "en",
             template,
