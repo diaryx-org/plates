@@ -1,10 +1,11 @@
-//! A node a page draws in place: `::album{src="…"}`.
+//! A node a page draws in place: `::album{src="…"}` and `::page{src="…"}`.
 //!
 //! A page links another node with a link, and the reader goes there. A page
 //! *draws* one with a leaf directive naming it, and the reader sees it where
 //! the directive stands: an album's photographs, as the gallery the album's own
 //! page is ([`crate::manifest`]), captioned with the album's title and linking
-//! to it. The vocabulary is Diaryx's (its editor draws the same directive), and
+//! to it; a page's words, rendered where the directive stands, under its title
+//! linking to the page itself. The vocabulary is Diaryx's (its editor draws the same directive), and
 //! every other leaf directive still renders as an element wearing its
 //! attributes ([`crate::body`]).
 //!
@@ -29,8 +30,11 @@ use prov::twig;
 /// The directive that draws an album — a manifest node — as its gallery.
 pub const ALBUM: &str = "album";
 
+/// The directive that draws another page's body — transclusion, read-only.
+pub const PAGE: &str = "page";
+
 /// Every directive name this module draws.
-pub const NAMES: &[&str] = &[ALBUM];
+pub const NAMES: &[&str] = &[ALBUM, PAGE];
 
 /// One directive the body draws a node with, found by [`mark`].
 #[derive(Debug, Clone, PartialEq, Eq)]
