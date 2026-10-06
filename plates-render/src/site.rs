@@ -3858,6 +3858,34 @@ mod tests {
         );
     }
 
+    /// A hero's heading is anchored and a ledger's link is rewritten like any
+    /// other: the chrome is rendered before the page's passes, not after.
+    #[test]
+    fn chrome_directives_go_through_the_page_passes() {
+        let index = "---\ntitle: Home\n---\n:::hero[Eyebrow]\n# Big title\n\nSee [Alpha](a.md).\n:::\n\n:::ledger\n- **Next** [Alpha](a.md)\n:::\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("a.md", "---\ntitle: Alpha\n---\nA.\n", false),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+        let html = &home.html;
+        assert!(html.contains(r#"<section class="hero">"#), "{html}");
+        assert!(html.contains(r#"<h1 id="big-title">"#), "{html}");
+        assert!(
+            html.contains(r#"<p class="lede">See <a href="a.html">Alpha</a>.</p>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span class="val"><a href="a.html">Alpha</a></span>"#),
+            "{html}"
+        );
+    }
+
     /// A listing can dress each entry in its own colour: the entry carries
     /// the word, the attribute carries it to the element, and the element is
     /// what a stylesheet sees.
