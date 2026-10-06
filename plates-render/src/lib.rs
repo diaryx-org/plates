@@ -24,6 +24,8 @@ pub mod attachment;
 pub mod body;
 mod chrome;
 pub mod dates;
+#[cfg(feature = "templating")]
+pub mod embed;
 pub mod frontmatter;
 pub mod headings;
 pub mod html;
