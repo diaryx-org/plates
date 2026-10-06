@@ -22,6 +22,7 @@
 pub mod appearance;
 pub mod attachment;
 pub mod body;
+mod chrome;
 pub mod dates;
 pub mod frontmatter;
 pub mod headings;
