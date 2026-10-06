@@ -852,6 +852,7 @@ mod tests {
             styles: vec![],
             scripts: vec![],
             layout: PageLayout::default(),
+            setting: Default::default(),
             shell: None,
             lang: None,
             nav_title: None,

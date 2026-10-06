@@ -217,6 +217,9 @@ pub struct PublishedPage {
     pub scripts: Vec<String>,
     /// Which shell wraps this page (from frontmatter `layout`).
     pub layout: PageLayout,
+    /// The face and body size this page names (from frontmatter `font` and
+    /// `size`), as the CSS the page's head carries — see [`crate::setting`].
+    pub setting: crate::setting::PageSetting,
     /// The shell template this page asked for by name (from frontmatter
     /// `shell`), as the vault-relative path it was written as — the key into
     /// [`SiteOptions::templates`](crate::site::SiteOptions::templates), since
