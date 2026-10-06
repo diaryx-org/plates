@@ -1413,6 +1413,7 @@ fn page_skeleton(
         styles,
         scripts,
         layout,
+        setting: crate::setting::PageSetting::read(fm),
         // Only for a page that wears a shell at all: `bare` and `verbatim` are
         // statements that this page carries its own frame, and recording a
         // request they cannot act on would report a missing template for a page
@@ -1832,6 +1833,7 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         styles: Vec::new(),
         scripts: Vec::new(),
         layout: PageLayout::default(),
+        setting: Default::default(),
         shell: None,
         // No frontmatter to declare one: a synthesized index is the site
         // speaking about itself, so it is in the site's language.
@@ -3208,6 +3210,44 @@ mod tests {
             .find(|p| p.dest_filename == "index.html")
             .unwrap();
         assert!(home.html.contains("poster.html"));
+    }
+
+    /// A page's `font:` and `size:` reach its head as the two properties the
+    /// stylesheet reads, the size as a ratio of the default body; a page that
+    /// names neither carries nothing; and a `layout:` that is a paper is not one
+    /// of this crate's shells, so the page still wears the site's.
+    #[test]
+    fn a_page_says_how_its_body_is_set() {
+        let index = "---\ntitle: Home\ncontents:\n  - \"/letter.md\"\n---\nHi.\n";
+        let letter = "---\ntitle: Letter\npart_of: \"/index.md\"\nfont: Serif\nsize: 12\nlayout: a4\ncolumns: 2\n---\nDear you.\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src("letter.md", letter, false),
+        ];
+
+        let out = render_site(&sources, &SiteOptions::default());
+        let page = |dest: &str| out.pages.iter().find(|p| p.dest_filename == dest).unwrap();
+
+        let letter = page("letter.html");
+        assert!(
+            letter.html.contains("--doc-scale: 0.75;"),
+            "{}",
+            letter.html
+        );
+        assert!(
+            letter.html.contains("--doc-font: \"Georgia\""),
+            "{}",
+            letter.html
+        );
+        assert!(
+            letter.html.contains(r#"<div class="site-content">"#),
+            "the site shell"
+        );
+        let head = &letter.html[..letter.html.find("</head>").unwrap()];
+        assert!(head.contains("<style>:root {"), "in the head: {head}");
+
+        let home = page("index.html");
+        assert!(!home.html.contains("--doc-"), "{}", home.html);
     }
 
     /// `layout: verbatim` publishes the body unread. Asserted as an equality
