@@ -2848,6 +2848,7 @@ mod tests {
             index: None,
             shell: None,
             stylesheet: None,
+            style: None,
             lang: None,
             syntaxes: Vec::new(),
             header: None,
@@ -2920,6 +2921,39 @@ mod tests {
         let paths: Vec<&str> = site.sources.iter().map(|s| s.dest_path.as_str()).collect();
         assert!(paths.contains(&"book.html"), "{paths:?}");
         assert!(!paths.iter().any(|p| p.contains("secret")), "{paths:?}");
+    }
+
+    /// A style is carried, by name, from the circle's page to the theme, for
+    /// the renderer to draw — and is not taken for a misspelled setting.
+    #[test]
+    fn a_circles_style_is_carried_to_its_theme() {
+        let (ws, found) = circle_vault(
+            "---\ntitle: Family\nterm: family\npart_of: '[Audiences](/vocab/audiences.md)'\nsite:\n  style: room\n---\nWelcome.\n",
+        );
+        let term = prov::block_on(crate::read_term_config(
+            &ws,
+            &found.root_doc,
+            &found.config,
+            "audience",
+            "family",
+        ));
+        assert!(term.warnings.is_empty(), "{:?}", term.warnings);
+        assert_eq!(term.style.as_deref(), Some("room"));
+        let (spec, _) = crate::SiteSpec::from_export(&prov::exports::ExportSpec {
+            name: "family".into(),
+            label: None,
+            gate: prov::exports::Gate {
+                field: "audience".into(),
+                value: "family".into(),
+            },
+            hold: None,
+            view: None,
+        })
+        .with_term_config(term);
+        assert_eq!(spec.style.as_deref(), Some("room"));
+        let theme = prov::block_on(crate::read_theme(&ws, &spec, &[]));
+        assert_eq!(theme.style.as_deref(), Some("room"));
+        assert!(theme.template.is_none());
     }
 
     /// A circle that names a front page opens on it, and its own page — which
