@@ -217,6 +217,9 @@ pub struct PublishedPage {
     pub scripts: Vec<String>,
     /// Which shell wraps this page (from frontmatter `layout`).
     pub layout: PageLayout,
+    /// The face and body size this page names (from frontmatter `font` and
+    /// `size`), as the CSS the page's head carries — see [`crate::setting`].
+    pub setting: crate::setting::PageSetting,
     /// The shell template this page asked for by name (from frontmatter
     /// `shell`), as the vault-relative path it was written as — the key into
     /// [`SiteOptions::templates`](crate::site::SiteOptions::templates), since
@@ -286,6 +289,17 @@ pub struct PublishedPage {
     /// card, say; the file is the one the attachment page itself embeds, so it
     /// ships whenever the page does.
     pub picture: Option<String>,
+    /// The picture the page wears as its cover, as a path below the site root
+    /// — frontmatter `cover:`, a link to an image file resolved against the
+    /// page like a body embed is, and `None` when it names none, names a file
+    /// a browser cannot draw, or names one this site does not publish.
+    ///
+    /// The author's choice, never a guess: nothing here falls back to the
+    /// page's first image. A theme that draws pages as covers may lay it under
+    /// the title (the Diaryx library does); one that draws no covers ignores
+    /// it. The file ships whenever the page does, on the terms an embed's
+    /// does — see `plates::collect`.
+    pub cover: Option<String>,
 }
 
 /// Whether an HTML body is a whole document rather than a fragment: its first
