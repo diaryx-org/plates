@@ -337,6 +337,49 @@ a:hover {
 .content blockquote > :first-child { margin-top: 0; }
 .content blockquote > :last-child { margin-bottom: 0; }
 
+/* Verse — a block whose line breaks are the content. Markdown writes it as
+   `<div class="verse">` around one paragraph per stanza (the editor reads that
+   div as a poem; this page sees the div and its paragraphs), djot as
+   `::: verse`. Set as a book sets verse off in a page of prose: in from the
+   margin, a little more room above and below, never justified.
+
+   Every source line is a line. `pre-line` keeps a soft break (a plain newline)
+   as the break it is; a `\` hard break arrives as `<br>` *and* a newline, so
+   the `<br>` is hidden to keep the newline from doubling it. An indent is em
+   spaces, which `pre-line` does not collapse. A line too long for the measure
+   hangs its turnover 2em deeper — `each-line` reaches every line after a forced
+   break; where it is unsupported the declaration is dropped and lines simply
+   do not hang. */
+.content .verse {
+    margin: 1.75rem 0 1.75rem 2em;
+    text-align: start;
+    hyphens: manual;
+}
+
+.content .verse p {
+    white-space: pre-line;
+    text-indent: 2em hanging each-line;
+    margin: 0 0 1em;
+}
+
+.content .verse p:last-child { margin-bottom: 0; }
+.content .verse br { display: none; }
+
+/* The same block from a format that spells verse natively (AsciiDoc's
+   `[verse]`): one element per line, an empty line a stanza break, and a nested
+   block one step of indent. */
+.content .line-block {
+    margin: 1.75rem 0 1.75rem 2em;
+}
+
+.content .line-block .line-block { margin: 0 0 0 1em; }
+
+.content .line-block .line {
+    padding-left: 2em;
+    text-indent: -2em;
+    min-height: 1lh;
+}
+
 /* `width: max-content` with `max-width: 100%` is what makes a table that does
    not fit scroll *inside itself* rather than widening the page. It costs the
    full-bleed look for a table that would have fitted, which is the cheaper of
@@ -1026,6 +1069,12 @@ body.has-site-nav {
     }
 
     .content pre, .content table, .content blockquote, .content img {
+        break-inside: avoid;
+    }
+
+    /* A stanza stays whole on paper; a poem longer than a page breaks
+       between its stanzas. */
+    .content .verse p, .content .line-block {
         break-inside: avoid;
     }
 
