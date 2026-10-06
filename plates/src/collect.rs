@@ -738,6 +738,14 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
         // exactly an attachment's terms: `plates_render` emits the tags and
         // says so, and copying the file is the caller's — see
         // `plates_render::site::RenderedPage::styles`.
+        // A page's `cover:` is a picture the page shows, as an embed is, and
+        // ships on an embed's terms: carried by the page, or withheld when its
+        // sidecar names who it is for and this site is not among them.
+        if let Some(cover) = parsed.meta.get("cover") {
+            for raw in cover.link_strings() {
+                push_canonical_ref(path, &raw, false, anchor, &page_paths, &mut refs);
+            }
+        }
         for key in ["styles", "scripts"] {
             if let Some(listed) = parsed.meta.get(key) {
                 for raw in listed.link_strings() {
@@ -2315,6 +2323,56 @@ mod tests {
             site.attachments
         );
         assert!(site.withheld.is_empty());
+    }
+
+    /// A cover is a picture the page shows, so it ships on an embed's terms
+    /// with no body reference at all: carried by the book when its sidecar
+    /// says nothing, withheld and named when its sidecar is for someone else.
+    #[test]
+    fn a_cover_ships_and_is_withheld_as_an_embed_is() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [public]\ncontents:\n- trip/trip.md\n- family/family.md\n---\n",
+            ),
+            (
+                "trip/trip.md",
+                "---\ntitle: Trip\naudience: [public]\npart_of: /index.md\ncover: '[Cover](view.jpg)'\ncontents:\n- view.jpg.yaml\n---\nNo picture in the text.\n",
+            ),
+            (
+                "trip/view.jpg.yaml",
+                "title: View\ncontent: view.jpg\nattachment: true\npart_of: /trip/trip.md\n",
+            ),
+            (
+                "family/family.md",
+                "---\ntitle: Family\naudience: [public]\npart_of: /index.md\ncover: portrait.jpg\ncontents:\n- portrait.jpg.yaml\n---\n",
+            ),
+            (
+                "family/portrait.jpg.yaml",
+                "title: Portrait\ncontent: portrait.jpg\nattachment: true\naudience: [family]\npart_of: /family/family.md\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        for payload in ["trip/view.jpg", "family/portrait.jpg"] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(payload), b"JPEG")).unwrap();
+        }
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let site = try_collect(&ws, &["index.md", "trip/trip.md", "family/family.md"]).unwrap();
+        let shipped: Vec<_> = site
+            .attachments
+            .iter()
+            .map(|a| a.dest_rel.as_str())
+            .collect();
+        assert!(shipped.contains(&"trip/view.jpg"), "{shipped:?}");
+        assert!(
+            !shipped.contains(&"family/portrait.jpg"),
+            "a cover whose sidecar is for someone else stays home: {shipped:?}"
+        );
+        assert_eq!(site.withheld, vec!["family/portrait.jpg".to_string()]);
     }
 
     /// What a light device's memory knows: some files are not on this disk,
