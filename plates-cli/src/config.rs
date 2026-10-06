@@ -250,6 +250,8 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             index: text(entry, "index"),
             shell: text(entry, "shell"),
             stylesheet: text(entry, "stylesheet"),
+            // Frozen, like `hold`: a style is a `site:` key on the term node.
+            style: None,
             lang: text(entry, "lang"),
             syntaxes: text_list(entry, "syntaxes"),
             // Frozen, like `hold` above: the frame is a `site:` key on the
@@ -329,6 +331,7 @@ mod tests {
                 index: Some("[Home](id:7f3a91c)".into()),
                 shell: Some(".config/sites/blog/shell.html".into()),
                 stylesheet: Some(".config/sites/blog/style.css".into()),
+                style: None,
                 lang: Some("fr".into()),
                 syntaxes: vec![".config/sites/blog/wat.sublime-syntax".into()],
                 header: None,

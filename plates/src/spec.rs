@@ -138,6 +138,17 @@ pub struct SiteSpec {
     /// (`plates_render::SiteStyle::custom_css`), so a site that names one owns
     /// its whole appearance. `None` keeps the built-in sheet.
     pub stylesheet: Option<String>,
+    /// A style the **renderer** supplies, by name — `room`, say, where a
+    /// renderer offers more than one look of its own.
+    ///
+    /// plates reads no style and draws none: the name is carried to whoever
+    /// renders, the way [`view`](Self::view) is carried to the arranger, and
+    /// what it looks like is theirs. It is how a publisher picks among the
+    /// looks an application ships without writing a shell, so a site that
+    /// names a [`shell`](Self::shell) or a [`stylesheet`](Self::stylesheet)
+    /// owns its appearance and a renderer should let those win. `None` is the
+    /// renderer's default.
+    pub style: Option<String>,
     /// BCP 47 language tag for every page's `<html lang="…">`. `None` is
     /// `"en"`, which is what the render layer assumes when nobody says.
     pub lang: Option<String>,
@@ -198,6 +209,7 @@ impl SiteSpec {
             index: None,
             shell: None,
             stylesheet: None,
+            style: None,
             lang: None,
             syntaxes: Vec::new(),
             header: None,
@@ -210,7 +222,7 @@ impl SiteSpec {
     ///
     /// A fill rather than an override, and it can be nothing else: a spec from
     /// [`from_export`](Self::from_export) carries `None` — and an empty
-    /// `syntaxes` — in exactly these seven fields, because an export has no way
+    /// `syntaxes` — in exactly these eight fields, because an export has no way
     /// to say any of them. The one field both surfaces could claim is `label`,
     /// and the export's wins, so it is not here.
     pub fn with_term_config(&self, term: crate::term::TermConfig) -> (Self, Vec<String>) {
@@ -219,6 +231,7 @@ impl SiteSpec {
                 index: term.index,
                 shell: term.shell,
                 stylesheet: term.stylesheet,
+                style: term.style,
                 lang: term.lang,
                 syntaxes: term.syntaxes,
                 header: term.header,
@@ -614,6 +627,7 @@ mod tests {
             index: None,
             shell: None,
             stylesheet: None,
+            style: None,
             lang: None,
             syntaxes: Vec::new(),
             header: None,

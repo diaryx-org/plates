@@ -40,6 +40,9 @@ pub struct SiteTheme {
     /// The stylesheet's **text**, read from [`SiteSpec::stylesheet`]. `None`
     /// keeps the built-in sheet.
     pub custom_css: Option<String>,
+    /// The renderer's own style the site picked, by name, carried from
+    /// [`SiteSpec::style`] unread. `None` is the renderer's default.
+    pub style: Option<String>,
     /// The shell templates individual **pages** named in their `shell:`
     /// frontmatter, keyed by the vault-relative path they named — the texts,
     /// for the reason [`template`](Self::template) is a text.
@@ -95,6 +98,7 @@ impl Default for SiteTheme {
             title: String::new(),
             template: None,
             custom_css: None,
+            style: None,
             shells: BTreeMap::new(),
             syntaxes: Vec::new(),
             lang: DEFAULT_LANG.to_string(),
@@ -163,6 +167,7 @@ pub async fn read_theme<FS: Storage + Clone, Id, Ix: IdIndex>(
         title: spec.display_label(),
         template,
         custom_css,
+        style: spec.style.clone(),
         // Named by the site's documents rather than by its declaration, so it
         // is [`read_page_shells`]'s to fill once they have been collected.
         shells: BTreeMap::new(),
