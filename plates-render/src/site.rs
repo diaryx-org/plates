@@ -33,7 +33,7 @@ use crate::types::{
 // that only *assembles* a header or footer — `plates::theme` — does not have
 // to enable `templating` to name the type; the path here still resolves.
 pub use crate::types::FrameDoc;
-use crate::{body, links, page, template};
+use crate::{body, embed, links, page, template};
 
 /// A stored source document to render.
 pub struct SourceDoc {
@@ -452,6 +452,9 @@ struct Prepared {
     /// the page's neighbours join it, and read again by whatever renders
     /// *against* the page afterwards — the site's header and footer.
     values: Vec<serde_json::Map<String, JsonValue>>,
+    /// Sanitized source path → its index in the sources, for drawing a node
+    /// a page names in place ([`embed`]).
+    by_path: HashMap<PathBuf, usize>,
 }
 
 /// Read every source's metadata into a page with no body yet, and assemble
@@ -474,8 +477,10 @@ fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Pr
     let mut title_map: HashMap<PathBuf, String> = HashMap::new();
     let mut resolver = Resolver::new();
     let mut parsed = Vec::with_capacity(sources.len());
-    for s in sources {
+    let mut by_path = HashMap::with_capacity(sources.len());
+    for (i, s) in sources.iter().enumerate() {
         let key = PathBuf::from(links::sanitize_rel_path(&s.path));
+        by_path.insert(key.clone(), i);
         let file = frontmatter::parse_or_empty(&s.markdown).unwrap_or(frontmatter::ParsedFile {
             frontmatter: IndexMap::new(),
             body: s.markdown.clone(),
@@ -509,6 +514,7 @@ fn prepare(sources: &[SourceDoc], opts: &SiteOptions) -> (Vec<PublishedPage>, Pr
             collected,
             parsed,
             values: Vec::new(),
+            by_path,
         },
     )
 }
@@ -535,6 +541,12 @@ fn render_bodies(
     for (i, s) in sources.iter().enumerate() {
         let page = &mut pages[i + offset];
         let (prev, next) = neighbours(&order, &page.dest_filename);
+        let site = Drawable {
+            sources,
+            parsed: &prepared.parsed,
+            by_path: &prepared.by_path,
+            path_to_filename: &prepared.path_to_filename,
+        };
         let values = render_body(
             page,
             s,
@@ -542,6 +554,7 @@ fn render_bodies(
             opts,
             &prepared.path_to_filename,
             &prepared.collected,
+            &site,
             (prev, next),
             #[cfg(feature = "syntax-highlighting")]
             syntaxes,
@@ -1481,6 +1494,7 @@ fn render_body(
     opts: &SiteOptions,
     path_to_filename: &HashMap<PathBuf, String>,
     collected: &Collected,
+    site: &Drawable<'_>,
     neighbours: (Option<&NavLink>, Option<&NavLink>),
     #[cfg(feature = "syntax-highlighting")] syntaxes: &crate::syntax::Syntaxes,
     reports: &mut Vec<String>,
@@ -1547,8 +1561,12 @@ fn render_body(
     // twice below, because a page's headings are not known until its template
     // has run: a template that generates its headings still gets them listed.
     values.insert("headings".into(), JsonValue::Array(Vec::new()));
+    // A node the body draws in place (`::album{src=…}`) stands as a marker
+    // through the render, and is drawn once the page's own links are
+    // rewritten — see [`embed`].
+    let (marked, embeds) = embed::mark(&parsed.body, format, current_path);
     let (expanded, html, headings) = render_source_body(
-        &parsed.body,
+        &marked,
         format,
         template::Context::new(&collected.context, &values),
         audience,
@@ -1560,7 +1578,7 @@ fn render_body(
     values.insert("headings".into(), headings_value(&headings));
     let (expanded, html, headings) = if !headings.is_empty() && parsed.body.contains("headings") {
         render_source_body(
-            &parsed.body,
+            &marked,
             format,
             template::Context::new(&collected.context, &values),
             audience,
@@ -1585,9 +1603,54 @@ fn render_body(
         &page.dest_filename,
         opts.published_files.as_ref(),
     );
+    if !embeds.is_empty() {
+        page.rendered_body = embed::fill(&page.rendered_body, embeds.len(), |n| {
+            site.draw(&embeds[n], &page.dest_filename, opts)
+        });
+    }
     page.markdown_body = expanded;
     page.headings = headings;
     values
+}
+
+/// What a page may draw in place: the site's own sources, which are only what
+/// its gate admitted. See [`embed`].
+struct Drawable<'a> {
+    sources: &'a [SourceDoc],
+    parsed: &'a [frontmatter::ParsedFile],
+    by_path: &'a HashMap<PathBuf, usize>,
+    path_to_filename: &'a HashMap<PathBuf, String>,
+}
+
+impl Drawable<'_> {
+    /// The drawing for `found` on the page published at `dest`, or `None` —
+    /// nothing in its place — when the node it names is not in this site, or
+    /// is not what the directive draws.
+    fn draw(&self, found: &embed::Found, dest: &str, opts: &SiteOptions) -> Option<String> {
+        let key = PathBuf::from(links::sanitize_rel_path(&found.target.to_string_lossy()));
+        let &i = self.by_path.get(&key)?;
+        let fm = &self.parsed[i].frontmatter;
+        let path = Path::new(&self.sources[i].path);
+        match found.name.as_str() {
+            embed::ALBUM => {
+                let rows = crate::manifest::rows_of(fm, path, opts.published_files.as_ref())?;
+                let prefix = links::root_prefix(dest);
+                let (gallery, _) = crate::manifest::render(&rows, &prefix);
+                let href = format!("{prefix}{}", self.path_to_filename.get(&key)?);
+                let title = frontmatter::get_string(fm, "title")
+                    .map(str::to_string)
+                    .unwrap_or_else(|| {
+                        filename_to_title(&path.file_stem().unwrap_or_default().to_string_lossy())
+                    });
+                Some(format!(
+                    "<figure class=\"embedded-album\"><figcaption><a href=\"{}\">{}</a></figcaption>{gallery}</figure>\n",
+                    page::html_escape(&href),
+                    page::html_escape(&title),
+                ))
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Template → twig → heading anchors, for a body that is not verbatim.
@@ -4197,6 +4260,78 @@ mod tests {
             "got {photos}"
         );
         assert!(!photos.contains("gone.jpg"), "got {photos}");
+    }
+
+    /// An `::album` directive draws the album where it stands: its gallery,
+    /// written from the page's own place, under its title linking to the
+    /// album's page.
+    #[test]
+    fn an_album_directive_draws_the_album_in_the_page() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n  - \"[Trip](/trip/trip.md)\"\n---\nH.\n",
+                true,
+            ),
+            src(
+                "trip/trip.md",
+                "---\ntitle: Trip\npart_of: \"/index.md\"\ncontents:\n  - \"[Holiday](/trip/holiday.yaml)\"\n---\nThe beach.\n\n::album{src=\"holiday.yaml\"}\n\nAfter.\n",
+                false,
+            ),
+            src(
+                "trip/holiday.yaml",
+                "---\ntitle: Holiday\npart_of: \"/trip/trip.md\"\nmanifest:\n  root: /trip/holiday/\n  files:\n  - path: a.jpg\n---\n",
+                false,
+            ),
+        ];
+        let opts = SiteOptions {
+            published_files: Some(["trip/holiday/a.jpg"].map(String::from).into()),
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename.starts_with("trip/") && p.html.contains("The beach."))
+            .unwrap()
+            .html;
+        assert!(
+            html.contains(r#"<figure class="embedded-album">"#),
+            "got {html}"
+        );
+        assert!(html.contains(">Holiday</a></figcaption>"), "got {html}");
+        assert!(html.contains("holiday/a.jpg"), "got {html}");
+        assert!(!html.contains("data-plates-embed"), "got {html}");
+        assert!(!html.contains("::album"), "got {html}");
+        let beach = html.find("The beach.").unwrap();
+        let album = html.find("embedded-album\"").unwrap();
+        let after = html.find("After.").unwrap();
+        assert!(beach < album && album < after, "in place: {html}");
+    }
+
+    /// An album the site's gate held back is not there to draw, and the
+    /// directive draws nothing: no placeholder, no link, no title.
+    #[test]
+    fn an_album_the_site_did_not_admit_draws_nothing() {
+        let sources = vec![src(
+            "index.md",
+            "---\ntitle: Home\n---\nThe beach.\n\n::album{src=\"holiday.yaml\"}\n\nAfter.\n",
+            true,
+        )];
+        let out = render_site(&sources, &SiteOptions::default());
+        let html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap()
+            .html;
+        assert!(
+            html.contains("The beach.") && html.contains("After."),
+            "got {html}"
+        );
+        assert!(!html.contains("data-plates-embed"), "got {html}");
+        assert!(!html.contains("holiday"), "got {html}");
     }
 
     /// A nav link carries what a theme needs to draw its page where it is

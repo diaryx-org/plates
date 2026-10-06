@@ -984,6 +984,21 @@ body.has-site-nav {
     overflow-wrap: anywhere;
 }
 
+/* An album a page draws in place (`::album{src=…}`): the album's gallery,
+   under its title, which links to the album's own page. */
+.embedded-album {
+    margin: 1.25rem 0;
+}
+
+.embedded-album > figcaption {
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
+.embedded-album .manifest-gallery {
+    margin-bottom: 0;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 60rem) {

@@ -23,6 +23,8 @@ pub mod appearance;
 pub mod attachment;
 pub mod body;
 pub mod dates;
+#[cfg(feature = "templating")]
+pub mod embed;
 pub mod frontmatter;
 pub mod headings;
 pub mod html;
