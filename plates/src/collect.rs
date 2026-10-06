@@ -764,6 +764,16 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
                 withheld.push(rebased_dest(opts, &canonical, anchor));
                 continue;
             }
+            // A manifest node a page names — an album an `::album{src="…"}`
+            // draws in place, whose `src="…"` the attribute scan reads like any
+            // other — is a document, not a file to ship. Admitted, it is one of
+            // the site's pages and never reached this loop; held back, it is
+            // withheld like a page the plan did not admit, rather than shipped
+            // as the raw record of an album its reader may not see.
+            if is_manifest_node(ws, Path::new(&canonical)).await {
+                withheld.push(rebased_dest(opts, &canonical, anchor));
+                continue;
+            }
             if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
                 attachments.push(attachment);
             }
@@ -1044,6 +1054,21 @@ impl DescribingSidecar {
     fn declares(&self, field: &str) -> bool {
         self.meta.get(field).is_some()
     }
+}
+
+/// Whether the file at `path` is a manifest node: a whole-file document that
+/// declares `manifest:`. Decided by extension before anything is read.
+async fn is_manifest_node<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    path: &Path,
+) -> bool {
+    if prov::document::whole_file_format(path).is_none() {
+        return false;
+    }
+    ws.graph()
+        .document(path)
+        .await
+        .is_ok_and(|doc| doc.meta.get(MANIFEST_KEY).is_some())
 }
 
 async fn describing_sidecar<FS: Storage + Clone, Id, Ix: IdIndex>(
@@ -2315,6 +2340,38 @@ mod tests {
             site.attachments
         );
         assert!(site.withheld.is_empty());
+    }
+
+    /// An album a page draws with `::album{src="…"}` is a document, and the
+    /// attribute scan reading its `src` does not ship its record as a file:
+    /// held back by the plan, it is withheld; admitted, it is a page.
+    #[test]
+    fn an_album_a_page_draws_is_never_shipped_as_a_file() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [public]\ncontents:\n- holiday.yaml\n---\nThe beach.\n\n::album{src=\"holiday.yaml\"}\n",
+            ),
+            (
+                "holiday.yaml",
+                "title: Holiday\nmanifest: holiday.manifest.yaml\naudience: [family]\npart_of: /index.md\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let site = try_collect(&ws, &["index.md"]).unwrap();
+        assert!(
+            site.attachments
+                .iter()
+                .all(|a| a.dest_rel != "holiday.yaml"),
+            "{:?}",
+            site.attachments
+        );
+        assert_eq!(site.withheld, vec!["holiday.yaml".to_string()]);
     }
 
     /// What a light device's memory knows: some files are not on this disk,
