@@ -1605,7 +1605,7 @@ fn render_body(
     );
     if !embeds.is_empty() {
         page.rendered_body = embed::fill(&page.rendered_body, embeds.len(), |n| {
-            site.draw(&embeds[n], &page.dest_filename, opts)
+            site.draw(&embeds[n], &page.dest_filename, opts, true)
         });
     }
     page.markdown_body = expanded;
@@ -1626,24 +1626,66 @@ impl Drawable<'_> {
     /// The drawing for `found` on the page published at `dest`, or `None` —
     /// nothing in its place — when the node it names is not in this site, or
     /// is not what the directive draws.
-    fn draw(&self, found: &embed::Found, dest: &str, opts: &SiteOptions) -> Option<String> {
+    ///
+    /// A page drawn in a page draws its own albums but not its own pages
+    /// (`pages` false): one level of transclusion, so two pages that draw
+    /// each other cannot recurse.
+    fn draw(
+        &self,
+        found: &embed::Found,
+        dest: &str,
+        opts: &SiteOptions,
+        pages: bool,
+    ) -> Option<String> {
         let key = PathBuf::from(links::sanitize_rel_path(&found.target.to_string_lossy()));
         let &i = self.by_path.get(&key)?;
         let fm = &self.parsed[i].frontmatter;
         let path = Path::new(&self.sources[i].path);
+        let prefix = links::root_prefix(dest);
+        let href = format!("{prefix}{}", self.path_to_filename.get(&key)?);
+        let title = frontmatter::get_string(fm, "title")
+            .map(str::to_string)
+            .unwrap_or_else(|| {
+                filename_to_title(&path.file_stem().unwrap_or_default().to_string_lossy())
+            });
         match found.name.as_str() {
             embed::ALBUM => {
                 let rows = crate::manifest::rows_of(fm, path, opts.published_files.as_ref())?;
-                let prefix = links::root_prefix(dest);
                 let (gallery, _) = crate::manifest::render(&rows, &prefix);
-                let href = format!("{prefix}{}", self.path_to_filename.get(&key)?);
-                let title = frontmatter::get_string(fm, "title")
-                    .map(str::to_string)
-                    .unwrap_or_else(|| {
-                        filename_to_title(&path.file_stem().unwrap_or_default().to_string_lossy())
-                    });
                 Some(format!(
                     "<figure class=\"embedded-album\"><figcaption><a href=\"{}\">{}</a></figcaption>{gallery}</figure>\n",
+                    page::html_escape(&href),
+                    page::html_escape(&title),
+                ))
+            }
+            // The page's words, read-only, in the coordinates of the page
+            // drawing them: its links are its own, resolved from where it is
+            // written and spelled from where it is shown. Its body is the one
+            // the site holds, which collection already filtered for the
+            // site's audience, and a page the gate held back is not held at
+            // all — so a reader who cannot see it sees nothing here.
+            embed::PAGE if pages => {
+                if crate::attachment::payload_of(fm).is_some()
+                    || crate::manifest::rows_of(fm, path, None).is_some()
+                {
+                    return None;
+                }
+                let format = ContentFormat::from_extension(path).unwrap_or(ContentFormat::Markdown);
+                let (marked, inner) = embed::mark(&self.parsed[i].body, format, path);
+                let html = body::render_body(&marked, format);
+                let html = links::transform_links_with_files(
+                    &html,
+                    path,
+                    self.path_to_filename,
+                    Path::new(""),
+                    dest,
+                    opts.published_files.as_ref(),
+                );
+                let html = embed::fill(&html, inner.len(), |n| {
+                    self.draw(&inner[n], dest, opts, false)
+                });
+                Some(format!(
+                    "<section class=\"embedded-page\"><header><a href=\"{}\">{}</a></header>\n{html}</section>\n",
                     page::html_escape(&href),
                     page::html_escape(&title),
                 ))
@@ -4332,6 +4374,86 @@ mod tests {
         );
         assert!(!html.contains("data-plates-embed"), "got {html}");
         assert!(!html.contains("holiday"), "got {html}");
+    }
+
+    /// A `::page` directive draws the page's words where it stands, its links
+    /// spelled from the page drawing it; a page the site does not hold — one
+    /// the gate kept from this audience — draws nothing.
+    #[test]
+    fn a_page_directive_draws_the_page_only_where_the_site_holds_it() {
+        let parent = || {
+            src(
+                "day/day.md",
+                "---\ntitle: Day\ncontents:\n  - \"[Note](/day/note.md)\"\n---\nMorning.\n\n::page{src=\"note.md\"}\n\nEvening.\n",
+                false,
+            )
+        };
+        let child = src(
+            "day/note.md",
+            "---\ntitle: Note\npart_of: \"/day/day.md\"\n---\nA *small* note, see [the day](day.md).\n",
+            false,
+        );
+        let home = || src("index.md", "---\ntitle: Home\n---\nH.\n", true);
+        let day_html = |out: &SiteRender| {
+            out.pages
+                .iter()
+                .find(|p| p.html.contains("Morning."))
+                .unwrap()
+                .html
+                .clone()
+        };
+
+        let both = render_site(&[home(), parent(), child], &SiteOptions::default());
+        let html = day_html(&both);
+        assert!(
+            html.contains(r#"<section class="embedded-page">"#),
+            "got {html}"
+        );
+        assert!(html.contains("A <em>small</em> note"), "got {html}");
+        assert!(html.contains(">Note</a></header>"), "got {html}");
+        assert!(!html.contains("data-plates-embed"), "got {html}");
+        let (m, n, e) = (
+            html.find("Morning.").unwrap(),
+            html.find("small").unwrap(),
+            html.find("Evening.").unwrap(),
+        );
+        assert!(m < n && n < e, "in place: {html}");
+
+        let alone = render_site(&[home(), parent()], &SiteOptions::default());
+        let html = day_html(&alone);
+        assert!(
+            html.contains("Morning.") && html.contains("Evening."),
+            "got {html}"
+        );
+        assert!(!html.contains("small"), "got {html}");
+        assert!(!html.contains("embedded-page"), "got {html}");
+        assert!(!html.contains("data-plates-embed"), "got {html}");
+    }
+
+    /// Two pages that draw each other draw one level, not forever.
+    #[test]
+    fn pages_that_draw_each_other_draw_one_level() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\n---\nAlpha.\n\n::page{src=\"b.md\"}\n",
+                true,
+            ),
+            src(
+                "b.md",
+                "---\ntitle: B\n---\nBeta.\n\n::page{src=\"index.md\"}\n",
+                false,
+            ),
+        ];
+        let out = render_site(&sources, &SiteOptions::default());
+        let html = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap()
+            .html;
+        assert_eq!(html.matches("Beta.").count(), 1, "got {html}");
+        assert_eq!(html.matches("Alpha.").count(), 1, "got {html}");
     }
 
     /// A nav link carries what a theme needs to draw its page where it is
