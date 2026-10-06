@@ -18,7 +18,7 @@ use crate::frontmatter;
 use indexmap::IndexMap;
 use prov::ContentFormat;
 use prov::Value as YamlValue;
-use prov::views::{Row, Selection};
+use prov::views::{Reference, Row, Selection};
 use serde_json::Value as JsonValue;
 
 use crate::dates;
@@ -648,9 +648,12 @@ fn collect_context(
             .or_else(|| frontmatter::get_string(&fm, "updated"))
             .filter(|d| !d.is_empty())
             .map(String::from);
-        let group_keys = opts
-            .arrangement
-            .keys_of(Path::new(&s.path), &YamlValue::Mapping(fm.clone()));
+        let group_keys = group_labels(
+            opts.arrangement
+                .keys_of(Path::new(&s.path), &YamlValue::Mapping(fm.clone())),
+            Path::new(&s.path),
+            resolver,
+        );
 
         // …unless the caller walked the archive's own spanning relation, which
         // is a better answer to the same question and is applied below.
@@ -750,7 +753,7 @@ fn collect_context(
         context: template::SiteContext::new(
             site,
             entries.clone(),
-            groups_of(&order, &meta_of, &by_path, &opts.arrangement),
+            groups_of(&order, &meta_of, &by_path, &opts.arrangement, resolver),
         ),
         by_path,
         by_href,
@@ -885,6 +888,7 @@ fn groups_of(
     meta_of: &HashMap<PathBuf, YamlValue>,
     by_path: &HashMap<PathBuf, JsonValue>,
     arrangement: &Arrangement,
+    resolver: &Resolver,
 ) -> Vec<JsonValue> {
     let Arrangement::Grouped(key) = arrangement else {
         return Vec::new();
@@ -896,11 +900,21 @@ fn groups_of(
         rows: order
             .iter()
             .filter_map(|path| {
+                let meta = meta_of.get(path)?;
+                // A key that is a link to a source of this render is a
+                // reference, so prov groups it by the source it names and
+                // labels the group by its title rather than by the spelling.
+                let references = arrangement
+                    .keys_of(path, meta)
+                    .iter()
+                    .filter_map(|key| resolver.reference(path, key))
+                    .collect();
                 Some(Row {
                     path: path.clone(),
                     id: None,
                     ancestors: Vec::new(),
-                    meta: meta_of.get(path)?.clone(),
+                    meta: meta.clone(),
+                    references,
                 })
             })
             .collect(),
@@ -915,7 +929,7 @@ fn groups_of(
                 .iter()
                 .filter_map(|row| by_path.get(&row.path).cloned())
                 .collect();
-            serde_json::json!({ "key": group.key, "entries": entries })
+            serde_json::json!({ "key": group.key, "label": group.label, "entries": entries })
         })
         .collect()
 }
@@ -1384,9 +1398,12 @@ fn page_skeleton(
     // the view spec's to answer now — including the two spellings a field
     // permits (`people: Grandpa` and `people: [Grandpa, Nan]`), which prov
     // reads the same way.
-    let group_keys = opts
-        .arrangement
-        .keys_of(&current_path, &YamlValue::Mapping(fm.clone()));
+    let group_keys = group_labels(
+        opts.arrangement
+            .keys_of(&current_path, &YamlValue::Mapping(fm.clone())),
+        &current_path,
+        resolver,
+    );
 
     let styles = resolve_asset_paths(fm, "styles", &current_path);
     let scripts = resolve_asset_paths(fm, "scripts", &current_path);
@@ -1983,6 +2000,20 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
     }
 }
 
+/// A page's group keys as the groups it files under are named: each reference
+/// by its source's title, each other key as written, and a source two of the
+/// page's links name (`[Grandma](id:…)` beside `[Nan](ruth.md)`) once.
+fn group_labels(keys: Vec<String>, doc: &Path, resolver: &Resolver) -> Vec<String> {
+    let mut labels: Vec<String> = Vec::with_capacity(keys.len());
+    for key in keys {
+        let label = resolver.group_label(doc, key);
+        if !labels.contains(&label) {
+            labels.push(label);
+        }
+    }
+    labels
+}
+
 /// Group pages for a grouped arrangement. Date groups come back newest first,
 /// field groups alphabetically; the ungrouped bucket is always last so a page
 /// missing its grouping value is still reachable rather than dropped.
@@ -2158,6 +2189,9 @@ fn resolve_link(
 struct Resolver {
     graph: prov::Graph<prov::InMemoryFs, prov::InMemoryIndex>,
     titles: prov::TitleIndex,
+    /// Every source this render holds, with its `title` when it declares one —
+    /// what a reference in a grouping field may name.
+    sources: HashMap<PathBuf, Option<String>>,
 }
 
 impl Resolver {
@@ -2170,6 +2204,7 @@ impl Resolver {
                 prov::ReadSettings::default(),
             ),
             titles: prov::TitleIndex::new(),
+            sources: HashMap::new(),
         }
     }
 
@@ -2188,6 +2223,10 @@ impl Resolver {
         if let Some(title) = frontmatter::get_string(fm, "title") {
             self.titles.insert(title, key);
         }
+        self.sources.insert(
+            key.to_path_buf(),
+            frontmatter::get_string(fm, "title").map(String::from),
+        );
     }
 
     /// The sanitized source-path key `target`, written in the document at
@@ -2200,6 +2239,38 @@ impl Resolver {
             ))),
             _ => None,
         }
+    }
+
+    /// A grouping key, from the page at `doc`, read as a reference: a link —
+    /// `[Grandma](id:rth0001)`, `[[Ruth Harris]]` — to a source this render
+    /// holds, as prov's census records a `type: ref` value. Anything else,
+    /// including a link to a page this site does not carry, is plain text.
+    fn reference(&self, doc: &Path, key: &str) -> Option<Reference> {
+        if !key.trim_start().starts_with('[') {
+            return None;
+        }
+        let target = self.key(doc, key)?;
+        let title = self.sources.get(&target)?.clone();
+        Some(Reference {
+            raw: key.to_string(),
+            target,
+            title,
+        })
+    }
+
+    /// What a page's group key reads as in the nav: a reference's source by
+    /// its title (its file stem, when it has none), as prov labels the group,
+    /// or the key itself.
+    fn group_label(&self, doc: &Path, key: String) -> String {
+        let Some(reference) = self.reference(doc, &key) else {
+            return key;
+        };
+        reference.title.unwrap_or_else(|| {
+            reference
+                .target
+                .file_stem()
+                .map_or(key, |s| s.to_string_lossy().into_owned())
+        })
     }
 }
 
@@ -4108,6 +4179,68 @@ mod tests {
             ada < nan,
             "ascending by key, not `Nan` first: {}",
             home.html
+        );
+    }
+
+    /// One person linked under two labels is one group, named by the person's
+    /// page, in a template's `groups` and in the synthesized index alike — and
+    /// a link to a page this site does not carry stays text.
+    #[test]
+    fn a_reference_groups_by_the_page_it_names() {
+        let index =
+            "---\ntitle: Home\n---\n:::each{of=groups as=g}\n- :val[g.label] at :val[g.key]\n:::\n";
+        let sources = vec![
+            src("index.md", index, true),
+            src(
+                "people/ruth.md",
+                "---\ntitle: Ruth Harris\nid: rth0001\n---\nRuth.\n",
+                false,
+            ),
+            src(
+                "letter.md",
+                "---\ntitle: Letter\npeople: '[Ruth Harris](id:rth0001)'\n---\nL.\n",
+                false,
+            ),
+            src(
+                "recipe.md",
+                "---\ntitle: Recipe\npeople:\n  - '[Grandma](id:rth0001)'\n  - '[Nan](people/ruth.md)'\n  - '[Walter](id:wlt0001)'\n---\nR.\n",
+                false,
+            ),
+        ];
+        let opts = SiteOptions {
+            arrangement: Arrangement::Grouped(Expression::parse("people").unwrap()),
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .unwrap();
+        assert_eq!(
+            home.html.matches("Ruth Harris at people/ruth.md").count(),
+            1,
+            "three spellings, one group: {}",
+            home.html
+        );
+        assert!(!home.html.contains("Grandma"), "{}", home.html);
+        assert!(
+            home.html
+                .contains(r#"<li><a href="id:wlt0001">Walter</a> at "#),
+            "a link to nothing here groups by its text: {}",
+            home.html
+        );
+
+        let pages = build_pages(&sources, &opts);
+        let recipe = pages.iter().find(|p| p.title == "Recipe").unwrap();
+        assert_eq!(
+            recipe.group_keys,
+            vec![
+                "Ruth Harris".to_string(),
+                "[Walter](id:wlt0001)".to_string()
+            ],
+            "two links to Ruth file the recipe under her once"
         );
     }
 

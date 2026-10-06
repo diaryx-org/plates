@@ -754,7 +754,7 @@ dependencies = [
 [[package]]
 name = "prov"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "edtf-normalize",
  "fig",
@@ -775,7 +775,7 @@ dependencies = [
 [[package]]
 name = "prov-config"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "fig",
  "fig-schema",
@@ -790,7 +790,7 @@ dependencies = [
 [[package]]
 name = "prov-exports"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -799,7 +799,7 @@ dependencies = [
 [[package]]
 name = "prov-filing"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "prov-grain",
  "prov-graph",
@@ -808,7 +808,7 @@ dependencies = [
 [[package]]
 name = "prov-grain"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "edtf-core",
  "prov-graph",
@@ -817,7 +817,7 @@ dependencies = [
 [[package]]
 name = "prov-graph"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -831,7 +831,7 @@ dependencies = [
 [[package]]
 name = "prov-store"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -841,7 +841,7 @@ dependencies = [
 [[package]]
 name = "prov-views"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#84a84d2b7416129fad2ea67f4ffa162bc0bdaeb4"
+source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
 dependencies = [
  "cel",
  "prov-grain",
