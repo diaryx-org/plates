@@ -844,6 +844,7 @@ mod tests {
             color: None,
             start_with: None,
             picture: None,
+            cover: None,
         }
     }
 
