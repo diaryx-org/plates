@@ -138,6 +138,7 @@ fn render_markdown(source: &str) -> prov::Result<String> {
         .map(|n| n.span.start)
         .collect();
 
+    let mut source = std::borrow::Cow::Borrowed(source);
     if !bare.is_empty() {
         // Back to front, so each insertion leaves the offsets before it true.
         let mut escaped = source.to_string();
@@ -145,13 +146,29 @@ fn render_markdown(source: &str) -> prov::Result<String> {
             escaped.insert(at, '\\');
         }
         doc = parse(&escaped)?;
+        source = std::borrow::Cow::Owned(escaped);
+    }
+
+    // `:::hero` and `:::ledger` are cut out, rendered child by child, and
+    // pasted back over a placeholder; see [`crate::chrome`].
+    let nodes = doc
+        .nodes()
+        .map_err(|e| prov::Error::Content(format!("twig nodes: {e}")))?;
+    let chrome = crate::chrome::Chrome::find(&source, &nodes, &render_markdown)?;
+    if !chrome.is_empty() {
+        doc = parse(&chrome.cut(&source))?;
     }
 
     let html = doc
         .render_html()
         .map_err(|e| prov::Error::Content(format!("twig render: {e}")))?;
-    String::from_utf8(html)
-        .map_err(|e| prov::Error::Content(format!("twig produced non-UTF-8 HTML: {e}")))
+    let html = String::from_utf8(html)
+        .map_err(|e| prov::Error::Content(format!("twig produced non-UTF-8 HTML: {e}")))?;
+    Ok(if chrome.is_empty() {
+        html
+    } else {
+        chrome.paste(html)
+    })
 }
 
 /// Pre-process Diaryx's custom syntax (highlights, spoilers, HTML embeds) into
