@@ -421,7 +421,10 @@ impl HtmlRenderer {
         } else {
             format!(r#"<link rel="stylesheet" href="{}style.css">"#, prefix)
         };
-        let favicon_link = self.favicon_link_tag(&prefix);
+        let mut favicon_link = self.favicon_link_tag(&prefix);
+        if let Some(style) = page.setting.style_tag() {
+            favicon_link = format!("{favicon_link}\n    {style}");
+        }
         let interactivity_script = self.interactivity_script();
 
         let breadcrumb_html = render_breadcrumb(page, single_file);
@@ -466,11 +469,18 @@ impl HtmlRenderer {
         for page in pages {
             let anchor = title_to_anchor(&page.title);
             let breadcrumb = render_breadcrumb(page, true);
+            // Each section is a page of its own, so its setting goes on its
+            // own content rather than on the document's root.
+            let setting = if page.setting.is_empty() {
+                String::new()
+            } else {
+                format!(r#" style="{}""#, html_escape(&page.setting.declarations()))
+            };
 
             sections.push(format!(
                 r#"<section id="{anchor}">
     {breadcrumb}
-    <div class="content">
+    <div class="content"{setting}>
         {content}
     </div>
 </section>"#,
@@ -571,6 +581,9 @@ impl HtmlRenderer {
         head.extend(identity_tags(ctx));
         head.extend(relation_tags(ctx));
         head.extend(style_link_tags(&page.styles, &prefix));
+        // After the page's own `styles:` and the site's, so a page's `font:`
+        // and `size:` are the last word on its own body — see `crate::setting`.
+        head.extend(page.setting.style_tag());
 
         let mut scripts = vec![format!(
             r#"<script>
@@ -831,6 +844,7 @@ mod tests {
             styles: vec![],
             scripts: vec![],
             layout: PageLayout::default(),
+            setting: Default::default(),
             shell: None,
             lang: None,
             nav_title: None,
