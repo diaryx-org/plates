@@ -515,6 +515,9 @@ impl Arrangement {
             id: None,
             ancestors: Vec::new(),
             meta: meta.clone(),
+            // A key here is the value as written; the site resolves the ones
+            // that are references when it names their groups.
+            references: Vec::new(),
         };
         Evaluator::new().keys(key, &row).unwrap_or_default()
     }
