@@ -18,6 +18,7 @@
 //! site:
 //!   shell: .config/sites/docs/shell.html
 //!   stylesheet: .config/sites/docs/style.css
+//!   style: room
 //!   header: .config/sites/docs/header.md
 //!   footer: .config/sites/docs/footer.md
 //!   lang: en
@@ -90,6 +91,7 @@ pub const TERM_SITE_KEY: &str = "site";
 pub const TERM_SITE_KEYS: &[&str] = &[
     "shell",
     "stylesheet",
+    "style",
     "lang",
     "syntaxes",
     "header",
@@ -117,6 +119,9 @@ pub struct TermConfig {
     pub shell: Option<String>,
     /// The site's stylesheet, as a vault-relative path.
     pub stylesheet: Option<String>,
+    /// A style the renderer supplies, by name — see
+    /// [`SiteSpec::style`](crate::SiteSpec::style).
+    pub style: Option<String>,
     /// BCP 47 language tag for every page's `<html lang="…">`.
     pub lang: Option<String>,
     /// Extra grammars, as vault-relative paths, in declaration order.
@@ -235,6 +240,7 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
         index,
         shell: text(&site, "shell"),
         stylesheet: text(&site, "stylesheet"),
+        style: text(&site, "style"),
         lang: text(&site, "lang"),
         syntaxes: text_list(&site, "syntaxes"),
         header: text(&site, "header"),
