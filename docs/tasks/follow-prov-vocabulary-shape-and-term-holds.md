@@ -4,11 +4,18 @@ part_of: '[Tasks](/docs/tasks/tasks.md)'
 status: open
 author: adammharris
 created: 2026-09-28
-updated: 2026-09-28
+updated: 2026-10-06
 audience: public
 ---
 
 # Follow prov's vocabulary shape, term holds and field stamps
+
+**Where it stands, 2026-10-06.** Steps 1 to 6 landed in `2283376` (prov
+0.16, taken from git rather than crates.io): the planner goes through
+`Workspace::export_plan`, so a term holds a page back; `reify` is gone outside
+`docs/proposals/`; the `hold` docs name a term; and plates' own `prov.yaml`
+declares its stamps on the fields. Step 7 is what is left: `plates-render`
+still reads a page's dates by the literal names `created` and `updated`.
 
 prov's next release changes three things plates reads, and plates does not
 compile against it until they are followed. None is released yet: the
