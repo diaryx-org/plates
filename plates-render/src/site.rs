@@ -1394,6 +1394,25 @@ fn page_skeleton(
                 .is_none_or(|files| files.contains(p))
         });
 
+    // The same resolution as an embed's destination, and the same filter as
+    // `picture`'s: a cover is shown only where a browser can draw it and this
+    // site ships it — a portrait the page's audience may not see falls back to
+    // the page's colour rather than to a broken image.
+    let cover = frontmatter::get_string(fm, "cover")
+        .map(prov::link::Link::parse)
+        .filter(|link| link.is_path_target())
+        .map(|link| {
+            prov::link::resolve(&current_path, &link.target)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .filter(|p| crate::attachment::is_drawable(p))
+        .filter(|p| {
+            opts.published_files
+                .as_ref()
+                .is_none_or(|files| files.contains(p))
+        });
+
     PublishedPage {
         source_path: current_path,
         dest_filename,
@@ -1449,6 +1468,7 @@ fn page_skeleton(
         color: frontmatter::get_string(fm, "color").and_then(color_name),
         start_with,
         picture,
+        cover,
     }
 }
 
@@ -1852,6 +1872,7 @@ pub fn synthesize_index(pages: &[PublishedPage], opts: &SiteOptions) -> Publishe
         color: None,
         start_with: None,
         picture: None,
+        cover: None,
     }
 }
 
@@ -5028,6 +5049,89 @@ title: Note
             ),
             "{album}"
         );
+    }
+
+    /// A page's `cover:` is the picture it names, from the root, in either
+    /// spelling a link field takes — and none where it names a file a browser
+    /// cannot draw, one the site does not ship, or nothing at all. Never the
+    /// page's first image: the cover is chosen, not found.
+    #[test]
+    fn a_cover_is_the_picture_a_page_names_and_the_site_ships() {
+        use crate::shell::{ExtensionContext, SlotKind};
+
+        struct Covers;
+        impl ShellExtension for Covers {
+            fn slots(&self) -> &[(&'static str, SlotKind)] {
+                &[("cover", SlotKind::Text)]
+            }
+            fn fill(
+                &self,
+                page: &PublishedPage,
+                _cx: &ExtensionContext<'_>,
+            ) -> HashMap<String, String> {
+                let cover = page.cover.clone().unwrap_or_else(|| "-".to_string());
+                HashMap::from([("cover".to_string(), cover)])
+            }
+        }
+
+        let book = |name: &str, cover: &str| {
+            src(
+                &format!("{name}/{name}.md"),
+                &format!(
+                    "---\ntitle: {name}\npart_of: /index.md\ncover: {cover}\n---\n![](first.jpg)\n"
+                ),
+                false,
+            )
+        };
+        let sources = vec![
+            src("index.md", "---\ntitle: Home\n---\n![](home.jpg)\n", true),
+            book("bare", "portrait.jpg"),
+            book("linked", "\"[Cover](<my cover.svg>)\""),
+            book("heic", "phone.heic"),
+            book("withheld", "secret.jpg"),
+            book("outside", "https://example.com/x.jpg"),
+        ];
+        let render = render_site(
+            &sources,
+            &SiteOptions {
+                template: Some("{{cover}}".to_string()),
+                shell_extension: Some(Arc::new(Covers)),
+                published_files: Some(
+                    [
+                        "home.jpg",
+                        "bare/portrait.jpg",
+                        "linked/my cover.svg",
+                        "heic/phone.heic",
+                    ]
+                    .into_iter()
+                    .map(String::from)
+                    .collect(),
+                ),
+                generate_seo: false,
+                generate_feeds: false,
+                ..SiteOptions::default()
+            },
+        );
+        assert!(
+            render.template_error.is_none(),
+            "{:?}",
+            render.template_error
+        );
+        let cover_of = |dest: &str| {
+            render
+                .pages
+                .iter()
+                .find(|p| p.dest_filename == dest)
+                .unwrap_or_else(|| panic!("no {dest}"))
+                .html
+                .clone()
+        };
+        assert_eq!(cover_of("index.html"), "-");
+        assert_eq!(cover_of("bare/index.html"), "bare/portrait.jpg");
+        assert_eq!(cover_of("linked/index.html"), "linked/my cover.svg");
+        assert_eq!(cover_of("heic/index.html"), "-");
+        assert_eq!(cover_of("withheld/index.html"), "-");
+        assert_eq!(cover_of("outside/index.html"), "-");
     }
 
     /// A slot no extension declares is a template error, and the site falls
