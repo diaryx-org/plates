@@ -999,6 +999,19 @@ body.has-site-nav {
     margin-bottom: 0;
 }
 
+/* A page another page draws in place (`::page{src=…}`): its words, set off
+   by a rule, under its title, which links to the page itself. */
+.embedded-page {
+    margin: 1.25rem 0;
+    padding-left: 1rem;
+    border-left: 2px solid var(--border-color, currentColor);
+}
+
+.embedded-page > header {
+    margin-bottom: 0.5rem;
+    font-weight: 600;
+}
+
 /* ── Responsive ── */
 
 @media (max-width: 60rem) {
