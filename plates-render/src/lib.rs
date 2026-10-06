@@ -22,6 +22,7 @@
 pub mod appearance;
 pub mod attachment;
 pub mod body;
+mod chrome;
 pub mod dates;
 #[cfg(feature = "templating")]
 pub mod embed;
@@ -32,6 +33,7 @@ mod links;
 pub mod manifest;
 pub mod nav;
 pub mod page;
+pub mod setting;
 pub mod shell;
 #[cfg(feature = "templating")]
 pub mod site;
@@ -55,6 +57,7 @@ pub use html::{
 };
 pub use links::{percent_decode, root_prefix, transform_links};
 pub use nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
+pub use setting::PageSetting;
 pub use shell::{
     ExtensionContext, ShellError, ShellExtension, ShellSlots, ShellTemplate, SlotKind,
 };
