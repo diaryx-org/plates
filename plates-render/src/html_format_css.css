@@ -246,6 +246,42 @@ a:hover {
     margin: 0.3rem 0;
 }
 
+/* A nested list's marker follows its depth, the word-processor convention and
+   leaf's editor alike: disc, circle, square and 1., a., i., then round again.
+   Depth counts every list around the list, of either kind and across a quote
+   between them, so a bullet under a number is the second level. The browser
+   does the bullets to the third level on its own and never letters a number;
+   CSS cannot count, so each level up to the sixth is spelled out, the most
+   specific selector winning, and anything deeper keeps the sixth's. A
+   `.task-list` outweighs all of these and keeps its boxes. */
+.content :is(ul, ol) ul,
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul {
+    list-style-type: circle;
+}
+
+.content :is(ul, ol) :is(ul, ol) ul,
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ul {
+    list-style-type: square;
+}
+
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) ul {
+    list-style-type: disc;
+}
+
+.content :is(ul, ol) ol,
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ol {
+    list-style-type: lower-alpha;
+}
+
+.content :is(ul, ol) :is(ul, ol) ol,
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) :is(ul, ol) ol {
+    list-style-type: lower-roman;
+}
+
+.content :is(ul, ol) :is(ul, ol) :is(ul, ol) ol {
+    list-style-type: decimal;
+}
+
 .content dl {
     margin: 1rem 0;
 }
