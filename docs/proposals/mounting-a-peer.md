@@ -4,7 +4,7 @@ part_of: '[Proposals](/docs/proposals/proposals.md)'
 status: implemented
 author: adammharris
 created: 2026-09-15
-updated: 2026-09-15
+updated: 2026-10-13
 audience: public
 ---
 
@@ -146,3 +146,14 @@ Implemented 2026-09-15, as argued: `plates::mount::collect_mounted` over
 prov's `descend`, `CollectOptions::{id_links, mount}`, `plates --follow`, and
 `prov::PeerFile` upstream. The diaryx.org site is the first mounting site;
 `fig`, `prov`, `twig`, `leaf`, `flower` and `historica` are its first peers.
+
+**2026-10-13: mounts use the root's `slug`.** A peer now mounts at the `slug`
+its root document declares in frontmatter — `slug: leaf` — and at its
+workspace name only when it declares none. Workspace ids are becoming minted
+ARK blades like `dxq83kfz2`, and `/dxq83kfz2/` is not an address a reader can
+read or remember, so the "not a URL scheme" argument above now holds for the
+reference alone: `id:<name>/…` is still spelled with the workspace's name, and
+the address is the one the peer asks for. A slug is one URL segment of
+lowercase ASCII letters, digits and inner hyphens; any other is a warning and
+the name is used. Two peers asking for the same address at one level are a
+warning naming both, and only the first reached is mounted.

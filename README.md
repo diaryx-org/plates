@@ -44,7 +44,8 @@ archive.
   a host are the same walk with different options.
 - **Mounting.** A published page's foreign reference into another archive the
   device knows where to find mounts that archive's export for the same audience
-  at `/<name>/` — one site out of an organization's repositories, each keeping
+  at `/<slug>/` — the `slug` the peer's root document declares, else its
+  workspace name — one site out of an organization's repositories, each keeping
   its own build.
 - **Markdown, Djot and HTML**, read off each source's own extension and parsed
   by [`twig`](https://github.com/diaryx-org/twig) — the same parser an editor

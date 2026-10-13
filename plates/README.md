@@ -89,7 +89,7 @@ and what the other two crates do, is
   complaint.
 - **The mount.** A published page's foreign reference — `id:fig/…` — into a
   peer workspace the device's map names mounts that peer's export for the same
-  audience at `/fig/`: planned and collected as the peer's own build would be,
+  audience at `/fig/` — the `slug` its root declares, else its name: planned and collected as the peer's own build would be,
   every coordinate prefixed, links resolved across the boundary through each
   registry, and its outline hung where the edge was drawn. `mount::collect_mounted`,
   over prov's `descend`. Nothing is written across the boundary and no registry

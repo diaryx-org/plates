@@ -81,6 +81,12 @@ calls itself something else is a warning naming it, and the edge stays what an
 unfollowed edge is: a link to a page this site does not publish. The origin's
 shell frames every page; a peer's theme is not mounted.
 
+The mount point is the `slug` the peer's root document declares —
+`slug: fig` — or the workspace name when it declares none. A slug is one URL
+segment of lowercase ASCII letters, digits and inner hyphens; any other is a
+warning and the name is used. Two peers declaring the same slug at one level
+are a warning, and only the first reached is mounted.
+
 A `watch` re-fingerprints the origin archive only. An edit inside a peer is
 picked up on the next rebuild the origin triggers.
 

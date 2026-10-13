@@ -4,14 +4,14 @@
 //! `[fig](id:fig/b9j9zgk)` — into a workspace the device knows where to find.
 //! This module opens that workspace, plans the export there that answers to the
 //! same gate, collects it exactly as `plates build` inside the peer would, and
-//! **mounts** the result under the peer's name: `/fig/`. The origin site is the
+//! **mounts** the result under the peer's slug: `/fig/`. The origin site is the
 //! union; each peer's own build is unchanged. `docs/proposals/mounting-a-peer.md`
 //! argues the shape; what follows is the rule it lands on.
 //!
 //! # The rule
 //!
 //! A followed foreign edge *from a page the site publishes* mounts the peer's
-//! export *for the same audience* at `/<name>/`. Each clause is load-bearing:
+//! export *for the same audience* at `/<slug>/`. Each clause is load-bearing:
 //!
 //! - **Followed.** prov's [`descend`] decides, under the trust the caller set.
 //!   A refused edge — unknown, unconfirmed, mismatched, a URL, too deep — is a
@@ -25,9 +25,13 @@
 //!   and value equal the origin site's — one named like the origin site first,
 //!   then the only one. The audience name is the whole contract between the
 //!   two workspaces, which is the contract prov's gate already makes.
-//! - **At `/<name>/`.** The workspace's declared name, which is what the
-//!   reference was spelled with, so `id:fig/…` in a source and `/fig/` in the
-//!   address bar are one fact seen twice.
+//! - **At `/<slug>/`.** The `slug` the peer's root document declares in its
+//!   frontmatter — `slug: fig` — else the workspace's declared name. A workspace
+//!   id may be a minted blade like `dxq83kfz2`, which no reader should have to
+//!   type, so the address is the one the peer asks for. A slug is one URL
+//!   segment of lowercase ASCII letters, digits and inner hyphens; any other is
+//!   a warning and the name is used. Two peers asking for one address at one
+//!   level are a warning, and the first reached keeps it.
 //!
 //! # What is and is not carried
 //!
@@ -76,7 +80,9 @@ pub struct MountOptions<'a> {
 /// One peer a mount reached, and what it contributed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MountReport {
-    /// The peer's name — the last segment of [`prefix`](Self::prefix).
+    /// The peer's workspace name, as references spell it. The last segment of
+    /// [`prefix`](Self::prefix) is its slug, which is this unless the peer's
+    /// root declares another.
     pub name: String,
     /// The directory below the site root its pages landed in, with the trailing
     /// slash: `fig/`, or `fig/schema/` for a mount a mounted peer made.
@@ -183,6 +189,9 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         id_by_path: HashMap<PathBuf, String>,
     }
     let mut opened: Vec<Opened<FS>> = Vec::new();
+    // Each prefix taken, and the peer that took it: two peers declaring one
+    // slug at one level are one address, and the first keeps it.
+    let mut mounted_at: HashMap<String, String> = HashMap::new();
     let mut queue: Vec<(usize, &Node)> = vec![(0, &federation.tree)];
     while !queue.is_empty() {
         let mut next = Vec::new();
@@ -212,7 +221,6 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
                 }
                 let reached = &federation.workspaces[into];
                 let name = reached.name.clone();
-                let prefix = format!("{parent_prefix}{name}/");
 
                 // Re-opened rather than handed back by the descent, which
                 // memoizes its peers privately; one open per peer either way.
@@ -230,6 +238,15 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
                         continue;
                     }
                 };
+
+                let segment = mount_segment(&peer, &name, &mut warnings).await;
+                let prefix = format!("{parent_prefix}{segment}/");
+                if let Some(first) = mounted_at.get(&prefix) {
+                    warnings.push(format!(
+                        "{name} and {first} both mount at /{prefix}, so {name} is not mounted"
+                    ));
+                    continue;
+                }
 
                 let Some(export) = matching_export(&peer.discovered.config.exports, spec) else {
                     warnings.push(format!(
@@ -289,6 +306,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
                         format!("/{prefix}{}", collected_source_path(path, &anchor)),
                     );
                 }
+                mounted_at.insert(prefix.clone(), name.clone());
                 realms.insert(
                     into,
                     Realm {
@@ -425,6 +443,48 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         mounts,
         warnings,
     })
+}
+
+/// The frontmatter field on a peer's root document that names the path segment
+/// it mounts at.
+pub const SLUG_KEY: &str = "slug";
+
+/// The path segment a peer mounts at: the `slug` its root document declares,
+/// else its workspace name. A slug that is not one lowercase URL segment is a
+/// warning, and the name is used instead.
+async fn mount_segment<FS: Storage + Clone>(
+    peer: &prov::Peer<FS>,
+    name: &str,
+    warnings: &mut Vec<String>,
+) -> String {
+    let root_doc = &peer.discovered.root_doc;
+    let Ok(root) = peer.workspace.graph().document(root_doc).await else {
+        return name.to_string();
+    };
+    let Some(value) = root.meta.get(SLUG_KEY) else {
+        return name.to_string();
+    };
+    match value.as_str().map(str::trim) {
+        Some(slug) if is_slug(slug) => slug.to_string(),
+        _ => {
+            warnings.push(format!(
+                "{name}: `{SLUG_KEY}` on {} is not one lowercase URL segment \
+                 (a-z, 0-9 and inner hyphens), so it mounts at /{name}/",
+                root_doc.display()
+            ));
+            name.to_string()
+        }
+    }
+}
+
+/// One URL path segment of lowercase ASCII letters, digits and hyphens,
+/// neither starting nor ending with a hyphen.
+fn is_slug(s: &str) -> bool {
+    !s.is_empty()
+        && !s.starts_with('-')
+        && !s.ends_with('-')
+        && s.bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
 /// The origin's digest memo, as a peer's collection is lent it: every question
@@ -889,6 +949,189 @@ mod tests {
             .collect();
         assert_eq!(shipped, vec![("photo.jpg", "origin's www/photo.jpg")]);
         assert_eq!(*memo.0.borrow(), vec![PathBuf::from("www/photo.jpg")]);
+    }
+
+    /// Build the org's public site from `fs` with `--follow`, through `peers`.
+    fn mount_org(fs: prov::InMemoryFs, peers: &Peers) -> Mounted {
+        let ws: Workspace<prov::InMemoryFs> = Workspace::builder(fs)
+            .root("/org")
+            .workspace_id("org")
+            .build();
+        let spec = SiteSpec {
+            index: Some("[Site](/www/index.md)".into()),
+            ..site("www", "public")
+        };
+        let root = Path::new("README.md");
+        let census = prov::block_on(ws.census(root)).unwrap();
+        let plan = prov::block_on(plan_site(&ws, &spec, &[], root, &census, None)).unwrap();
+        let opts = CollectOptions {
+            audience: "public",
+            gate_field: "audience",
+            strip_keys: &[],
+            stamp: &NoStamp,
+            id_by_path: &HashMap::new(),
+            backlinks: &BTreeMap::new(),
+            census: &census,
+            spanning_root: Some(root),
+            digests: &NoDigests,
+            digest: |_| String::new(),
+            id_links: &NoIdLinks,
+            mount: "",
+        };
+        prov::block_on(collect_mounted(
+            &ws,
+            &spec,
+            &plan,
+            root,
+            &opts,
+            &MountOptions {
+                peers,
+                descent: Descent::default(),
+            },
+        ))
+        .unwrap()
+    }
+
+    /// fig's root document, declaring `slug` as given (or nothing for `None`).
+    fn fig_root(slug: Option<&str>) -> String {
+        let slug = slug.map(|s| format!("slug: {s}\n")).unwrap_or_default();
+        format!(
+            "---\ntitle: fig\nid: b9j9zgk\n{slug}part_of: id:org/kv2bv2m\nconfig: prov.yaml\ncontents:\n- '[Site](/www/index.md)'\n- '[Audiences](/vocab/audiences.md)'\n---\n"
+        )
+    }
+
+    fn sources(mounted: &Mounted) -> Vec<&str> {
+        let mut paths: Vec<&str> = mounted
+            .site
+            .sources
+            .iter()
+            .map(|s| s.source_rel_path.as_str())
+            .collect();
+        paths.sort_unstable();
+        paths
+    }
+
+    #[test]
+    fn a_peer_mounts_at_the_slug_its_root_declares() {
+        let (fs, peers) = org_and_fig();
+        write(&fs, "/org/fig/README.md", &fig_root(Some("figl")));
+        let mounted = mount_org(fs, &peers);
+
+        assert_eq!(mounted.mounts.len(), 1, "{:?}", mounted.warnings);
+        let fig = &mounted.mounts[0];
+        // The name stays the workspace's; only the address moves.
+        assert_eq!((fig.name.as_str(), fig.prefix.as_str()), ("fig", "figl/"));
+        assert_eq!(
+            sources(&mounted),
+            vec!["about.md", "figl/docs.md", "figl/index.md", "index.md"]
+        );
+        // References are still spelled with the workspace name, and resolve to
+        // the slug's address.
+        let about = mounted
+            .site
+            .sources
+            .iter()
+            .find(|s| s.source_rel_path == "about.md")
+            .unwrap();
+        assert!(
+            about.source_markdown.contains("[fig](/figl/index.md)"),
+            "{}",
+            about.source_markdown
+        );
+    }
+
+    #[test]
+    fn a_peer_with_no_slug_mounts_at_its_name() {
+        let (fs, peers) = org_and_fig();
+        write(&fs, "/org/fig/README.md", &fig_root(None));
+        let mounted = mount_org(fs, &peers);
+        assert_eq!(mounted.mounts.len(), 1, "{:?}", mounted.warnings);
+        assert_eq!(mounted.mounts[0].prefix, "fig/");
+        assert!(
+            !mounted.warnings.iter().any(|w| w.contains("slug")),
+            "{:?}",
+            mounted.warnings
+        );
+    }
+
+    #[test]
+    fn an_invalid_slug_is_a_warning_and_the_name_is_used() {
+        for bad in ["Fig", "fig/docs", "-fig", "fig-", "'fig docs'", "''", "[1]"] {
+            let (fs, peers) = org_and_fig();
+            write(&fs, "/org/fig/README.md", &fig_root(Some(bad)));
+            let mounted = mount_org(fs, &peers);
+            assert_eq!(mounted.mounts.len(), 1, "{bad}: {:?}", mounted.warnings);
+            assert_eq!(mounted.mounts[0].prefix, "fig/", "{bad}");
+            assert!(
+                mounted
+                    .warnings
+                    .iter()
+                    .any(|w| w.starts_with("fig: `slug`") && w.contains("/fig/")),
+                "{bad}: {:?}",
+                mounted.warnings
+            );
+        }
+    }
+
+    #[test]
+    fn slugs_are_one_lowercase_segment() {
+        for good in ["fig", "fig-schema", "a", "v2", "0"] {
+            assert!(is_slug(good), "{good}");
+        }
+        for bad in [
+            "",
+            "-",
+            "Fig",
+            "fig/",
+            "fig_schema",
+            "-fig",
+            "fig-",
+            "fïg",
+            "fig.md",
+        ] {
+            assert!(!is_slug(bad), "{bad}");
+        }
+    }
+
+    #[test]
+    fn two_peers_asking_for_one_slug_mount_the_first_and_warn() {
+        let (fs, mut peers) = org_and_fig();
+        write(&fs, "/org/fig/README.md", &fig_root(Some("tools")));
+        write(
+            &fs,
+            "/org/twig/prov.yaml",
+            "workspace_id: twig\nroot: README.md\nid_storage: frontmatter\nexports:\n  docs:\n    gate:\n      field: audience\n      value: public\n",
+        );
+        write(
+            &fs,
+            "/org/twig/README.md",
+            "---\ntitle: twig\nid: 9tz497d\nslug: tools\naudience: public\npart_of: id:org/kv2bv2m\nconfig: prov.yaml\n---\nTwig.\n",
+        );
+        peers
+            .0
+            .insert("twig".to_string(), PathBuf::from("/org/twig"));
+        let mounted = mount_org(fs, &peers);
+
+        // One of them keeps the address — the first the walk reached — and the
+        // other is named beside it.
+        assert_eq!(mounted.mounts.len(), 1, "{:?}", mounted.warnings);
+        let kept = &mounted.mounts[0];
+        assert_eq!(kept.prefix, "tools/");
+        let dropped = if kept.name == "fig" { "twig" } else { "fig" };
+        assert_eq!(
+            mounted.warnings,
+            vec![format!(
+                "{dropped} and {} both mount at /tools/, so {dropped} is not mounted",
+                kept.name
+            )]
+        );
+        assert!(
+            sources(&mounted)
+                .iter()
+                .all(|p| !p.contains('/') || p.starts_with("tools/")),
+            "{:?}",
+            sources(&mounted)
+        );
     }
 
     #[test]
