@@ -1,5 +1,5 @@
 ---
-part_of: id:org/kv2bv2m
+part_of: id:dx4hxn744/kv2bv2m
 title: plates
 author: adammharris
 config: prov.yaml
@@ -18,6 +18,8 @@ fronts:
 audience: public
 registry: registry.yaml
 id: p8ftrd5
+slug: plates
+updated: 2026-10-13T23:51:28.881722Z
 ---
 
 # plates
