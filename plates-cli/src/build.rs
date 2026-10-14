@@ -224,6 +224,7 @@ pub fn build_sites(
         );
         let options = CollectOptions {
             audience: &spec.audience,
+            reach: &plan.reach,
             gate_field: spec.gate_field(),
             strip_keys: STRIP_KEYS,
             stamp: &NoStamp,

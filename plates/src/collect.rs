@@ -171,6 +171,15 @@ pub struct CollectOptions<'a> {
     /// a body filtered for one audience inside a site gated for another is a
     /// disclosure with no one to notice it.
     pub audience: &'a str,
+    /// The audiences [`audience`](Self::audience) also reads — the rest of
+    /// its reach, as [`SitePlan::reach`](crate::SitePlan::reach) carries it —
+    /// whose `:vis[...]` regions survive too. A region for `friends` is the
+    /// family's to read when the family reads friends, as the friends page
+    /// itself is.
+    ///
+    /// Empty reads nothing beyond `audience`. It can only widen which regions
+    /// survive; it never decides which documents leave, which the plan did.
+    pub reach: &'a [String],
     /// The document field the gate reads [`audience`](Self::audience) out of
     /// — [`SiteSpec::gate_field`](crate::SiteSpec::gate_field), or
     /// [`AUDIENCE_FIELD`](crate::AUDIENCE_FIELD).
@@ -611,8 +620,8 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
         };
 
         // Which *parts* of this document leave. The plan already decided that
-        // the document does; this reads the same audience name against the
-        // regions inside it, in the document's own grammar.
+        // the document does; this reads the same audience, and what it reads,
+        // against the regions inside it, in the document's own grammar.
         //
         // A failure here is fatal to the collection rather than skipped: the
         // filter refuses only when it could not account for a region, and the
@@ -621,10 +630,15 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
         // one outcome worse than not publishing.
         let format =
             prov::ContentFormat::from_extension(path).unwrap_or(prov::ContentFormat::Markdown);
-        let filtered_body = filter_body(&parsed.body, format, Audience::Only(&[opts.audience]))
-            .map_err(|reason| Error::Visibility {
-                path: path.clone(),
-                reason: reason.to_string(),
+        let readers: Vec<&str> = std::iter::once(opts.audience)
+            .chain(opts.reach.iter().map(String::as_str))
+            .collect();
+        let filtered_body =
+            filter_body(&parsed.body, format, Audience::Only(&readers)).map_err(|reason| {
+                Error::Visibility {
+                    path: path.clone(),
+                    reason: reason.to_string(),
+                }
             })?;
         // Then say where each `id:` link lands, in the coordinates the render
         // resolves links in. After the filter, so a link inside a region this
@@ -1655,6 +1669,49 @@ mod tests {
         assert!(out.is_empty());
     }
 
+    /// A page's `:vis` regions are kept for the audience and every audience
+    /// it reads: a family site keeps a `.friends` region when the family
+    /// reads friends, and drops a `.closest` one, which the family does not.
+    #[test]
+    fn a_region_for_an_audience_the_site_reads_is_kept() {
+        let ws = vault(&[(
+            "index.md",
+            "---\ntitle: Home\naudience: friends\n---\nMorning.\n\n:::vis{.friends}\nThe party.\n:::\n\n:::vis{.closest}\nThe news.\n:::\n",
+        )]);
+        let census = prov::block_on(ws.census("index.md")).unwrap();
+        let backlinks = prov::block_on(ws.backlinks("index.md")).unwrap();
+        let reach = ["friends".to_string(), "public".to_string()];
+        let body = |audience: &str, reach: &[String]| {
+            let site = prov::block_on(collect_documents(
+                &ws,
+                &[(PathBuf::from("index.md"), true)],
+                Path::new(""),
+                &CollectOptions {
+                    audience,
+                    reach,
+                    gate_field: "audience",
+                    strip_keys: &[],
+                    stamp: &NoStamp,
+                    id_by_path: &HashMap::new(),
+                    backlinks: &backlinks,
+                    census: &census,
+                    spanning_root: None,
+                    digests: &crate::digest::NoDigests,
+                    digest: |_| String::new(),
+                    id_links: &NoIdLinks,
+                    mount: "",
+                },
+            ))
+            .unwrap();
+            site.sources[0].source_markdown.clone()
+        };
+        let family = body("family", &reach);
+        assert!(family.contains("The party."), "{family}");
+        assert!(!family.contains("The news."), "{family}");
+        let alone = body("family", &[]);
+        assert!(!alone.contains("The party."), "{alone}");
+    }
+
     /// A workspace in memory, so the collector can be run against a real
     /// [`prov::Workspace`] — a census, a graph and all — without this crate
     /// growing a dev-dependency or touching a disk.
@@ -1686,6 +1743,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -1761,6 +1819,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2116,6 +2175,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2488,6 +2548,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2621,6 +2682,7 @@ mod tests {
             Path::new(""),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2677,6 +2739,7 @@ mod tests {
             Path::new("www"),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2737,6 +2800,7 @@ mod tests {
             Path::new("www"),
             &CollectOptions {
                 audience: "public",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,
@@ -2870,6 +2934,7 @@ mod tests {
             &plan,
             &CollectOptions {
                 audience: "family",
+                reach: &[],
                 gate_field: "audience",
                 strip_keys: &[],
                 stamp: &NoStamp,

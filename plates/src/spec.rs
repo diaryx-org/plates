@@ -428,6 +428,16 @@ pub struct SitePlan {
     /// Empty when the caller planned without a census, which is what a caller
     /// that does not want the report passes.
     pub link_diagnostics: Vec<LinkDiagnostic>,
+    /// Every value this site's gate admitted by: the audience first, then each
+    /// audience it reads (`also_reads` on its term), nearest first — prov's
+    /// [`Reach`](prov::exports::Reach), resolved once for the plan.
+    ///
+    /// What a collection keeps a page's `:vis` regions for
+    /// ([`CollectOptions::reach`](crate::CollectOptions::reach)), so the
+    /// regions inside a page are judged by the set the page itself was: a
+    /// family site that carries a friends page carries its friends regions
+    /// too.
+    pub reach: Vec<String>,
 }
 
 /// Finish a prov export plan into a site plan: attach the front page, carry
@@ -560,6 +570,7 @@ pub fn finish(
         outside_view: export.outside_view,
         case_drift: case_drift(&spec.audience, &export.withheld),
         link_diagnostics,
+        reach: export.reach.values().to_vec(),
     })
 }
 
@@ -650,7 +661,15 @@ mod tests {
             outside_view: Vec::new(),
             held: Vec::new(),
             withheld,
+            reach: family(),
         }
+    }
+
+    fn family() -> prov::exports::Reach {
+        prov::exports::Reach::of(&Gate {
+            field: "audience".into(),
+            value: "family".into(),
+        })
     }
 
     /// The site's header and footer are documents, and a document the gate
@@ -691,6 +710,7 @@ mod tests {
             outside_view: outside_view.into_iter().map(PathBuf::from).collect(),
             held: Vec::new(),
             withheld: Vec::new(),
+            reach: family(),
         }
     }
 
@@ -701,6 +721,7 @@ mod tests {
             outside_view: Vec::new(),
             held: held.into_iter().map(entry).collect(),
             withheld: Vec::new(),
+            reach: family(),
         }
     }
 

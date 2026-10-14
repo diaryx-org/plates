@@ -375,6 +375,7 @@ pub async fn collect_mounted<FS: Storage + Clone, Id, Ix: IdIndex>(
         );
         let inner = CollectOptions {
             audience: opts.audience,
+            reach: opts.reach,
             gate_field: opts.gate_field,
             strip_keys: opts.strip_keys,
             stamp: opts.stamp,
@@ -521,6 +522,7 @@ fn with<'a>(
 ) -> CollectOptions<'a> {
     CollectOptions {
         audience: opts.audience,
+        reach: opts.reach,
         gate_field: opts.gate_field,
         strip_keys: opts.strip_keys,
         stamp: opts.stamp,
@@ -780,6 +782,7 @@ mod tests {
         .collect();
         let opts = CollectOptions {
             audience: "public",
+            reach: &[],
             gate_field: "audience",
             strip_keys: &[],
             stamp: &NoStamp,
@@ -914,6 +917,7 @@ mod tests {
         let memo = AllElsewhere::default();
         let opts = CollectOptions {
             audience: "public",
+            reach: &[],
             gate_field: "audience",
             strip_keys: &[],
             stamp: &NoStamp,
@@ -966,6 +970,7 @@ mod tests {
         let plan = prov::block_on(plan_site(&ws, &spec, &[], root, &census, None)).unwrap();
         let opts = CollectOptions {
             audience: "public",
+            reach: &[],
             gate_field: "audience",
             strip_keys: &[],
             stamp: &NoStamp,
