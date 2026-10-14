@@ -21,6 +21,7 @@
 
 pub mod appearance;
 pub mod attachment;
+pub mod attribution;
 pub mod body;
 mod chrome;
 pub mod dates;

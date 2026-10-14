@@ -304,7 +304,7 @@ pub fn filter_body(
 ///
 /// Only a line that is nothing but a `{…}` block is absorbed, so prose ending
 /// in a brace is untouched.
-fn attrs_aware_start(source: &str, span_start: usize) -> usize {
+pub(crate) fn attrs_aware_start(source: &str, span_start: usize) -> usize {
     let before = &source[..span_start];
     // Only a block region has a line above it. An inline one starts mid-line,
     // where the preceding text is prose and absorbing it would eat the sentence.
@@ -362,7 +362,7 @@ fn residue_check(out: &str, format: ContentFormat) -> Result<(), Error> {
 /// Spelled here because prov's own mapping is private, and prov is right to
 /// keep it so: it converts for its two FFI calls, not as a public claim about
 /// which twig format a `ContentFormat` *is*.
-fn twig_format(format: ContentFormat) -> twig::Format {
+pub(crate) fn twig_format(format: ContentFormat) -> twig::Format {
     match format {
         ContentFormat::Markdown => twig::Format::Markdown,
         ContentFormat::Djot => twig::Format::Djot,
@@ -376,7 +376,7 @@ fn twig_format(format: ContentFormat) -> twig::Format {
 /// load-bearing**: without it `:::vis{.family}` is a paragraph of literal text,
 /// no container matches, and the region publishes intact. Djot and HTML spell a
 /// region with syntax they always parse, so they need nothing.
-fn extensions(format: ContentFormat) -> MarkdownExtensions {
+pub(crate) fn extensions(format: ContentFormat) -> MarkdownExtensions {
     MarkdownExtensions {
         directives: matches!(format, ContentFormat::Markdown),
         ..MarkdownExtensions::default()
