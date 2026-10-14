@@ -94,6 +94,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ar_archive_writer"
+version = "0.5.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "73cd58deff2140a0a8eae87e417bd01db68a33e148aa93d1e8cd837e55e312b6"
+dependencies = [
+ "object",
+]
+
+[[package]]
 name = "autocfg"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -664,6 +673,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "object"
+version = "0.39.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e5a6c098c7a3b6547378093f5cc30bc54fd361ce711e05293a5cc589562739b"
+dependencies = [
+ "memchr",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -754,7 +772,7 @@ dependencies = [
 [[package]]
 name = "prov"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "edtf-normalize",
  "fig",
@@ -775,7 +793,7 @@ dependencies = [
 [[package]]
 name = "prov-config"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "fig",
  "fig-schema",
@@ -790,7 +808,7 @@ dependencies = [
 [[package]]
 name = "prov-exports"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -799,7 +817,7 @@ dependencies = [
 [[package]]
 name = "prov-filing"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "prov-grain",
  "prov-graph",
@@ -808,7 +826,7 @@ dependencies = [
 [[package]]
 name = "prov-grain"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "edtf-core",
  "prov-graph",
@@ -817,7 +835,7 @@ dependencies = [
 [[package]]
 name = "prov-graph"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -831,7 +849,7 @@ dependencies = [
 [[package]]
 name = "prov-store"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -841,12 +859,23 @@ dependencies = [
 [[package]]
 name = "prov-views"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#e551806edbc70599b3a38782e521e95f1e0e5d5a"
+source = "git+https://github.com/diaryx-org/prov?branch=main#8e97f98c90a2eb8ef3514d87bce7e60c8267963e"
 dependencies = [
  "cel",
  "prov-grain",
  "prov-graph",
+ "stacker",
  "unicode-normalization",
+]
+
+[[package]]
+name = "psm"
+version = "0.1.32"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4dcd034599e63b970727f70d79e02d62390a4a84f7c6b827c27c46d5ac3fa622"
+dependencies = [
+ "ar_archive_writer",
+ "cc",
 ]
 
 [[package]]
@@ -1012,6 +1041,19 @@ name = "smallvec"
 version = "1.16.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f9395f0f0eee849a9b707b2f06bb92a6a422090e2123bb2ef8e87a0e61892a8e"
+
+[[package]]
+name = "stacker"
+version = "0.1.25"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "707f49d46706bacf8a2b00d51dace3f9de527c13eec3778f570c411f89e69967"
+dependencies = [
+ "cc",
+ "cfg-if",
+ "libc",
+ "psm",
+ "windows-sys",
+]
 
 [[package]]
 name = "strsim"
