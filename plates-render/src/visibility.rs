@@ -48,7 +48,8 @@
 //! residue check exists at all.
 
 use prov::ContentFormat;
-use prov::twig::{self, Editor, MarkdownExtensions};
+use prov::prov_graph::{twig_djot, twig_html, twig_markdown};
+use prov::twig::{self, Editor};
 
 /// The class — and, in Markdown, the directive name — that marks a region as
 /// audience-scoped.
@@ -220,8 +221,9 @@ pub fn filter_body(
         return Ok(body.to_string());
     }
 
-    let mut editor = Editor::new_ext(body.as_bytes(), twig_format(format), extensions(format))
-        .map_err(|e| Error::Parse(format!("{e:?}")))?;
+    let mut editor =
+        Editor::new_with_features(body.as_bytes(), twig_format(format), features(format))
+            .map_err(|e| Error::Parse(format!("{e:?}")))?;
 
     // One region per pass, re-reading the tree each time: twig reparses after
     // every edit, so every span but the one just used is stale. The alternative
@@ -370,7 +372,7 @@ fn attr_set_len(text: &str) -> Option<usize> {
 /// The walk above ends when no `vis` container is left, so a *parser*-level
 /// check would only re-ask a question that already answered itself. What it
 /// cannot answer is the case that matters: a body parsed under the wrong
-/// grammar, or Markdown parsed without [`extensions`]'s directive opt-in, has
+/// grammar, or Markdown parsed without [`features`]'s directive opt-in, has
 /// no containers to find and returns every region intact. Text is the only
 /// evidence left, so text is what this reads.
 ///
@@ -419,7 +421,8 @@ fn residue_check(out: &str, format: ContentFormat) -> Result<(), Error> {
 ///
 /// A body that does not parse excuses nothing, so a marker anywhere refuses it.
 fn code_spans(out: &str, format: ContentFormat) -> Vec<std::ops::Range<usize>> {
-    let Ok(mut editor) = Editor::new_ext(out.as_bytes(), twig_format(format), extensions(format))
+    let Ok(mut editor) =
+        Editor::new_with_features(out.as_bytes(), twig_format(format), features(format))
     else {
         return Vec::new();
     };
@@ -464,29 +467,32 @@ fn class_attr_markers(out: &str) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-/// twig's name for a prov content format.
+/// twig's handle for a prov content format.
 ///
 /// Spelled here because prov's own mapping is private, and prov is right to
-/// keep it so: it converts for its two FFI calls, not as a public claim about
-/// which twig format a `ContentFormat` *is*.
+/// keep it so: it converts for its own parses, not as a public claim about
+/// which twig format a `ContentFormat` *is*. Each grammar is a language crate
+/// that registers on first use, reached through `prov::prov_graph` so the
+/// handle names a row in the same twig prov parses with.
 pub(crate) fn twig_format(format: ContentFormat) -> twig::Format {
     match format {
-        ContentFormat::Markdown => twig::Format::Markdown,
-        ContentFormat::Djot => twig::Format::Djot,
-        ContentFormat::Html => twig::Format::Html,
+        ContentFormat::Markdown => twig_markdown::format(),
+        ContentFormat::Djot => twig_djot::format(),
+        ContentFormat::Html => twig_html::format(),
     }
 }
 
-/// The parse extensions a grammar needs to see a region at all.
+/// The parse features a grammar needs to see a region at all.
 ///
 /// Markdown's generic directives are opt-in, and **the opt-in is
 /// load-bearing**: without it `:::vis{.family}` is a paragraph of literal text,
 /// no container matches, and the region publishes intact. Djot and HTML spell a
-/// region with syntax they always parse, so they need nothing.
-pub(crate) fn extensions(format: ContentFormat) -> MarkdownExtensions {
-    MarkdownExtensions {
-        directives: matches!(format, ContentFormat::Markdown),
-        ..MarkdownExtensions::default()
+/// region with syntax they always parse, so they need nothing — and must be
+/// asked for nothing, since twig refuses a feature a language does not declare.
+pub(crate) fn features(format: ContentFormat) -> &'static [&'static str] {
+    match format {
+        ContentFormat::Markdown => &["directives"],
+        ContentFormat::Djot | ContentFormat::Html => &[],
     }
 }
 

@@ -46,7 +46,7 @@ use std::ops::Range;
 use prov::twig::{self, Editor};
 use prov::{Actor, ContentFormat};
 
-use crate::visibility::{attrs_aware_start, extensions, twig_format};
+use crate::visibility::{attrs_aware_start, features, twig_format};
 
 /// The class — and, in Markdown, the directive name — that marks a passage
 /// as attributed.
@@ -110,8 +110,9 @@ pub fn passages(body: &str, format: ContentFormat) -> Result<Vec<Passage>, Error
     if !has_attribution(body) {
         return Ok(Vec::new());
     }
-    let mut editor = Editor::new_ext(body.as_bytes(), twig_format(format), extensions(format))
-        .map_err(|e| Error::Parse(format!("{e:?}")))?;
+    let mut editor =
+        Editor::new_with_features(body.as_bytes(), twig_format(format), features(format))
+            .map_err(|e| Error::Parse(format!("{e:?}")))?;
     let nodes = editor.nodes().map_err(|e| Error::Parse(format!("{e:?}")))?;
 
     let mut found = Vec::new();

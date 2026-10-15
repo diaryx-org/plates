@@ -412,14 +412,12 @@ than copied into every island.
 
 | Feature | |
 |---|---|
-| `yaml` *(default)* | `---` frontmatter, `registry.yaml` |
-| `json`, `toml`, `fig-lang` | the other metadata dialects |
 | `templating` | Body templates — the directive vocabulary and the context it resolves against — plus the whole-site entry point (`site::render_site`) |
 | `syntax-highlighting` | Colour for fenced code blocks, via `syntect` and 213 Sublime grammars |
 
-Metadata-format features forward to `prov`, which forwards them to `fig`. With a
-format off, its parser is left out of the build and `prov` stops recognizing it,
-so at least one must be on.
+Neither is on by default. There are no metadata-format features: `prov` always
+compiles in the dialects it reads (YAML, JSON, TOML, figl), so there is nothing
+to choose among.
 
 `templating` is off by default so a consumer that only needs Markdown, HTML and
 nav does not carry a context assembler it will not call. It pulls in no template

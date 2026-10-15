@@ -278,17 +278,12 @@ asks for it.
 
 ## Features
 
-| Feature | |
-|---|---|
-| `yaml` *(default)* | `---` frontmatter, `registry.yaml` |
-| `json`, `toml`, `fig-lang` | the other metadata dialects |
+None. Every metadata dialect `prov` reads — `---` YAML, `+++` TOML and
+`---<lang>` frontmatter — is always compiled in, so there is no format to pick.
 
-Forwarded to `plates` and `plates-render`, which forward to `prov`, which
-forwards to `fig`. With a format off, its parser is left out of the build and
-`prov` stops recognizing it, so at least one must be on. `plates-render` is taken
-*with* its `templating` feature here: running the render pipeline is the caller's
-job, and this is the caller — without it, a body's template directives would be
-published as literal text.
+`plates-render` is taken *with* its `templating` feature here: running the
+render pipeline is the caller's job, and this is the caller — without it, a
+body's template directives would be published as literal text.
 
 `prov` is deliberately not a dependency of this crate. Workspace discovery, the
 config document and the id registry are all reached through `plates::prov`, which

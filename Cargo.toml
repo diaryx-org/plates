@@ -20,8 +20,10 @@ publish = false
 [workspace.dependencies]
 # The archive engine. Everything this workspace knows about *which* documents
 # exist, what relates them and who may see them comes from here; nothing is
-# re-derived. `default-features = false` so the format features below decide
-# which parsers are compiled rather than prov's default doing it for us.
+# re-derived. `default-features = false` so anything prov turns on by default
+# stays a decision made here. prov no longer has format features to choose
+# among: the metadata dialects it reads (YAML, JSON, TOML, figl) are always
+# compiled in.
 # 0.10 is a floor, not a preference, and three things put it there. 0.9.1 is
 # where prov re-exported `twig` (`prov::twig`): the visibility filter and the
 # template expander address the body's AST rather than scanning its text, and
@@ -40,7 +42,10 @@ publish = false
 # preference for the fourth time, since planning the same archive against 0.10
 # would publish the drafts it says to hold. 0.18 is twig 4's prov: the `twig`
 # plates reaches through `prov::twig` is whatever prov is on, so prov's twig
-# major is plates' too.
+# major is plates' too. Its `main` is now on fig 7 and twig 6: `prov::twig`
+# names no language, and the grammar crates plates parses bodies with
+# (`twig-markdown`, `twig-djot`, `twig-html`) are reached through
+# `prov::prov_graph` for the same one-copy reason.
 #
 # From git, not crates.io: prov is an org repository that does not publish, and
 # every repository that builds against it names this same source — `branch =
@@ -48,9 +53,10 @@ publish = false
 # has one prov in it, at the commit its own Cargo.lock records.
 prov = { git = "https://github.com/diaryx-org/prov", branch = "main", default-features = false }
 # Only the derive macros, for the appearance types a caller deserializes out of
-# its own configuration. No parser backend is requested here — the format
-# features forward to prov, which forwards to the same fig.
-fig = { version = "5", default-features = false, features = ["derive"] }
+# its own configuration. No language is requested here — fig's core names none
+# (since 6.0), and the ones a document's metadata is written in are prov's to
+# register. 7 because prov's is: one fig in the graph.
+fig = { version = "7", default-features = false, features = ["derive"] }
 serde_json = "1.0"
 indexmap = { version = "2.0", features = ["serde"] }
 thiserror = "2.0"

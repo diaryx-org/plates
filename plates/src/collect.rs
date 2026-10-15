@@ -696,18 +696,17 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             );
         }
         opts.stamp.stamp(path, id.as_deref(), &mut source_fm);
-        let source_markdown = if source_fm.is_empty() {
-            filtered_body.clone()
-        } else {
-            let yaml =
-                prov::meta::serialize_mapping(&source_fm, prov::Format::Yaml).map_err(|e| {
-                    Error::Document {
+        let source_markdown =
+            if source_fm.is_empty() {
+                filtered_body.clone()
+            } else {
+                let yaml = prov::meta::serialize_mapping(&source_fm, prov::MetaFormat::Yaml)
+                    .map_err(|e| Error::Document {
                         path: path.clone(),
                         reason: format!("frontmatter cannot be serialized: {e}"),
-                    }
-                })?;
-            format!("---\n{yaml}---\n{filtered_body}")
-        };
+                    })?;
+                format!("---\n{yaml}---\n{filtered_body}")
+            };
 
         let rebased = rebase(path, anchor);
         let source_rel_path = format!("{}{}", opts.mount, collected_source_path(path, anchor));

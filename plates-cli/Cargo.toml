@@ -23,13 +23,6 @@ path = "src/main.rs"
 # read a config vocabulary — see its `spec` module — so the `sites:` block this
 # binary reads is defined here, in `config.rs`, and nowhere else.
 
-[features]
-default = ["yaml"]
-yaml = ["plates/yaml", "plates-render/yaml"]
-json = ["plates/json", "plates-render/json"]
-toml = ["plates/toml", "plates-render/toml"]
-fig-lang = ["plates/fig-lang", "plates-render/fig-lang"]
-
 [dependencies]
 plates = { workspace = true }
 # With `templating` and `syntax-highlighting`, unlike `plates` itself: running

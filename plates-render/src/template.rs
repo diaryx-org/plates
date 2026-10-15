@@ -67,7 +67,8 @@
 use std::path::Path;
 
 use indexmap::IndexMap;
-use prov::twig::{self, Editor, MarkdownExtensions};
+use prov::prov_graph::twig_markdown;
+use prov::twig::{self, Editor};
 use prov::{ContentFormat, Value as YamlValue};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -318,17 +319,12 @@ pub fn has_templates(body: &str) -> bool {
             .any(|name| body.contains(&format!(":{name}")))
 }
 
-/// The parse extensions the vocabulary needs.
+/// The parse features the vocabulary needs.
 ///
 /// The opt-in is load-bearing in the same way it is for visibility: without it
 /// `:::each{…}` is a paragraph of literal text, no container matches, and the
 /// template publishes its own source.
-fn extensions() -> MarkdownExtensions {
-    MarkdownExtensions {
-        directives: true,
-        ..MarkdownExtensions::default()
-    }
-}
+const FEATURES: &[&str] = &["directives"];
 
 /// One directive the walk found, reduced to what expansion needs.
 struct Found {
@@ -429,8 +425,9 @@ fn expand_in(
         return Ok(source.to_string());
     }
 
-    let mut editor = Editor::new_ext(source.as_bytes(), twig::Format::Markdown, extensions())
-        .map_err(|e| Error::Parse(format!("{e:?}")))?;
+    let mut editor =
+        Editor::new_with_features(source.as_bytes(), twig_markdown::format(), FEATURES)
+            .map_err(|e| Error::Parse(format!("{e:?}")))?;
 
     // One directive per pass, re-reading the tree each time: twig reparses
     // after every edit, so every span but the one just used is stale. The
@@ -610,8 +607,9 @@ fn resolve_braces(source: &str, scope: &Scope<'_>, passes: &mut u32) -> Result<S
     if !source.contains("{{") {
         return Ok(source.to_string());
     }
-    let mut editor = Editor::new_ext(source.as_bytes(), twig::Format::Markdown, extensions())
-        .map_err(|e| Error::Parse(format!("{e:?}")))?;
+    let mut editor =
+        Editor::new_with_features(source.as_bytes(), twig_markdown::format(), FEATURES)
+            .map_err(|e| Error::Parse(format!("{e:?}")))?;
 
     loop {
         *passes = passes.checked_sub(1).ok_or(Error::Runaway)?;
@@ -1093,7 +1091,7 @@ mod tests {
 
     #[test]
     fn frontmatter_is_addressable_bare_and_under_page() {
-        let fm = prov::meta::parse_value("title: Hi\n", prov::Format::Yaml)
+        let fm = prov::meta::parse_value("title: Hi\n", prov::MetaFormat::Yaml)
             .unwrap()
             .as_mapping()
             .cloned()
