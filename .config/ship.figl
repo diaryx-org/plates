@@ -1,0 +1,92 @@
+# What ship needs to know about plates: its release, and its CI. Everything not
+# stated here is ship's default — the manifest, the changelog path, the cliff
+# config, and that this is a Cargo workspace.
+name = plates
+url = https://github.com/diaryx-org/plates
+release_branch = main
+
+# No `verify`: before cutting, a release runs the jobs below.
+
+# Not on crates.io: plates is consumed from git, by commit, so a tag is a name
+# for a commit and sets nothing off. 0.11.0 was the last version uploaded.
+publishes = false
+
+# CI. `.github/workflows/ci.yml` asks `ship ci --matrix` for these and runs one
+# per runner, as `ship ci <id>`; `ship ci` runs them all here, in this order,
+# with the same shell, and stops at the first that fails. Changing CI is an edit
+# here and nowhere else.
+#
+# A job is `id` (what `ship ci <id>` takes), `name` (the check GitHub shows as
+# `CI / <name>` — renaming it renames the required status check) and `run` (run
+# by `bash -eo pipefail -c` at the repository root). `runner` is the workflow's:
+# `components` are the rustup components it installs, `toolchain` the Rust it
+# installs (stable when left out), `target` a cross-compilation target it adds,
+# and `builds = false` is the one job that does not compile, so it needs neither
+# the pinned Zig (`fig` and `twig` reach this workspace through prov, and their
+# build.rs runs `zig build`) nor the cargo cache. Cheapest and most likely to
+# fail first.
+job
+> *
+> > id = fmt
+> > name = Format
+> > run = cargo fmt --all --check
+> > runner
+> > > components = rustfmt
+> > > builds = false
+> *
+> > id = clippy
+> > name = Clippy
+> > run = cargo clippy --workspace --all-targets --all-features -- -D warnings
+> > runner
+> > > components = clippy
+> *
+> > id = test
+> > name = Tests
+> > run = cargo test --workspace --all-features
+> *
+> > # A broken intra-doc link is a broken promise on docs.rs, so it fails here
+> > # rather than being discovered after a publish.
+> > id = docs
+> > name = Docs
+> > run = RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
+> *
+> > # `plates-render` promises to run in an edge worker. Nothing but a compiler
+> > # keeps that promise true, so this is the one job whose failure means an API
+> > # has changed shape rather than misbehaved. `plates` and `plates-cli` are
+> > # absent deliberately: one reads a workspace off a disk, and the other opens
+> > # a socket.
+> > id = wasm
+> > name = Wasm
+> > run = cargo check -p plates-render --target wasm32-unknown-unknown --all-features
+> > runner
+> > > target = wasm32-unknown-unknown
+> *
+> > # Each published crate with its own features and nothing more — which is how
+> > # `cargo publish` verifies it and how a consumer who takes the defaults
+> > # receives it. Every other job says `--all-features`, and in a workspace the
+> > # features one member turns on reach the members it depends on: `plates-cli`
+> > # enables `templating`, so `plates` compiled fine here against a
+> > # `plates_render::site` it had never asked for, and 0.5.0 failed to verify
+> > # from the tarball. Resolver 2 unifies only across the packages named on the
+> > # command line, so one `-p` per command is exactly the isolation a publish
+> > # gets.
+> > id = alone
+> > name = Alone
+> > run = '''
+cargo check -p plates-render
+cargo check -p plates
+cargo check -p plates-cli
+'''
+> *
+> > # The version is read from `[workspace.package] rust-version`, so the pin
+> > # follows the declared floor, here and on the runner alike. `rustup run`
+> > # rather than `cargo +<version>`, which only rustup's proxy knows.
+> > id = msrv
+> > name = MSRV
+> > run = '''
+version=$(sed -n 's/^rust-version = "\(.*\)"$/\1/p' Cargo.toml)
+test -n "$version" || { echo "no rust-version in Cargo.toml" >&2; exit 1; }
+echo "MSRV from Cargo.toml: $version"
+rustup toolchain install "$version" --profile minimal --no-self-update
+rustup run "$version" cargo check --workspace --all-features
+'''

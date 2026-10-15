@@ -70,18 +70,19 @@ to move before `1.0`. What each crate cannot do yet is listed under its own
 
 ## Releasing
 
-`release <command>`, from diaryx-org/devtools, which must be on PATH. `release
+[`ship`](https://github.com/diaryx-org/ship), which must be on PATH. `ship
 bump <spec>` moves the one version in `Cargo.toml` that all three crates
-inherit; `release changelog [--write|--check]` writes the generated region of
-[`docs/CHANGELOG.md`](docs/CHANGELOG.md); `release release <spec>` does the whole
-cut — bump, `cargo xtask ci`, changelog, commit, tag — and stops there unless
-given `--push`. What this repository states for itself is in
-[`.config/release.toml`](.config/release.toml) and nothing else; the rest is that
-tool's defaults.
+inherit; `ship changelog [--write|--check]` writes the generated region of
+[`docs/CHANGELOG.md`](docs/CHANGELOG.md); `ship <spec>` does the whole cut —
+CI, bump, changelog, commit, tag — and stops there unless given `--push`. What
+this repository states for itself is in [`.config/ship.figl`](.config/ship.figl)
+and nothing else; the rest is that tool's defaults.
 
-The tag is what publishes: [`publish.yml`](.github/workflows/publish.yml) runs
-`cargo publish --workspace` on every `v*.*.*` tag, which orders the three crates
-by dependency and waits on the index between them.
+CI is the `job` list in the same file: `ship ci` runs every job in the order
+the workflow does, and `ship ci <job>` runs one.
+
+plates is not on crates.io — it is consumed from git, by commit — so a tag is a
+name for a commit and sets nothing off.
 
 ## License
 

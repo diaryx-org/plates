@@ -34,7 +34,7 @@ It must keep compiling for `wasm32-unknown-unknown`, which is a constraint
 rather than a preference: no host functions, no filesystem, no entropy and no
 clock. A caller that has those reads the files and passes the bytes in — a shell
 arrives as *text*, never as a path, and the date formatter re-spells a time it
-was given rather than asking what time it is. The `wasm` job in `cargo xtask ci`
+was given rather than asking what time it is. The `wasm` job in `ship ci`
 is what enforces it.
 
 ## Three grammars, one parser

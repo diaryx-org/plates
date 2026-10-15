@@ -1,9 +1,6 @@
 [workspace]
 resolver = "2"
-# `xtask` is this repo's CI, as a program: `cargo xtask <job>` runs one job and
-# the workflow runs nothing else. It is a member so `cargo test --workspace`
-# checks it, and `publish = false` keeps it off crates.io.
-members = ["plates-render", "plates", "plates-cli", "xtask"]
+members = ["plates-render", "plates", "plates-cli"]
 
 [workspace.package]
 version = "0.11.0"
