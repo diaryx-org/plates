@@ -18,15 +18,7 @@ categories = ["web-programming", "text-processing"]
 # bytes in. The `wasm` CI job is what enforces it.
 
 [features]
-default = ["yaml"]
-
-# Metadata formats, forwarded to prov, which forwards to fig. With a format off,
-# its parser is left out of the build *and* prov stops recognizing it — so at
-# least one has to be on.
-yaml = ["prov/yaml"]
-json = ["prov/json"]
-toml = ["prov/toml"]
-fig-lang = ["prov/fig-lang"]
+default = []
 
 # Render-time body templating: the directive vocabulary (`:::each`, `:::if`,
 # `:val`) and the context it resolves against, plus the whole-site entry point.

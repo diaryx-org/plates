@@ -111,14 +111,11 @@ fn render_markup(body: &str, format: ContentFormat) -> String {
 /// never by matching text, so a `:b` inside a code span is untouched because it
 /// was never a node.
 fn render_markdown(source: &str) -> prov::Result<String> {
-    use prov::twig::{ContainerOrigin, DirectiveForm, Document, Format, Kind, MarkdownExtensions};
+    use prov::prov_graph::twig_markdown;
+    use prov::twig::{ContainerOrigin, DirectiveForm, Document, Kind};
 
-    let extensions = MarkdownExtensions {
-        directives: true,
-        ..MarkdownExtensions::default()
-    };
     let parse = |text: &str| {
-        Document::parse_str_with(text, Format::Markdown, extensions)
+        Document::parse_with_features(text.as_bytes(), twig_markdown::format(), &["directives"])
             .map_err(|e| prov::Error::Content(format!("twig parse: {e}")))
     };
     let mut doc = parse(source)?;

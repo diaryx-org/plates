@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use prov::ContentFormat;
 use prov::twig;
 
+use crate::visibility::{features, twig_format};
+
 /// The directive that draws an album — a manifest node — as its gallery.
 pub const ALBUM: &str = "album";
 
@@ -64,16 +66,13 @@ pub fn mark(body: &str, format: ContentFormat, page: &Path) -> (String, Vec<Foun
     if !NAMES.iter().any(|name| body.contains(name)) || !body.contains("::") {
         return untouched();
     }
-    let grammar = match format {
-        ContentFormat::Markdown => twig::Format::Markdown,
-        ContentFormat::Djot => twig::Format::Djot,
-        _ => return untouched(),
-    };
-    let extensions = twig::MarkdownExtensions {
-        directives: true,
-        ..twig::MarkdownExtensions::default()
-    };
-    let Ok(mut doc) = twig::Document::parse_str_with(body, grammar, extensions) else {
+    if !matches!(format, ContentFormat::Markdown | ContentFormat::Djot) {
+        return untouched();
+    }
+    let djot = format == ContentFormat::Djot;
+    let Ok(mut doc) =
+        twig::Document::parse_with_features(body.as_bytes(), twig_format(format), features(format))
+    else {
         return untouched();
     };
     let Ok(nodes) = doc.nodes() else {
@@ -89,7 +88,7 @@ pub fn mark(body: &str, format: ContentFormat, page: &Path) -> (String, Vec<Foun
                     // Djot has no leaf directive: twig writes one as an empty
                     // fenced div wearing the attributes, `{src="x"}` over
                     // `::: album` and `:::`, whose word is its class.
-                    Some(twig::DirectiveForm::Container) => grammar == twig::Format::Djot,
+                    Some(twig::DirectiveForm::Container) => djot,
                     _ => false,
                 }
         })
@@ -133,9 +132,10 @@ pub fn mark(body: &str, format: ContentFormat, page: &Path) -> (String, Vec<Foun
             continue;
         }
         out.push_str(&body[cursor..span.start]);
-        let block = match grammar {
-            twig::Format::Djot => format!("\n\n``` =html\n{}\n```\n\n", marker(found.len())),
-            _ => format!("\n\n{}\n\n", marker(found.len())),
+        let block = if djot {
+            format!("\n\n``` =html\n{}\n```\n\n", marker(found.len()))
+        } else {
+            format!("\n\n{}\n\n", marker(found.len()))
         };
         out.push_str(&block);
         cursor = span.end;

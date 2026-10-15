@@ -21,13 +21,6 @@ categories = ["web-programming", "command-line-utilities"]
 # application over any vault dialect. Adding a dependency here is a decision,
 # not a convenience.
 
-[features]
-default = ["yaml"]
-yaml = ["prov/yaml", "plates-render/yaml"]
-json = ["prov/json", "plates-render/json"]
-toml = ["prov/toml", "plates-render/toml"]
-fig-lang = ["prov/fig-lang", "plates-render/fig-lang"]
-
 [dependencies]
 prov = { workspace = true }
 # Deliberately without `templating`, so no template engine reaches this crate.

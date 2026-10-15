@@ -251,14 +251,10 @@ next publish. A file that is on disk is always weighed from the disk.
 
 ## Features
 
-Defaults to `yaml`, and forwards its metadata-format features to `prov`, which
-forwards them to `fig`. With a format off, its parser is left out of the build
-and `prov` stops recognizing it, so at least one must be on.
-
-| Feature | |
-|---|---|
-| `yaml` *(default)* | `---` frontmatter, `registry.yaml` |
-| `json`, `toml`, `fig-lang` | the other metadata dialects |
+None. The metadata dialects — `---` YAML, `+++` TOML and `---<lang>` (JSON,
+figl) frontmatter, and `registry.yaml` — are always compiled in, because `prov`
+always compiles them in: it has no format features to forward to any more, so
+neither has this crate.
 
 ## What a caller still owns
 
