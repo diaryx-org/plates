@@ -16,6 +16,7 @@
 //! | Markdown | `:::vis{.family}` … `:::` | `"vis"` | `family` |
 //! | Markdown (inline) | `:vis[text]{.family}` | `"vis"` | `family` |
 //! | Djot | `{.vis .family}` on the line above `:::` | `""` | `vis family` |
+//! | Djot (inline) | `[text]{.vis .family}` | `""` | `vis family` |
 //! | HTML | `<div class="vis family">` | `"div"` | `vis family` |
 //!
 //! So the predicate is uniform and needs no per-grammar branch: **a region is a
@@ -276,14 +277,16 @@ pub fn filter_body(
             String::new()
         };
 
-        let start = attrs_aware_start(
-            &editor
-                .source_str()
-                .map_err(|e| Error::Edit(format!("{e:?}")))?,
-            region.span.start,
-        );
+        let source = editor
+            .source_str()
+            .map_err(|e| Error::Edit(format!("{e:?}")))?;
+        let start = attrs_aware_start(&source, region.span.start);
+        let end = match format {
+            ContentFormat::Djot => attrs_aware_end(&source, region.span.end),
+            ContentFormat::Markdown | ContentFormat::Html => region.span.end,
+        };
         editor
-            .edit_range(start, region.span.end, &replacement)
+            .edit_range(start, end, &replacement)
             .map_err(|e| Error::Edit(format!("{e:?}")))?;
     }
 
@@ -320,6 +323,48 @@ pub(crate) fn attrs_aware_start(source: &str, span_start: usize) -> usize {
     }
 }
 
+/// Extend an inline region's end forwards over the attribute sets that follow
+/// it.
+///
+/// Djot writes an inline element's attributes *after* it
+/// (`[text]{.vis .family}`), and twig attaches them to the span while leaving
+/// them outside its `span` — and outside every node. Deleting the span alone
+/// would leave `{.vis .family}` in the sentence, the audience's name published,
+/// as [`attrs_aware_start`] guards against for a block.
+///
+/// Djot only: there a `{` directly after an inline element is always its
+/// attributes, so absorbing it cannot eat prose. Markdown's `:vis[…]{…}` already
+/// spans its attributes, and a brace after one is text.
+pub(crate) fn attrs_aware_end(source: &str, span_end: usize) -> usize {
+    let mut end = span_end;
+    // Djot allows several sets in a row (`[t]{.vis}{.family}`), all the span's.
+    while let Some(len) = attr_set_len(&source[end..]) {
+        end += len;
+    }
+    end
+}
+
+/// The length of the `{…}` attribute set `text` starts with, or `None` when it
+/// does not start with a closed one. A `}` inside a quoted value does not close
+/// it.
+fn attr_set_len(text: &str) -> Option<usize> {
+    if !text.starts_with('{') {
+        return None;
+    }
+    let mut quoted = false;
+    let mut escaped = false;
+    for (i, c) in text.char_indices().skip(1) {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' => escaped = true,
+            '"' => quoted = !quoted,
+            '}' if !quoted => return Some(i + 1),
+            _ => {}
+        }
+    }
+    None
+}
+
 /// Refuse a body that still carries a marker outside of code.
 ///
 /// The walk above ends when no `vis` container is left, so a *parser*-level
@@ -329,32 +374,94 @@ pub(crate) fn attrs_aware_start(source: &str, span_start: usize) -> usize {
 /// no containers to find and returns every region intact. Text is the only
 /// evidence left, so text is what this reads.
 ///
-/// Code is excluded, and that exclusion is the whole reason this needs prov: a
-/// document *explaining* the syntax quotes it, and quoting is not declaring.
-/// [`prov::code_spans`] is the same code-awareness prov's own link scan uses,
-/// so a marker in a code span is prose here for exactly the reason it is prose
-/// there.
+/// Code is excluded: a document *explaining* the syntax quotes it, and quoting
+/// is not declaring. Only code, though — see [`code_spans`] for why this does
+/// not borrow prov's link-scan notion of it.
+///
+/// The spellings read are every grammar's, not only the body's own. A Markdown
+/// author who writes Pandoc's `::: {.vis .family}` or `[t]{.vis .family}`, or
+/// the HTML table's `<div class="vis family">`, gets text or a raw block — no
+/// container, nothing removed — and without this the passage would publish in
+/// full. Refusing it costs a document that *says* `{.vis}` in prose a publish
+/// error, which is the side to be wrong on.
 fn residue_check(out: &str, format: ContentFormat) -> Result<(), Error> {
-    let code = prov::code_spans(out, format).unwrap_or_default();
+    let code = code_spans(out, format);
     let in_code = |at: usize| code.iter().any(|s| s.contains(&at));
 
-    for spelling in [":::vis", "::vis", ":vis["] {
-        let mut from = 0;
-        while let Some(rel) = out[from..].find(spelling) {
-            let at = from + rel;
-            if !in_code(at) {
-                let end = out[at..]
-                    .char_indices()
-                    .nth(40)
-                    .map_or(out.len(), |(i, _)| at + i);
-                return Err(Error::Residue {
-                    found: out[at..end].replace('\n', "\\n"),
-                });
-            }
-            from = at + spelling.len();
-        }
+    let directives = [":::vis", "::vis", ":vis["]
+        .into_iter()
+        .flat_map(|spelling| out.match_indices(spelling).map(|(at, _)| at));
+    let mut markers: Vec<usize> = directives
+        .chain(class_attr_markers(out))
+        .chain(class_set_markers(out))
+        .collect();
+    markers.sort_unstable();
+
+    if let Some(at) = markers.into_iter().find(|&at| !in_code(at)) {
+        let end = out[at..]
+            .char_indices()
+            .nth(40)
+            .map_or(out.len(), |(i, _)| at + i);
+        return Err(Error::Residue {
+            found: out[at..end].replace('\n', "\\n"),
+        });
     }
     Ok(())
+}
+
+/// The byte ranges twig reads as code — code spans and code blocks — in a body
+/// of `format`, parsed as [`filter_body`] parses it.
+///
+/// Not [`prov::code_spans`], which also counts raw HTML as code: right for a
+/// link scan, wrong here, because raw HTML is *rendered*. A Markdown body's
+/// `<div class="vis family">` is a raw block, and excusing it as code would
+/// publish the passage it was meant to scope.
+///
+/// A body that does not parse excuses nothing, so a marker anywhere refuses it.
+fn code_spans(out: &str, format: ContentFormat) -> Vec<std::ops::Range<usize>> {
+    let Ok(mut editor) = Editor::new_ext(out.as_bytes(), twig_format(format), extensions(format))
+    else {
+        return Vec::new();
+    };
+    editor
+        .nodes()
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|n| matches!(n.kind, twig::Kind::Verbatim | twig::Kind::CodeBlock))
+        .map(|n| n.span)
+        .collect()
+}
+
+/// Where a `{…}` attribute set names [`MARKER`] as a class (`.vis`): Djot's
+/// spelling, and Pandoc's fenced div and bracketed span.
+fn class_set_markers(out: &str) -> impl Iterator<Item = usize> + '_ {
+    out.match_indices('{').filter_map(move |(at, _)| {
+        let len = attr_set_len(&out[at..])?;
+        out[at + 1..at + len - 1]
+            .split_whitespace()
+            .any(|word| word.strip_prefix('.') == Some(MARKER))
+            .then_some(at)
+    })
+}
+
+/// Where a `class` attribute lists [`MARKER`]: HTML's spelling, quoted or
+/// bare, and Djot's `{class="vis"}`. Over-eager on purpose — `subclass=vis`
+/// counts — since a false positive is a refused publish.
+fn class_attr_markers(out: &str) -> impl Iterator<Item = usize> + '_ {
+    out.match_indices("class").filter_map(move |(at, word)| {
+        let rest = out[at + word.len()..].trim_start().strip_prefix('=')?;
+        let rest = rest.trim_start();
+        let value = match rest.chars().next()? {
+            quote @ ('"' | '\'') => rest[1..].split(quote).next()?,
+            _ => rest
+                .split(|c: char| c.is_whitespace() || matches!(c, '>' | '}' | '/'))
+                .next()?,
+        };
+        value
+            .split_whitespace()
+            .any(|class| class == MARKER)
+            .then_some(at)
+    })
 }
 
 /// twig's name for a prov content format.
@@ -537,5 +644,51 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, Error::Residue { .. }), "{err:?}");
+    }
+
+    /// Djot spells an inline region `[text]{.vis .family}`, and twig puts the
+    /// attributes *after* the span. Removing the span alone would leave
+    /// `{.vis .family}` standing in the sentence — the audience's name,
+    /// published.
+    #[test]
+    fn djot_inline_regions_take_their_attributes_with_them() {
+        let body = "a [keep]{.vis .public} b [drop]{.vis .family} c\n";
+        let out = filter_body(body, ContentFormat::Djot, only(&["public"])).unwrap();
+        assert_eq!(out, "a keep b  c\n");
+        let out = filter_body(body, ContentFormat::Djot, Audience::All).unwrap();
+        assert_eq!(out, "a keep b drop c\n");
+    }
+
+    /// Spellings a Markdown body does not parse as a region — Pandoc's fenced
+    /// div and bracketed span, and raw HTML — read as text or a raw block. No
+    /// container matches, so without the residue check the passage would
+    /// publish in full.
+    #[test]
+    fn foreign_spellings_in_markdown_are_refused_not_published() {
+        for body in [
+            "::: {.vis .family}\nHidden\n:::\n",
+            "a [Hidden]{.vis .family} b\n",
+            "a [Hidden]{ .family .vis } b\n",
+            "<div class=\"vis family\">\nHidden\n</div>\n",
+            "<span class='family vis'>Hidden</span>\n",
+            "<div class=vis>\nHidden\n</div>\n",
+        ] {
+            let err = filter_body(body, ContentFormat::Markdown, only(&["public"])).unwrap_err();
+            assert!(matches!(err, Error::Residue { .. }), "{body:?}: {err:?}");
+        }
+    }
+
+    /// Quoting a foreign spelling is prose, as quoting the directive is, and a
+    /// class that merely starts with `vis` is someone else's.
+    #[test]
+    fn foreign_spellings_in_code_or_other_classes_are_prose() {
+        for body in [
+            "Pandoc writes `::: {.vis .family}`.\n",
+            "```\n<div class=\"vis family\">x</div>\n[t]{.vis}\n```\n",
+            "a [t]{.visible} b <p class=\"visual\">x</p> {vis} c\n",
+        ] {
+            let out = filter_body(body, ContentFormat::Markdown, only(&["public"])).unwrap();
+            assert_eq!(out, body);
+        }
     }
 }
