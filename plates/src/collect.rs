@@ -540,6 +540,13 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
     // than by re-scanning the archive's census per page — see
     // [`site_relations`].
     let mut relations = site_relations(opts.census, &page_paths, anchor, opts.mount);
+    // The registry read backwards, for the `id:` references to a card that
+    // [`retarget_cards`] has to find on disk.
+    let path_by_id: HashMap<&str, &Path> = opts
+        .id_by_path
+        .iter()
+        .map(|(path, id)| (id.as_str(), path.as_path()))
+        .collect();
 
     for (path, is_root) in docs {
         let is_root = *is_root;
@@ -640,6 +647,12 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
                     reason: reason.to_string(),
                 }
             })?;
+        // A reference to an attachment card that means its bytes names the
+        // payload instead, so the scan below collects (or withholds) the file
+        // and the render draws it. Before the id rewrite, which would land it
+        // on the card's page.
+        let filtered_body =
+            retarget_cards(ws, path, &filtered_body, anchor, &page_paths, &path_by_id).await;
         // Then say where each `id:` link lands, in the coordinates the render
         // resolves links in. After the filter, so a link inside a region this
         // audience does not see is never looked up; before the reference scan,
@@ -1025,6 +1038,63 @@ fn rewrite_id_links(doc: &Path, body: &str, links: &dyn IdLinks) -> String {
     out.unwrap_or_else(|| body.to_string())
 }
 
+/// Retarget every body reference to an attachment card that stands for the
+/// card's bytes to the payload itself, written relative to `doc` — locator
+/// kept, wrapper kept, as [`rewrite_id_links`] does.
+///
+/// A card is the node, so an `id:` reference resolves to the sidecar
+/// (`photo.jpg.yaml`), and a path may name it directly. That is right for a
+/// link to a card this site publishes, which lands on the card's page. It is
+/// wrong for an embed, `![](id:…)`, which draws the picture, and for a link to
+/// a card the site does not publish, which has no page to land on. Both mean
+/// the payload, as prov's `resolve_payload` reads them, and once they say so
+/// the reference scan collects the file, or withholds it, on the terms a
+/// reference by the payload's own path gets.
+///
+/// Local references only: a foreign card's payload is its own workspace's.
+async fn retarget_cards<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    doc: &Path,
+    body: &str,
+    anchor: &Path,
+    pages: &HashSet<&Path>,
+    path_by_id: &HashMap<&str, &Path>,
+) -> String {
+    let mut out: Option<String> = None;
+    for bl in prov::link::scan_body_links(doc, body).into_iter().rev() {
+        let card = match bl.link.id_ref() {
+            Some(prov::link::IdRef::Local(id)) => {
+                path_by_id.get(id.as_str()).map(|p| p.to_path_buf())
+            }
+            Some(prov::link::IdRef::Foreign { workspace, id })
+                if !ws.workspace_id().is_empty() && workspace == ws.workspace_id() =>
+            {
+                path_by_id.get(id.as_str()).map(|p| p.to_path_buf())
+            }
+            Some(_) => None,
+            None if bl.link.is_path_target() => {
+                Some(canonical_target(doc, &bl.link.target, anchor))
+            }
+            None => None,
+        };
+        let Some(card) = card else { continue };
+        if !bl.image && pages.contains(card.as_path()) {
+            continue;
+        }
+        let Some(payload) = ws.attachment_payload(&card).await else {
+            continue;
+        };
+        let from = doc.parent().unwrap_or(Path::new(""));
+        let retargeted = bl
+            .link
+            .with_path(prov::link::relative(from, &payload))
+            .render();
+        out.get_or_insert_with(|| body.to_string())
+            .replace_range(bl.span.clone(), &retargeted);
+    }
+    out.unwrap_or_else(|| body.to_string())
+}
+
 /// The destination a document's frontmatter `serve_at:` claims, or `None` when
 /// it declares none.
 ///
@@ -1264,22 +1334,28 @@ fn push_canonical_ref(
     out: &mut Vec<String>,
 ) {
     let link = prov::link::Link::parse(raw);
-    let mut canonical = prov::link::resolve(doc, &link.target);
-    // A leading `/` means *the site's root*, which under an anchor is not the
-    // vault's. `prov::link::resolve` reads it as vault-relative, correctly for
-    // prov's own purposes, and `plates_render` reads it as site-relative,
-    // correctly for a page that will be served — so the anchor is put back here
-    // rather than letting the two disagree about which `/logo.png` is meant.
-    // A vault-rooted site anchors at `""`, where this is a no-op.
-    if link.target.starts_with('/') && !anchor.as_os_str().is_empty() {
-        canonical = anchor.join(canonical);
-    }
+    let canonical = canonical_target(doc, &link.target, anchor);
     if pages.contains(canonical.as_path()) {
         return;
     }
     if explicit || prov::ContentFormat::from_extension(&canonical).is_none() {
         out.push(canonical.to_string_lossy().into_owned());
     }
+}
+
+/// The workspace-relative path a body's path `target`, written in `doc`, names.
+fn canonical_target(doc: &Path, target: &str, anchor: &Path) -> PathBuf {
+    let canonical = prov::link::resolve(doc, target);
+    // A leading `/` means *the site's root*, which under an anchor is not the
+    // vault's. `prov::link::resolve` reads it as vault-relative, correctly for
+    // prov's own purposes, and `plates_render` reads it as site-relative,
+    // correctly for a page that will be served — so the anchor is put back here
+    // rather than letting the two disagree about which `/logo.png` is meant.
+    // A vault-rooted site anchors at `""`, where this is a no-op.
+    if target.starts_with('/') && !anchor.as_os_str().is_empty() {
+        return anchor.join(canonical);
+    }
+    canonical
 }
 
 /// Sanitize each component of a relative path and set its extension. Mirrors
@@ -2762,6 +2838,134 @@ mod tests {
         assert!(body.contains("[fig](/fig/index.md)"), "{body}");
         // Unanswerable: left as written.
         assert!(body.contains("[nobody](id:zzzzzzz)"), "{body}");
+    }
+
+    /// A page embedding and linking the card `trip/photo.jpg.yaml`, which
+    /// declares `audience` when `audience` is given and nothing otherwise, and
+    /// whose payload is `trip/photo.jpg`. The card's id is `abc1234`.
+    fn trip(body: &str, audience: Option<&str>) -> Workspace<prov::InMemoryFs> {
+        let fs = prov::InMemoryFs::default();
+        let card = match audience {
+            Some(a) => format!(
+                "title: Photo\ncontent: photo.jpg\nattachment: true\naudience: [{a}]\npart_of: /trip.md\n"
+            ),
+            None => {
+                "title: Photo\ncontent: photo.jpg\nattachment: true\npart_of: /trip.md\n".into()
+            }
+        };
+        for (path, text) in [
+            (
+                "trip.md",
+                format!(
+                    "---\ntitle: Trip\naudience: [public]\ncontents:\n- trip/photo.jpg.yaml\n---\n{body}\n"
+                ),
+            ),
+            ("trip/photo.jpg.yaml", card),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        prov::block_on(fs.write_atomic(Path::new("/vault/trip/photo.jpg"), b"JPEG")).unwrap();
+        Workspace::builder(fs).root("/vault").build()
+    }
+
+    /// Collect `admitted` out of a [`trip`] vault with the card's id in the
+    /// registry, as a build with one does.
+    fn collect_trip(ws: &Workspace<prov::InMemoryFs>, admitted: &[&str]) -> CollectedSite {
+        let id_by_path: HashMap<PathBuf, String> = [
+            (PathBuf::from("trip.md"), "x2q521g".to_string()),
+            (PathBuf::from("trip/photo.jpg.yaml"), "abc1234".to_string()),
+        ]
+        .into_iter()
+        .collect();
+        let foreign = HashMap::new();
+        let links = RegistryLinks::new("", &id_by_path, Path::new(""), "", &foreign);
+        let docs: Vec<(PathBuf, bool)> = admitted
+            .iter()
+            .map(|p| (PathBuf::from(p), *p == "trip.md"))
+            .collect();
+        prov::block_on(collect_documents(
+            ws,
+            &docs,
+            Path::new(""),
+            &CollectOptions {
+                audience: "public",
+                reach: &[],
+                gate_field: "audience",
+                strip_keys: &[],
+                stamp: &NoStamp,
+                id_by_path: &id_by_path,
+                backlinks: &BTreeMap::new(),
+                census: &[],
+                spanning_root: None,
+                digests: &crate::digest::NoDigests,
+                digest: |_| String::new(),
+                id_links: &links,
+                mount: "",
+            },
+        ))
+        .unwrap()
+    }
+
+    fn shipped(site: &CollectedSite) -> Vec<&str> {
+        site.attachments
+            .iter()
+            .map(|a| a.dest_rel.as_str())
+            .collect()
+    }
+
+    /// An embed names the bytes a card stands for, not the card: by id or by
+    /// path to the sidecar, the picture is drawn from the payload, and the
+    /// payload ships — whether or not the card is a page of the site.
+    #[test]
+    fn an_embed_of_a_card_draws_its_payload() {
+        let ws = trip("![by id](id:abc1234) ![by path](trip/photo.jpg.yaml)", None);
+        for admitted in [&["trip.md"][..], &["trip.md", "trip/photo.jpg.yaml"][..]] {
+            let site = collect_trip(&ws, admitted);
+            let body = &site.sources[0].source_markdown;
+            assert!(
+                body.contains("![by id](trip/photo.jpg)"),
+                "{admitted:?}: {body}"
+            );
+            assert!(
+                body.contains("![by path](trip/photo.jpg)"),
+                "{admitted:?}: {body}"
+            );
+            assert_eq!(shipped(&site), ["trip/photo.jpg"], "{admitted:?}");
+            assert!(
+                site.withheld.is_empty(),
+                "{admitted:?}: {:?}",
+                site.withheld
+            );
+        }
+    }
+
+    /// A link, unlike an embed, names the card: it lands on the card's page
+    /// when the card is published, and on the payload when it is not.
+    #[test]
+    fn a_link_to_a_card_lands_on_its_page_or_else_its_payload() {
+        let ws = trip("[the photo](id:abc1234)", None);
+
+        let site = collect_trip(&ws, &["trip.md", "trip/photo.jpg.yaml"]);
+        let body = &site.sources[0].source_markdown;
+        assert!(body.contains("[the photo](/trip/photo.jpg.md)"), "{body}");
+
+        let site = collect_trip(&ws, &["trip.md"]);
+        let body = &site.sources[0].source_markdown;
+        assert!(body.contains("[the photo](trip/photo.jpg)"), "{body}");
+        assert_eq!(shipped(&site), ["trip/photo.jpg"]);
+    }
+
+    /// A payload reached through its card is gated as one reached by its own
+    /// path: a card that names another audience keeps its bytes home.
+    #[test]
+    fn an_embed_of_a_card_for_another_audience_is_withheld() {
+        let ws = trip("![by id](id:abc1234)", Some("family"));
+        let site = collect_trip(&ws, &["trip.md"]);
+        let body = &site.sources[0].source_markdown;
+        assert!(body.contains("![by id](trip/photo.jpg)"), "{body}");
+        assert!(shipped(&site).is_empty(), "{:?}", shipped(&site));
+        assert_eq!(site.withheld, ["trip/photo.jpg"]);
     }
 
     /// Under a mount every coordinate carries the prefix, the mounted front
