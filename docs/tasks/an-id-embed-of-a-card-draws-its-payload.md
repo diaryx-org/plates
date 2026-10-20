@@ -1,14 +1,27 @@
 ---
 title: 'An id embed of a card draws its payload'
 part_of: '[Tasks](/docs/tasks/tasks.md)'
-status: open
+status: done
 author: adammharris
 created: 2026-10-05
-updated: 2026-10-05
+updated: 2026-10-20
 audience: public
 ---
 
 # An id embed of a card draws its payload
+
+**Status.** Done. `collect`'s `retarget_cards` runs before the id rewrite and
+retargets an embed of a card, by `id:` or by a path to the sidecar, to the
+payload, written relative to the page; a plain link is retargeted the same
+way when the card is not one of the site's pages, and left to land on the
+card's page when it is. The reference scan then collects the payload, or
+withholds it when its sidecar names another audience, as it does a
+reference by the payload's own path. Covered by
+`an_embed_of_a_card_draws_its_payload`,
+`a_link_to_a_card_lands_on_its_page_or_else_its_payload` and
+`an_embed_of_a_card_for_another_audience_is_withheld`. A foreign card
+(`id:<workspace>/<id>`) is left as it was: its payload is its own
+workspace's to ship.
 
 ## The problem
 
