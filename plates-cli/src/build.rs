@@ -20,8 +20,8 @@ use std::path::{Path, PathBuf};
 
 use plates::prov::{Descent, PeerFile, block_on};
 use plates::{
-    CollectOptions, DigestMemo, MountOptions, NoStamp, RegistryLinks, SiteTheme, collect_mounted,
-    collect_site, plan_site, read_page_shells, read_term_config, read_theme,
+    CollectOptions, DigestMemo, FRONT_PAGE_KEY, MountOptions, NoStamp, RegistryLinks, SiteTheme,
+    collect_mounted, collect_site, plan_site, read_page_shells, read_term_config, read_theme,
 };
 use plates_render::SiteStyle;
 use plates_render::html::Generator;
@@ -297,6 +297,37 @@ pub fn build_sites(
                 plan.case_drift.len(),
                 spec.audience,
                 plan.case_drift[0].display(),
+            ));
+        }
+
+        // A site with no front page from any source opens on an index
+        // synthesized from its entries, in whatever shell it has — which is
+        // also what a correct site with one entry looks like. Not when the
+        // archive's root is shared with the audience, which fronts the site as
+        // it always did, nor when a term node exists and its hold keeps it
+        // back, which is a draft rather than a mistake. And said only for a
+        // site that declared something render-facing: one whose gate field
+        // names a vocabulary to hold its term node, or whose export entry
+        // carries a key meant for one. An archive that declared nothing hears
+        // nothing.
+        let root_shared = plan.entries.iter().any(|doc| doc.path == session.root_doc)
+            || plan.outside_view.contains(&session.root_doc);
+        let declared_render = session
+            .config
+            .field(spec.gate_field())
+            .is_some_and(|field| field.vocabulary.is_some())
+            || session.unread_export_keys.contains(&spec.name);
+        if session.source == Source::Exports
+            && plan.index.is_none()
+            && plan.own_page.is_none()
+            && !root_shared
+            && declared_render
+        {
+            warnings.push(format!(
+                "site {:?} has no front page — no `{FRONT_PAGE_KEY}:` on a term node for \
+                 {:?}, and no term node to front it — so it is anchored at the archive root \
+                 and opens on an index synthesized from its entries",
+                spec.name, spec.audience,
             ));
         }
 
@@ -636,5 +667,112 @@ mod tests {
 
         assert!(!identifiers(&collected, "plates", &[]).contains_key("index.md"));
         assert!(identifiers(&collected, "", &[]).is_empty());
+    }
+
+    /// Every warning a build of the archive `files` says: the declaration's,
+    /// then each site's.
+    fn build_warnings(files: &[(&str, &str)]) -> Vec<String> {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in files {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let session = Session::open_at(dir.path()).unwrap();
+        let built = build_sites(&session, None, None, None).unwrap();
+        let mut warnings = session.warnings.clone();
+        for site in built {
+            warnings.extend(site.warnings);
+        }
+        warnings
+    }
+
+    const ROOT: &str = "---\ntitle: Vault\nconfig: .config/config.yaml\naudience: private\n\
+                        contents:\n- '[Book](/book.md)'\n- '[Audiences](/vocab/audiences.md)'\n---\n";
+    const BOOK: &str =
+        "---\ntitle: Book\naudience: public\npart_of: '[Vault](/README.md)'\n---\nRead me.\n";
+    const INDEX: &str =
+        "---\ntitle: Audiences\npart_of: '[Vault](/README.md)'\naudience: private\n---\n";
+
+    /// The repro the task was filed with: render keys on the export entry, and
+    /// a gate field whose vocabulary is a flat store. Each unread key is named
+    /// with where it belongs, the store is named as the reason there is no term
+    /// node, and the synthesized front page is said rather than inferred.
+    #[test]
+    fn a_declaration_plates_is_not_reading_is_named() {
+        let warnings = build_warnings(&[
+            ("README.md", ROOT),
+            ("book.md", BOOK),
+            ("vocab/audiences.md", INDEX),
+            (
+                "vocab/audiences.yaml",
+                "vocabulary: audience\nterms:\n  public: {}\n  private: {}\n",
+            ),
+            (
+                ".config/config.yaml",
+                "fields:\n  audience: { type: str, values: closed, vocabulary: vocab/audiences.yaml }\n\
+                 exports:\n  diaryx:\n    label: Diaryx\n    gate: { field: audience, value: public }\n    \
+                 shell: .config/sites/diaryx/shell.html\n    stylesheet: .config/sites/diaryx/style.css\n",
+            ),
+        ]);
+
+        let find = |needle: &str| {
+            warnings
+                .iter()
+                .find(|w| w.contains(needle))
+                .unwrap_or_else(|| panic!("no warning mentions {needle}: {warnings:#?}"))
+        };
+        let shell = find("exports.diaryx.shell");
+        assert!(shell.contains("`site.shell`"), "{shell}");
+        assert!(shell.contains("`public` term node"), "{shell}");
+        assert!(shell.contains("the built-in shell"), "{shell}");
+        assert!(find("exports.diaryx.stylesheet").contains("no stylesheet of its own"));
+        assert!(find("vocab/audiences.yaml").contains("flat `terms:` store"));
+        assert!(find("no front page").contains("synthesized"));
+        assert_eq!(warnings.len(), 4, "{warnings:#?}");
+    }
+
+    /// An archive that declares nothing render-facing anywhere — no vocabulary
+    /// for its gate, nothing on its export but what prov reads — stays silent,
+    /// even though its front page is synthesized.
+    #[test]
+    fn an_archive_that_declares_no_render_config_hears_nothing() {
+        let warnings = build_warnings(&[
+            ("README.md", ROOT),
+            ("book.md", BOOK),
+            ("vocab/audiences.md", INDEX),
+            (
+                ".config/config.yaml",
+                "exports:\n  blog:\n    label: Blog\n    gate: { field: audience, value: public }\n",
+            ),
+        ]);
+
+        assert!(warnings.is_empty(), "{warnings:#?}");
+    }
+
+    /// And one whose term node is found and fronts the site has nothing to be
+    /// told.
+    #[test]
+    fn a_site_fronted_by_its_term_node_hears_nothing() {
+        let warnings = build_warnings(&[
+            ("README.md", ROOT),
+            ("book.md", BOOK),
+            (
+                "vocab/audiences.md",
+                "---\ntitle: Audiences\npart_of: '[Vault](/README.md)'\naudience: private\n\
+                 contents:\n- '[Public](/vocab/public.md)'\n---\n",
+            ),
+            (
+                "vocab/public.md",
+                "---\ntitle: Public\nterm: public\npart_of: '[Audiences](/vocab/audiences.md)'\n---\n",
+            ),
+            (
+                ".config/config.yaml",
+                "fields:\n  audience:\n    values: open\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n\
+                 exports:\n  blog:\n    gate: { field: audience, value: public }\n",
+            ),
+        ]);
+
+        assert!(warnings.is_empty(), "{warnings:#?}");
     }
 }

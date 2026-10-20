@@ -6,7 +6,7 @@
 //! ([`crate::config`]) and the id registry, both of which a render needs and
 //! neither of which discovery hands back.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use plates::SiteSpec;
@@ -42,6 +42,10 @@ pub struct Session {
     /// What went wrong reading the declaration, in the words of whoever has to
     /// fix it. Never fatal — see [`crate::config::Sites`].
     pub warnings: Vec<String>,
+    /// The sites whose export entry carries a render-facing key plates does
+    /// not read there — a site that declared how it should look, and somewhere
+    /// plates is not looking. Already said in [`warnings`](Self::warnings).
+    pub unread_export_keys: BTreeSet<String>,
     /// The registry document the root declares, relative to the root.
     registry: Option<PathBuf>,
 }
@@ -93,13 +97,37 @@ impl Session {
             &found.config.exports,
         );
 
+        let mut warnings = sites.warnings;
+        // Only for sites read off `exports:`: a `sites:` block reads these keys
+        // itself, and wins whole where it exists.
+        let mut unread_export_keys = BTreeSet::new();
+        if sites.source == Source::Exports {
+            // prov's own surfaces for `exports:`, in its order: the root's
+            // `prov:` block, the workspace node, and the config document — once
+            // each, since the node and the config document are often one file.
+            let mut surfaces: Vec<(&Path, bool)> = vec![(found.root_doc.as_path(), true)];
+            for doc in [found.node.node.as_deref(), config_doc.as_deref()]
+                .into_iter()
+                .flatten()
+            {
+                if !surfaces.contains(&(doc, false)) {
+                    surfaces.push((doc, false));
+                }
+            }
+            let unread =
+                config::unread_export_keys(&found.root_dir, &surfaces, &found.config.exports);
+            warnings.extend(unread.warnings);
+            unread_export_keys = unread.sites;
+        }
+
         Ok(Self {
             root_dir: found.root_dir,
             root_doc: found.root_doc,
             config: found.config,
             sites: sites.specs,
             source: sites.source,
-            warnings: sites.warnings,
+            warnings,
+            unread_export_keys,
             registry: found.registry,
         })
     }

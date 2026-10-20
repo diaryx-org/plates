@@ -53,22 +53,28 @@
 //! here depends on which — the link is resolved through prov's link layer
 //! either way.
 //!
-//! # Silence is the diagnosis
+//! # Where silence stops
 //!
-//! Every "no" here is quiet: no field spec, no vocabulary, not reified, or no
-//! term node carrying the gate's value. An unknown value on a closed field is
-//! `prov check`'s `UnknownTerm` finding, on the field where a typo is a privacy
-//! failure; repeating it here would say the same thing twice, in worse words,
-//! at a moment when the author asked for a website rather than an audit.
-//! [`TermConfig::warnings`] carries only what the term node *did* say and this
-//! pass could not use.
+//! An archive that declares no vocabulary for the gate field never asked for a
+//! term node, and hears nothing: that is most archives. An unknown value on a
+//! closed field is `prov check`'s `UnknownTerm` finding, on the field where a
+//! typo is a privacy failure, and a pointer that resolves to nothing is prov's
+//! to report too; repeating either here would say the same thing twice, in
+//! worse words.
+//!
+//! A vocabulary that *is* there, but has no node for the gate's value, is a
+//! declaration plates cannot see, and nothing else says so: the site builds in
+//! the built-in shell and looks like a rendering bug. So
+//! [`TermConfig::warnings`] tells the two causes apart — a flat `terms:` store,
+//! which has no nodes at all, and a reified index with none for this term —
+//! as well as carrying what a term node *did* say and this pass could not use.
 
 use std::path::{Path, PathBuf};
 
 use prov::config::WorkspaceConfig;
 use prov::link::{Link, LinkStyle};
 use prov::meta::{Mapping, Value};
-use prov::{IdIndex, Storage, Target, Workspace};
+use prov::{IdIndex, Storage, Target, VocabularyShape, Workspace};
 
 /// The top-level key on a term node naming the site's front page.
 ///
@@ -145,9 +151,10 @@ pub struct TermConfig {
 /// `gate_field`/`gate_value` are the site's gate —
 /// [`SiteSpec::gate_field`](crate::SiteSpec::gate_field) and
 /// [`SiteSpec::audience`](crate::SiteSpec::audience). An archive that declares
-/// no vocabulary for that field, or one that is not reified, gets
-/// [`TermConfig::default`] and no complaint: it is the case every archive is in
-/// until it wants one custom thing.
+/// no vocabulary for that field gets [`TermConfig::default`] and no complaint:
+/// it is the case every archive is in until it wants one custom thing. One whose
+/// vocabulary is a flat store, or a reified index with no node for the gate's
+/// value, gets the default and one warning saying which.
 ///
 /// The front page is resolved **here**, against the term node, because that is
 /// the document the link was written in — `front_page: '[Home](daily.md)'` on
@@ -177,10 +184,43 @@ pub async fn read_term_config<FS: Storage + Clone, Id, Ix: IdIndex>(
     let Some(pointer) = spec.vocabulary.as_deref() else {
         return TermConfig::default();
     };
+    // A pointer that resolves to nothing readable is `prov check`'s to report.
+    // A store that does resolve is somewhere the author meant to declare this
+    // field's terms, so a site that finds no node there says which of the two
+    // reasons it is: the fix for each is different.
+    let Some(store) = ws.vocabulary_path(root_doc, pointer) else {
+        return TermConfig::default();
+    };
+    let not_found = |warning: String| TermConfig {
+        warnings: vec![warning],
+        ..TermConfig::default()
+    };
+    match ws.vocabulary_shape(root_doc, pointer).await {
+        Ok(Some(VocabularyShape::Reified)) => {}
+        Ok(Some(VocabularyShape::Flat)) => {
+            return not_found(format!(
+                "{}: the `{gate_field}` field's vocabulary is a flat `terms:` store, so there is \
+                 no term node for `{gate_value}` to carry its site's front page and settings \
+                 (point `fields.{gate_field}.vocabulary` at an index of term documents to \
+                 give it one)",
+                store.display()
+            ));
+        }
+        Ok(None) | Err(_) => return TermConfig::default(),
+    }
     // An unreadable archive is not this pass's to report: the same walk is about
     // to be made by the planner, with the whole build's exit code behind it.
-    let Ok(Some(term_path)) = ws.reified_term_path(root_doc, pointer, gate_value).await else {
-        return TermConfig::default();
+    let term_path = match ws.reified_term_path(root_doc, pointer, gate_value).await {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            return not_found(format!(
+                "{}: no term in the `{gate_field}` field's vocabulary says `term: \
+                 {gate_value}`, so its site has no term node to read a front page and \
+                 settings from (add a document for the term under this index)",
+                store.display()
+            ));
+        }
+        Err(_) => return TermConfig::default(),
     };
     let Ok(term) = ws.graph().document(&term_path).await else {
         return TermConfig::default();
@@ -337,5 +377,101 @@ mod tests {
             vec!["real.sublime-syntax"]
         );
         assert!(text_list(&mapping(&[]), "syntaxes").is_empty());
+    }
+
+    /// A vault whose `audience` field is declared by the `fields` text, with a
+    /// reified index of one term, `family`, and a flat store beside it.
+    fn vault(fields: &str) -> (Workspace<prov::InMemoryFs>, prov::Discovered) {
+        let fs = prov::InMemoryFs::default();
+        let write = |path: &str, text: &str| {
+            prov::block_on(fs.write_atomic(Path::new(path), text.as_bytes())).unwrap();
+        };
+        write(
+            "/v/prov.yaml",
+            &format!("workspace_id: v\nroot: README.md\nid_storage: frontmatter\n{fields}"),
+        );
+        write(
+            "/v/README.md",
+            "---\ntitle: Vault\nconfig: prov.yaml\ncontents:\n- '[Audiences](/vocab/audiences.md)'\n---\n",
+        );
+        write(
+            "/v/vocab/audiences.md",
+            "---\ntitle: Audiences\npart_of: '[Vault](/README.md)'\ncontents:\n- '[Family](/vocab/family.md)'\n---\n",
+        );
+        write(
+            "/v/vocab/family.md",
+            "---\ntitle: Family\nterm: family\npart_of: '[Audiences](/vocab/audiences.md)'\n---\n",
+        );
+        write(
+            "/v/vocab/flat.yaml",
+            "vocabulary: audience\nterms:\n  family:\n    label: Family\n  public:\n    label: Public\n",
+        );
+        let prov::Discovery::Found(found) =
+            prov::block_on(prov::discover(&fs, Path::new("/v"))).unwrap()
+        else {
+            panic!("the vault should be found");
+        };
+        let ws = Workspace::builder(fs).root("/v").workspace_id("v").build();
+        (ws, found)
+    }
+
+    fn term_config(fields: &str, value: &str) -> TermConfig {
+        let (ws, found) = vault(fields);
+        prov::block_on(read_term_config(
+            &ws,
+            &found.root_doc,
+            &found.config,
+            "audience",
+            value,
+        ))
+    }
+
+    const REIFIED: &str = "fields:\n  audience:\n    values: closed\n    vocabulary: '[Audiences](/vocab/audiences.md)'\n";
+    const FLAT: &str =
+        "fields:\n  audience:\n    values: closed\n    vocabulary: vocab/flat.yaml\n";
+
+    /// Most archives never declare a render config, and saying nothing to them
+    /// is the point: a field with no vocabulary has no term node to look for.
+    #[test]
+    fn a_gate_field_with_no_vocabulary_is_read_in_silence() {
+        assert_eq!(
+            term_config("fields:\n  audience:\n    values: closed\n", "family"),
+            TermConfig::default()
+        );
+        assert_eq!(term_config("", "family"), TermConfig::default());
+    }
+
+    /// A flat store has rows, not documents, so no term node exists to carry a
+    /// site's settings — and the fix is to reify the vocabulary.
+    #[test]
+    fn a_flat_vocabulary_says_it_has_no_term_node() {
+        let term = term_config(FLAT, "public");
+        assert_eq!(term.page, None);
+        assert_eq!(term.warnings.len(), 1, "{:?}", term.warnings);
+        let warning = &term.warnings[0];
+        assert!(warning.contains("vocab/flat.yaml"), "{warning}");
+        assert!(warning.contains("`terms:`"), "{warning}");
+        assert!(warning.contains("index of term documents"), "{warning}");
+    }
+
+    /// A reified vocabulary with no node for the gate's value has a different
+    /// fix — a node for the term — so it is told apart from the flat store.
+    #[test]
+    fn a_reified_vocabulary_with_no_node_for_the_value_says_so() {
+        let term = term_config(REIFIED, "public");
+        assert_eq!(term.page, None);
+        assert_eq!(term.warnings.len(), 1, "{:?}", term.warnings);
+        let warning = &term.warnings[0];
+        assert!(warning.contains("vocab/audiences.md"), "{warning}");
+        assert!(warning.contains("`term: public`"), "{warning}");
+        assert!(!warning.contains("`terms:`"), "{warning}");
+    }
+
+    /// And a term node that is found has nothing to say about where it is.
+    #[test]
+    fn a_term_node_that_is_found_is_read_in_silence() {
+        let term = term_config(REIFIED, "family");
+        assert_eq!(term.page, Some(PathBuf::from("vocab/family.md")));
+        assert!(term.warnings.is_empty(), "{:?}", term.warnings);
     }
 }
