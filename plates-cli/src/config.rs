@@ -49,12 +49,15 @@
 //! named alongside the export and term node that replace it. plates 0.3 removes
 //! it, along with [`SITES_KEY`], [`SITE_KEYS`] and [`Source`] itself.
 
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use plates::SiteSpec;
+use plates::prov::config::ROOT_CONFIG_KEY;
+use plates::prov::exports::EXPORTS_KEY;
 use plates::prov::meta::{Mapping, Value};
 use plates::prov::{Document, ExportSpec};
 use plates::term::{text, text_list};
+use plates::{FRONT_PAGE_KEY, SiteSpec, TERM_SITE_KEY};
 
 /// The top-level key the **deprecated** site declaration lives under.
 ///
@@ -177,6 +180,94 @@ pub fn read_sites(
             }
         }
     }
+}
+
+/// The render-facing keys an `exports.<name>` entry may carry that plates does
+/// not read there, each with what the site falls back to without it.
+///
+/// They are the keys a `sites:` entry used to carry, plus the term node's own
+/// spellings, because those are the two places an author coming from either
+/// dialect will reach for. prov reads an export's `label`, `gate`, `view` and
+/// `hold`, and reports a stray key it can call a near-miss of one of those.
+/// These are near-misses of nothing of prov's, so without this list nobody
+/// says a word.
+pub const UNREAD_EXPORT_KEYS: &[(&str, &str)] = &[
+    ("index", "no front page of its own"),
+    (FRONT_PAGE_KEY, "no front page of its own"),
+    ("shell", "the built-in shell"),
+    ("stylesheet", "no stylesheet of its own"),
+    ("style", "the default style"),
+    ("lang", "no `lang` on its pages"),
+    ("syntaxes", "only the built-in grammars"),
+    ("header", "no header"),
+    ("footer", "no footer"),
+];
+
+/// Render-facing keys written on export entries, which plates never reads.
+#[derive(Debug, Default)]
+pub struct UnreadExportKeys {
+    pub warnings: Vec<String>,
+    /// The sites whose export entry carried one, on any surface.
+    pub sites: BTreeSet<String>,
+}
+
+/// Find the render-facing keys written on `exports.<name>` entries.
+///
+/// `surfaces` are the documents prov reads `exports:` from, each with whether
+/// its config is nested under the root's `prov:` block. Every surface is read,
+/// not only the one whose entry wins, because a key written on any of them is
+/// unread wherever it is. `exports` is prov's own parse, for the gate each site
+/// is judged on, which names the term node the key belongs on.
+pub fn unread_export_keys(
+    root_dir: &Path,
+    surfaces: &[(&Path, bool)],
+    exports: &[ExportSpec],
+) -> UnreadExportKeys {
+    let mut unread = UnreadExportKeys::default();
+    for &(rel, nested) in surfaces {
+        let Some(meta) = read_meta(root_dir, rel) else {
+            continue;
+        };
+        let block = match nested {
+            true => meta.get(ROOT_CONFIG_KEY),
+            false => Some(&meta),
+        };
+        let Some(entries) = block
+            .and_then(|block| block.get(EXPORTS_KEY))
+            .and_then(Value::as_mapping)
+        else {
+            continue;
+        };
+        for (name, entry) in entries {
+            // An entry prov could not make a gate of exports nothing, and prov
+            // says so; the term node this would point at is unknowable anyway.
+            let (Some(entry), Some(export)) = (
+                entry.as_mapping(),
+                exports.iter().find(|export| &export.name == name),
+            ) else {
+                continue;
+            };
+            for (key, fallback) in UNREAD_EXPORT_KEYS {
+                if !entry.contains_key(*key) {
+                    continue;
+                }
+                let home = match *key {
+                    "index" | FRONT_PAGE_KEY => format!("`{FRONT_PAGE_KEY}:`"),
+                    _ => format!("`{TERM_SITE_KEY}.{key}`"),
+                };
+                unread.warnings.push(format!(
+                    "{}: plates does not read `exports.{name}.{key}` — it belongs on the \
+                     `{value}` term node of the `{field}` field's vocabulary, as {home} — so \
+                     site `{name}` was built with {fallback}",
+                    rel.display(),
+                    value = export.gate.value,
+                    field = export.gate.field,
+                ));
+                unread.sites.insert(name.clone());
+            }
+        }
+    }
+    unread
 }
 
 /// What to say about one site a `sites:` block declares: that it still builds,

@@ -1,14 +1,30 @@
 ---
 title: 'Say when a site declaration is not being read'
 part_of: '[Tasks](/docs/tasks/tasks.md)'
-status: open
+status: done
 author: adammharris
 created: 2026-09-07
-updated: 2026-09-07
+updated: 2026-10-20
 audience: public
 ---
 
 # Say when a site declaration is not being read
+
+**Status.** Done. `plates-cli`'s `unread_export_keys` reads `exports:` off
+each surface prov reads it from and names every `index`, `front_page`,
+`shell`, `stylesheet`, `style`, `lang`, `syntaxes`, `header` or `footer` an
+entry carries, with the term node key it belongs on and what the site fell
+back to. `read_term_config` warns once when the gate field's vocabulary is a
+flat `terms:` store, and once, in other words, when it is reified with no node
+for the gate's value. A site read off `exports:` with no front page, no term
+node, and a root its audience cannot see is reported as anchored at the
+archive root with a synthesized index, but only when it declared something
+render-facing (a vocabulary on its gate field, or one of the keys above). A
+pointer that resolves to nothing is still left to `prov check`. Covered by
+`a_declaration_plates_is_not_reading_is_named` (the repro below),
+`an_archive_that_declares_no_render_config_hears_nothing`,
+`a_site_fronted_by_its_term_node_hears_nothing`, and the four
+`term::tests` on vocabulary shape.
 
 ## The problem
 
