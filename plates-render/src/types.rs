@@ -187,9 +187,11 @@ pub struct PublishedPage {
     pub description: Option<String>,
     /// Page author (from frontmatter `author`)
     pub author: Option<String>,
-    /// Creation date (from frontmatter `created`)
+    /// Creation date: the field the workspace stamps on creation, else
+    /// frontmatter `created` ([`DateFields`])
     pub created: Option<String>,
-    /// Last update date (from frontmatter `updated`)
+    /// Last update date: the field the workspace stamps on an edit, else
+    /// frontmatter `updated` ([`DateFields`])
     pub updated: Option<String>,
     /// The date the document is *about*, as opposed to when its file was made
     /// (from frontmatter `date_of_document`). First link in the date chain a
@@ -367,6 +369,51 @@ impl PublishedPage {
             .as_deref()
             .filter(|d| !d.is_empty())
             .or_else(|| self.published_date())
+    }
+}
+
+/// Which frontmatter fields hold a page's creation and last-edit dates.
+///
+/// A workspace names them itself — prov's `fields.<name>.stamp: create` and
+/// `stamp: edit`, answered by `WorkspaceConfig::created_field` and
+/// `updated_field` — and an archive stamping `modified` keeps its edit date
+/// there, not under `updated`. This crate reads no configuration, so the layer
+/// holding the workspace passes the answer in, the way it passes the
+/// [`outline`](crate::site::SiteOptions::outline).
+///
+/// `None` is a workspace that stamps nothing then. Either way the literal
+/// `created` and `updated` stay the fallback, page by page: a page written
+/// before the workspace declared a stamp, or mounted from a peer that stamps
+/// the literal names, keeps the dates it was published with.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct DateFields {
+    /// The field stamped when a document is made.
+    pub created: Option<String>,
+    /// The field stamped when a document's content changes.
+    pub updated: Option<String>,
+}
+
+impl DateFields {
+    /// When `frontmatter`'s document was made: the stamped field, else
+    /// `created`.
+    pub fn created_in<'a>(&self, frontmatter: &'a prov::Mapping) -> Option<&'a str> {
+        Self::read(frontmatter, self.created.as_deref(), "created")
+    }
+
+    /// When `frontmatter`'s document last changed: the stamped field, else
+    /// `updated`.
+    pub fn updated_in<'a>(&self, frontmatter: &'a prov::Mapping) -> Option<&'a str> {
+        Self::read(frontmatter, self.updated.as_deref(), "updated")
+    }
+
+    fn read<'a>(
+        frontmatter: &'a prov::Mapping,
+        stamped: Option<&str>,
+        literal: &str,
+    ) -> Option<&'a str> {
+        stamped
+            .and_then(|field| crate::frontmatter::get_string(frontmatter, field))
+            .or_else(|| crate::frontmatter::get_string(frontmatter, literal))
     }
 }
 
