@@ -23,9 +23,9 @@ use plates::{
     CollectOptions, DigestMemo, FRONT_PAGE_KEY, MountOptions, NoStamp, RegistryLinks, SiteTheme,
     collect_mounted, collect_site, plan_site, read_page_shells, read_term_config, read_theme,
 };
-use plates_render::SiteStyle;
 use plates_render::html::Generator;
 use plates_render::site::{SiteOptions, SourceDoc, humanize_name, render_site};
+use plates_render::{DateFields, SiteStyle};
 
 use crate::config::Source;
 use crate::session::Session;
@@ -142,6 +142,10 @@ pub fn build_sites(
     }
 
     let ws = session.workspace()?;
+    let date_fields = DateFields {
+        created: session.config.created_field().map(String::from),
+        updated: session.config.updated_field().map(String::from),
+    };
     // One read scope over the whole run, so a document reached by two sites is
     // parsed once rather than once per site.
     let _scope = ws.read_scope();
@@ -348,6 +352,7 @@ pub fn build_sites(
                 audience: &spec.audience,
                 root: &session.root_dir,
                 base_url,
+                date_fields: &date_fields,
             },
             collected,
             identifiers,
@@ -441,6 +446,9 @@ struct Site<'a> {
     root: &'a Path,
     /// The address the site is served at, for canonical links and feeds.
     base_url: Option<&'a str>,
+    /// The fields this archive stamps with a document's creation and edit
+    /// dates, as its own config declares them.
+    date_fields: &'a DateFields,
 }
 
 /// Render one collected site into the bytes that represent it.
@@ -460,6 +468,7 @@ fn assemble(
         audience,
         root,
         base_url,
+        date_fields,
     } = site;
     let sources: Vec<SourceDoc> = collected
         .sources
@@ -512,6 +521,10 @@ fn assemble(
             // collection walked the relation this workspace configures, and the
             // render layer has no workspace to ask.
             outline: collected.outline,
+            // Which fields hold a page's dates, which only the workspace's
+            // config can say: an archive stamping `modified` keeps its edit
+            // date there.
+            date_fields: date_fields.clone(),
             // Which document each page is, named the way a reference from
             // outside this archive would name it.
             identifiers,
@@ -669,9 +682,9 @@ mod tests {
         assert!(identifiers(&collected, "", &[]).is_empty());
     }
 
-    /// Every warning a build of the archive `files` says: the declaration's,
-    /// then each site's.
-    fn build_warnings(files: &[(&str, &str)]) -> Vec<String> {
+    /// A build of the archive `files`: the declaration's warnings, and the
+    /// sites.
+    fn build(files: &[(&str, &str)]) -> (Vec<String>, Vec<BuiltSite>) {
         let dir = tempfile::tempdir().unwrap();
         for (path, text) in files {
             let path = dir.path().join(path);
@@ -680,7 +693,13 @@ mod tests {
         }
         let session = Session::open_at(dir.path()).unwrap();
         let built = build_sites(&session, None, None, None).unwrap();
-        let mut warnings = session.warnings.clone();
+        (session.warnings.clone(), built)
+    }
+
+    /// Every warning a build of the archive `files` says: the declaration's,
+    /// then each site's.
+    fn build_warnings(files: &[(&str, &str)]) -> Vec<String> {
+        let (mut warnings, built) = build(files);
         for site in built {
             warnings.extend(site.warnings);
         }
@@ -774,5 +793,33 @@ mod tests {
         ]);
 
         assert!(warnings.is_empty(), "{warnings:#?}");
+    }
+
+    /// A page in an archive that stamps its edits into `modified` shows that
+    /// date: the build reads the stamped fields off the workspace's config
+    /// rather than the literal `updated`.
+    #[test]
+    fn a_page_shows_the_date_its_archive_stamps() {
+        let (_, built) = build(&[
+            ("README.md", ROOT),
+            (
+                "book.md",
+                "---\ntitle: Book\naudience: public\nmodified: 2026-03-04\n\
+                 part_of: '[Vault](/README.md)'\n---\nRead me.\n",
+            ),
+            ("vocab/audiences.md", INDEX),
+            (
+                ".config/config.yaml",
+                "fields:\n  modified: { stamp: edit }\n\
+                 exports:\n  blog:\n    label: Blog\n    gate: { field: audience, value: public }\n",
+            ),
+        ]);
+
+        let book = String::from_utf8(built[0].files["book.html"].clone()).unwrap();
+        let modified = book
+            .lines()
+            .find(|l| l.contains("article:modified_time"))
+            .unwrap_or_else(|| panic!("no modified time on the page: {book}"));
+        assert!(modified.contains("2026-03-04"), "{modified}");
     }
 }

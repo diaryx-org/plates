@@ -65,6 +65,6 @@ pub use shell::{
 #[cfg(feature = "syntax-highlighting")]
 pub use syntax::{CLASS_PREFIX, HIGHLIGHTED_CLASS, Syntaxes, highlight_code_blocks};
 pub use types::{
-    Arrangement, Expression, FrameDoc, Grain, Heading, LinkEdge, OutlineNode, PageLayout,
-    output_filename, serve_at_dest,
+    Arrangement, DateFields, Expression, FrameDoc, Grain, Heading, LinkEdge, OutlineNode,
+    PageLayout, output_filename, serve_at_dest,
 };

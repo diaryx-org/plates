@@ -1,21 +1,27 @@
 ---
 title: Follow prov's vocabulary shape, term holds and field stamps
 part_of: '[Tasks](/docs/tasks/tasks.md)'
-status: open
+status: done
 author: adammharris
 created: 2026-09-28
-updated: 2026-10-06
+updated: 2026-10-21
 audience: public
 ---
 
 # Follow prov's vocabulary shape, term holds and field stamps
 
-**Where it stands, 2026-10-06.** Steps 1 to 6 landed in `2283376` (prov
-0.16, taken from git rather than crates.io): the planner goes through
-`Workspace::export_plan`, so a term holds a page back; `reify` is gone outside
-`docs/proposals/`; the `hold` docs name a term; and plates' own `prov.yaml`
-declares its stamps on the fields. Step 7 is what is left: `plates-render`
-still reads a page's dates by the literal names `created` and `updated`.
+**Status.** Done. Steps 1 to 6 landed in `2283376` (prov 0.16, taken from
+git rather than crates.io): the planner goes through `Workspace::export_plan`,
+so a term holds a page back; `reify` is gone outside `docs/proposals/`; the
+`hold` docs name a term; and plates' own `prov.yaml` declares its stamps on the
+fields. Step 7 followed: `plates-render` reads a page's dates through
+`SiteOptions::date_fields`, a `DateFields` naming the fields the workspace
+stamps, and `plates-cli` fills it from the config's `created_field()` and
+`updated_field()`. The literal `created` and `updated` stay the fallback page
+by page, so a workspace that declares no stamp, a page written before it did,
+and a page mounted from a peer that stamps the literal names all keep their
+dates. `a_page_shows_the_date_its_archive_stamps` builds an archive stamping
+`modified` and finds that date on the page.
 
 prov's next release changes three things plates reads, and plates does not
 compile against it until they are followed. None is released yet: the

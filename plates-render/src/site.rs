@@ -27,7 +27,7 @@ use crate::html::{HtmlRenderer, PageContext, SiteStyle};
 use crate::nav::{build_site_nav_tree, forest_roots, nav_for_page, neighbours, reading_order};
 use crate::shell::{ShellExtension, ShellTemplate};
 use crate::types::{
-    Heading, LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage, SiteNavNode,
+    DateFields, Heading, LinkEdge, NavLink, OutlineNode, PageLayout, PublishedPage, SiteNavNode,
 };
 // Where it was declared until 0.5.0. It lives in `types` now so that a caller
 // that only *assembles* a header or footer — `plates::theme` — does not have
@@ -144,6 +144,10 @@ pub struct SiteOptions {
     /// this existed got. Nodes naming documents this site does not publish are
     /// pruned; their published descendants hoist. See [`crate::nav`].
     pub outline: Vec<OutlineNode>,
+    /// Which frontmatter fields hold a page's dates, as the workspace stamps
+    /// them. The default reads the literal `created` and `updated`, which is
+    /// what every site published before this existed got. See [`DateFields`].
+    pub date_fields: DateFields,
     /// The site's shell template, as the text of the template file.
     ///
     /// A string rather than a path because this crate reads nothing: it is
@@ -300,6 +304,7 @@ impl Default for SiteOptions {
             style: SiteStyle::default(),
             arrangement: Arrangement::default(),
             outline: Vec::new(),
+            date_fields: DateFields::default(),
             template: None,
             templates: IndexMap::new(),
             lang: DEFAULT_LANG.to_string(),
@@ -644,8 +649,8 @@ fn collect_context(
         }
 
         let date = frontmatter::get_string(&fm, "date_of_document")
-            .or_else(|| frontmatter::get_string(&fm, "created"))
-            .or_else(|| frontmatter::get_string(&fm, "updated"))
+            .or_else(|| opts.date_fields.created_in(&fm))
+            .or_else(|| opts.date_fields.updated_in(&fm))
             .filter(|d| !d.is_empty())
             .map(String::from);
         let group_keys = group_labels(
@@ -1391,8 +1396,8 @@ fn page_skeleton(
         _ => None,
     });
 
-    let created = frontmatter::get_string(fm, "created").map(String::from);
-    let updated = frontmatter::get_string(fm, "updated").map(String::from);
+    let created = opts.date_fields.created_in(fm).map(String::from);
+    let updated = opts.date_fields.updated_in(fm).map(String::from);
     let date_of_document = frontmatter::get_string(fm, "date_of_document").map(String::from);
     // One line, because the chain, the grain and the multi-valued case are all
     // the view spec's to answer now — including the two spellings a field
@@ -2828,6 +2833,75 @@ mod tests {
             .find(|p| p.dest_filename == "orphan.html")
             .unwrap();
         assert!(orphan_page.parent_link.is_none());
+    }
+
+    /// A workspace that stamps `made` and `modified` rather than `created` and
+    /// `updated` has its pages' dates read from those fields — the names its
+    /// own config declares, which the layer holding the workspace passes in.
+    #[test]
+    fn a_page_reads_its_dates_from_the_fields_its_workspace_stamps() {
+        let note = "---\ntitle: Note\nmade: 2026-01-02\nmodified: 2026-03-04\n---\nBody.\n";
+        let opts = SiteOptions {
+            date_fields: DateFields {
+                created: Some("made".into()),
+                updated: Some("modified".into()),
+            },
+            ..SiteOptions::default()
+        };
+
+        let pages = build_pages(&[src("index.md", note, true)], &opts);
+        assert_eq!(pages[0].created.as_deref(), Some("2026-01-02"));
+        assert_eq!(pages[0].updated.as_deref(), Some("2026-03-04"));
+    }
+
+    /// The literal names stay the fallback, page by page: a workspace that
+    /// declares no stamp reads `created` and `updated` as it always has, and a
+    /// page that predates the stamp — or comes from a mounted peer that stamps
+    /// the literal names — keeps its dates under one that does.
+    #[test]
+    fn a_page_without_the_stamped_field_falls_back_to_the_literal_name() {
+        let note = "---\ntitle: Note\ncreated: 2025-05-06\nupdated: 2025-07-08\n---\nBody.\n";
+        for date_fields in [
+            DateFields::default(),
+            DateFields {
+                created: Some("made".into()),
+                updated: Some("modified".into()),
+            },
+        ] {
+            let opts = SiteOptions {
+                date_fields,
+                ..SiteOptions::default()
+            };
+            let pages = build_pages(&[src("index.md", note, true)], &opts);
+            assert_eq!(pages[0].created.as_deref(), Some("2025-05-06"));
+            assert_eq!(pages[0].updated.as_deref(), Some("2025-07-08"));
+        }
+    }
+
+    /// An entry record — what a template's `entries` lists — is dated by the
+    /// same chain its page is, so an entry dated only by the stamped field
+    /// still carries that date there.
+    #[test]
+    fn an_entry_record_is_dated_by_its_stamped_field() {
+        let opts = SiteOptions {
+            date_fields: DateFields {
+                created: Some("made".into()),
+                updated: None,
+            },
+            ..SiteOptions::default()
+        };
+        let index = "---\ntitle: Home\n---\n:::each{of=entries as=entry}\n- :val[entry.title] :val[entry.date]\n:::\n";
+        let note = "---\ntitle: Note\nmade: 2026-01-02\n---\nBody.\n";
+        let out = render_site(
+            &[src("index.md", index, true), src("note.md", note, false)],
+            &opts,
+        );
+        let home = out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "index.html")
+            .expect("the front page");
+        assert!(home.html.contains("Note 2026-01-02"), "{}", home.html);
     }
 
     // ── generated index ─────────────────────────────────────────────────────
