@@ -418,8 +418,9 @@ dependencies = [
 
 [[package]]
 name = "fig-schema"
-version = "0.4.0"
-source = "git+https://github.com/diaryx-org/fig-schema?branch=master#73f3d0234208706ff4344f40565af0c3f6b82690"
+version = "0.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "53d7116306a4231b3b1fb2fae939acb9a07e86c604223afb9ddcf6d8fa10da5b"
 dependencies = [
  "fig",
 ]
@@ -782,7 +783,7 @@ dependencies = [
 [[package]]
 name = "prov"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "edtf-normalize",
  "fig",
@@ -803,7 +804,7 @@ dependencies = [
 [[package]]
 name = "prov-config"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "fig",
  "fig-schema",
@@ -818,7 +819,7 @@ dependencies = [
 [[package]]
 name = "prov-exports"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -827,7 +828,7 @@ dependencies = [
 [[package]]
 name = "prov-filing"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "prov-grain",
  "prov-graph",
@@ -836,7 +837,7 @@ dependencies = [
 [[package]]
 name = "prov-grain"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "edtf-core",
  "prov-graph",
@@ -845,7 +846,7 @@ dependencies = [
 [[package]]
 name = "prov-graph"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "fig",
  "fig-figl",
@@ -866,7 +867,7 @@ dependencies = [
 [[package]]
 name = "prov-store"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -876,7 +877,7 @@ dependencies = [
 [[package]]
 name = "prov-views"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#8427c39106d7cfab107ea110d6c3e2b2b187ee27"
+source = "git+https://github.com/diaryx-org/prov?branch=main#3d8c849ce0b1bb2d9165e7c9c0a91449d0ed3f32"
 dependencies = [
  "cel",
  "prov-grain",

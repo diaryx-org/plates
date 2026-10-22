@@ -107,6 +107,16 @@ pub struct SiteSpec {
     /// so naming a field here can take a page off the site and can never put
     /// one on it.
     pub hold: Option<String>,
+    /// The document field a page names this site's audience under to be kept
+    /// off this site alone — prov's
+    /// [`withhold`](prov::exports::ExportSpec::withhold), typically
+    /// `withheld_from`. A document the gate admits that names the audience
+    /// there, or links to the audience's term node, is kept back: off the
+    /// site, and named in [`SitePlan::kept_back`].
+    ///
+    /// `None` is a site with no keep-back, which is every site declared before
+    /// the key existed. Like the hold, it only ever narrows.
+    pub withhold: Option<String>,
     /// The [`ViewSpec`](prov::ViewSpec) naming this site's arrangement, by its
     /// key under `views`. `None` publishes the gate's whole set, arranged by
     /// containment.
@@ -205,6 +215,7 @@ impl SiteSpec {
             gate_field: (export.gate.field != crate::plan::AUDIENCE_FIELD)
                 .then(|| export.gate.field.clone()),
             hold: export.hold.clone(),
+            withhold: export.withhold.clone(),
             view: export.view.clone(),
             index: None,
             shell: None,
@@ -407,6 +418,11 @@ pub struct SitePlan {
     /// hold before the view, so a draft the view would also have scoped out is
     /// reported once, here.
     pub held: Vec<VisibleDoc>,
+    /// Documents the gate admits that name this site's audience under its
+    /// [`withhold`](SiteSpec::withhold) field: kept off this site alone, while
+    /// they stay on every other. Empty for a site with no withhold. Disjoint
+    /// from [`held`](Self::held): prov judges the keep-back first.
+    pub kept_back: Vec<VisibleDoc>,
     /// Documents the gate admits that this site's view scoped out. Not an
     /// error — it is the difference between a site and its audience, and a
     /// publish preview owes the user a count of it, since "I tagged it `family`
@@ -497,6 +513,15 @@ pub fn finish(
             declared: doc.declared,
         })
         .collect();
+    let kept_back: Vec<VisibleDoc> = export
+        .kept_back
+        .into_iter()
+        .map(|doc| VisibleDoc {
+            path: doc.path,
+            title: doc.title,
+            declared: doc.declared,
+        })
+        .collect();
 
     // A front page the site's own *hold* keeps back is its own error, told
     // apart from the gate's below because the cause and the fix are different:
@@ -525,7 +550,9 @@ pub fn finish(
     // its anchor, so the ordinary healthy site has its front page in
     // `outside_view`. Checking `entries` would reject exactly the arrangement
     // this feature exists to serve, while checking the gate still refuses the
-    // one that matters: a page nobody may see becoming the front door.
+    // one that matters: a page nobody may see becoming the front door. A
+    // front page kept back from this audience is refused here too: the page
+    // says this site's readers are not to have it.
     let index = match index {
         Some(path) => {
             let admitted = entries.iter().any(|doc| doc.path.as_path() == path)
@@ -544,7 +571,12 @@ pub fn finish(
         // nobody chose it, so the site opens on a generated page instead of
         // refusing to publish.
         None => own_page
-            .filter(|page| !held.iter().any(|doc| doc.path.as_path() == *page))
+            .filter(|page| {
+                !held
+                    .iter()
+                    .chain(&kept_back)
+                    .any(|doc| doc.path.as_path() == *page)
+            })
             .map(Path::to_path_buf),
     };
 
@@ -567,6 +599,7 @@ pub fn finish(
         own_page: own_page.map(Path::to_path_buf),
         index_directory,
         held,
+        kept_back,
         outside_view: export.outside_view,
         case_drift: case_drift(&spec.audience, &export.withheld),
         link_diagnostics,
@@ -622,6 +655,7 @@ mod tests {
                 value: audience.to_string(),
             },
             hold: None,
+            withhold: None,
             view: None,
         }
     }
@@ -634,6 +668,7 @@ mod tests {
             audience: export.gate.value,
             gate_field: None,
             hold: export.hold,
+            withhold: export.withhold,
             view: export.view,
             index: None,
             shell: None,
@@ -660,6 +695,7 @@ mod tests {
             entries,
             outside_view: Vec::new(),
             held: Vec::new(),
+            kept_back: Vec::new(),
             withheld,
             reach: family(),
         }
@@ -709,6 +745,7 @@ mod tests {
             entries,
             outside_view: outside_view.into_iter().map(PathBuf::from).collect(),
             held: Vec::new(),
+            kept_back: Vec::new(),
             withheld: Vec::new(),
             reach: family(),
         }
@@ -720,6 +757,7 @@ mod tests {
             entries,
             outside_view: Vec::new(),
             held: held.into_iter().map(entry).collect(),
+            kept_back: Vec::new(),
             withheld: Vec::new(),
             reach: family(),
         }
@@ -819,6 +857,33 @@ mod tests {
             crate::plan::to_export(&holding("letters", "family", "draft")).hold,
             Some("draft".into())
         );
+    }
+
+    /// A site's keep-back is prov's withhold, carried both ways, and what prov
+    /// kept back is named on the plan and kept off the entries.
+    #[test]
+    fn a_sites_keep_back_is_the_exports_withhold() {
+        let space = SiteSpec {
+            withhold: Some("withheld_from".into()),
+            ..site("reunion", "reunion")
+        };
+        let export = crate::plan::to_export(&space);
+        assert_eq!(export.withhold.as_deref(), Some("withheld_from"));
+        assert_eq!(SiteSpec::from_export(&export).withhold, space.withhold);
+        assert_eq!(
+            crate::plan::to_export(&site("letters", "family")).withhold,
+            None
+        );
+
+        let mut prov_plan = plan_of(vec![entry("trip.md")], Vec::new());
+        prov_plan.kept_back = vec![entry("private.md")];
+        let plan = finish(&space, prov_plan, None, None, None, &[]).expect("a plan");
+        assert_eq!(
+            plan.entries.iter().map(|d| &d.path).collect::<Vec<_>>(),
+            vec![Path::new("trip.md")]
+        );
+        assert_eq!(plan.kept_back[0].path, Path::new("private.md"));
+        assert!(plan.held.is_empty());
     }
 
     /// A held document is the site's pending set, not a stranger to it: it is

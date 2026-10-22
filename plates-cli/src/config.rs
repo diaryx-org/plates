@@ -337,6 +337,7 @@ fn specs_from(map: &Mapping, warnings: &mut Vec<String>) -> Vec<SiteSpec> {
             // wants a hold gets it by migrating to `exports:` — which is the
             // move every deprecation warning here already asks for.
             hold: None,
+            withhold: None,
             view: text(entry, "view"),
             index: text(entry, "index"),
             shell: text(entry, "shell"),
@@ -369,6 +370,7 @@ mod tests {
                 value: value.to_string(),
             },
             hold: None,
+            withhold: None,
             view: None,
         }
     }
@@ -418,6 +420,7 @@ mod tests {
                 audience: "public".into(),
                 gate_field: Some("clearance".into()),
                 hold: None,
+                withhold: None,
                 view: Some("daily".into()),
                 index: Some("[Home](id:7f3a91c)".into()),
                 shell: Some(".config/sites/blog/shell.html".into()),

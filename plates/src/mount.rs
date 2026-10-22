@@ -648,6 +648,7 @@ mod tests {
                 value: value.into(),
             },
             hold: None,
+            withhold: None,
             view: None,
         }
     }

@@ -3111,6 +3111,7 @@ mod tests {
             audience: "family".into(),
             gate_field: None,
             hold: Some("draft".into()),
+            withhold: None,
             view: None,
             index: None,
             shell: None,
@@ -3215,6 +3216,7 @@ mod tests {
                 value: "family".into(),
             },
             hold: None,
+            withhold: None,
             view: None,
         })
         .with_term_config(term);

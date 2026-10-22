@@ -145,6 +145,7 @@ pub fn to_export(spec: &SiteSpec) -> prov::exports::ExportSpec {
             value: spec.audience.trim().to_string(),
         },
         hold: spec.hold.clone(),
+        withhold: spec.withhold.clone(),
         view: spec.view.clone(),
     }
 }
