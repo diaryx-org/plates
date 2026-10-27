@@ -5,6 +5,7 @@ contents:
 - '[Say when a site declaration is not being read](/docs/tasks/unread-site-declaration.md)'
 - '[Follow prov''s vocabulary shape, term holds and field stamps](/docs/tasks/follow-prov-vocabulary-shape-and-term-holds.md)'
 - '[An id embed of a card draws its payload](/docs/tasks/an-id-embed-of-a-card-draws-its-payload.md)'
+- '[cargo doc writes the CLI''s pages over the library''s](/docs/tasks/cargo-doc-writes-the-cli-over-the-library.md)'
 audience: public
 ---
 
