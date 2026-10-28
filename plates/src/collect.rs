@@ -605,6 +605,14 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             None => None,
         };
         let inlined = match inlined {
+            // A held manifest's files are kept on another machine (prov's
+            // `held`): an archive too big to carry, which a reader asks its
+            // keeper for. None ships, and the copy carries no rows, so the
+            // listing is empty rather than eighty thousand links to nothing.
+            Some((manifest_doc, mut manifest)) if manifest.held.is_some() => {
+                manifest.files.clear();
+                Some(inline_manifest(&manifest_doc, manifest, anchor, opts.mount))
+            }
             Some((manifest_doc, manifest)) => {
                 for row in &manifest.files {
                     let canonical = manifest
@@ -2389,6 +2397,45 @@ mod tests {
         assert!(fm.contains("title: The lake"), "{fm}");
         assert!(!fm.contains("hash:"), "{fm}");
         assert!(!fm.contains("photos.manifest.yaml"), "{fm}");
+    }
+
+    /// A held manifest's files are kept on another machine, and none of them
+    /// ships, though every one is here: the page says who keeps them, and
+    /// lists no row.
+    #[test]
+    fn a_held_manifest_node_ships_none_of_its_files() {
+        let fs = prov::InMemoryFs::default();
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [family]\ncontents:\n- photo.yaml\n---\nHome.\n",
+            ),
+            (
+                "photo.yaml",
+                "title: Photo\nmanifest: photo.manifest.yaml\naudience: [family]\npart_of: /index.md\n",
+            ),
+            (
+                "photo.manifest.yaml",
+                "title: Photo — manifest\nroot: photo/\nheld:\n  by: Harris NAS\n  at: http://nas.example:8765/\nfiles:\n- path: 2019/lake.jpg\n  hash: sha256:00\n",
+            ),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        prov::block_on(fs.write_atomic(Path::new("/vault/photo/2019/lake.jpg"), b"JPG")).unwrap();
+        let ws = Workspace::builder(fs).root("/vault").build();
+
+        let site = try_collect(&ws, &["index.md", "photo.yaml"]).unwrap();
+
+        assert!(site.attachments.is_empty(), "{:?}", site.attachments);
+        let page = site
+            .sources
+            .iter()
+            .find(|s| s.dest_path == "photo.html")
+            .expect("the node is a page of the site");
+        let fm = &page.source_markdown;
+        assert!(fm.contains("by: Harris NAS"), "{fm}");
+        assert!(!fm.contains("lake.jpg"), "{fm}");
     }
 
     /// The other route to the same bytes — a page that embeds the payload —
