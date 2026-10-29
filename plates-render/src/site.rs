@@ -1589,6 +1589,17 @@ fn render_body(
         return values;
     }
 
+    // A held manifest's files are kept elsewhere: its body says so, and
+    // where its rows are.
+    if let Some(held) = crate::manifest::held_of(fm, current_path, opts.published_files.as_ref()) {
+        let prefix = crate::links::root_prefix(&page.dest_filename);
+        let (html, markdown) = crate::manifest::render_held(&held, &prefix);
+        page.rendered_body = html;
+        page.markdown_body = markdown;
+        values.insert("headings".into(), JsonValue::Array(Vec::new()));
+        return values;
+    }
+
     // A manifest node's body is the files it covers, on the same terms.
     if let Some(rows) = crate::manifest::rows_of(fm, current_path, opts.published_files.as_ref()) {
         let prefix = crate::links::root_prefix(&page.dest_filename);
@@ -1693,8 +1704,15 @@ impl Drawable<'_> {
             });
         match found.name.as_str() {
             embed::ALBUM => {
-                let rows = crate::manifest::rows_of(fm, path, opts.published_files.as_ref())?;
-                let (gallery, _) = crate::manifest::render(&rows, &prefix);
+                let gallery =
+                    match crate::manifest::held_of(fm, path, opts.published_files.as_ref()) {
+                        Some(held) => crate::manifest::render_held(&held, &prefix).0,
+                        None => {
+                            let rows =
+                                crate::manifest::rows_of(fm, path, opts.published_files.as_ref())?;
+                            crate::manifest::render(&rows, &prefix).0
+                        }
+                    };
                 Some(format!(
                     "<figure class=\"embedded-album\"><figcaption><a href=\"{}\">{}</a></figcaption>{gallery}</figure>\n",
                     page::html_escape(&href),
@@ -4598,6 +4616,50 @@ mod tests {
             "got {photos}"
         );
         assert!(!photos.contains("gone.jpg"), "got {photos}");
+    }
+
+    /// A held manifest node's page says who keeps its files and links its
+    /// rows from where the page is, so a publisher resolves the link to the
+    /// rows it ships; it lists no file.
+    #[test]
+    fn a_held_manifest_node_links_its_rows_relative_to_the_page() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n  - \"[Photo](/archive/photo.yaml)\"\n---\nH.\n",
+                true,
+            ),
+            src(
+                "archive/photo.yaml",
+                "---\ntitle: Photo\npart_of: \"/index.md\"\nmanifest:\n  root: /archive/photo/\n  held:\n    by: Harris NAS\n  count: 2\n  rows: /archive/photo.rows.json\n  sample:\n  - path: 2020/b.jpg\n    sha256: 0b\n  - path: 2020/a.jpg\n    sha256: 0a\n---\n",
+                false,
+            ),
+        ];
+        let opts = SiteOptions {
+            published_files: Some(["archive/photo.rows.json"].map(String::from).into()),
+            ..SiteOptions::default()
+        };
+
+        let out = render_site(&sources, &opts);
+        let photo = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "archive/photo.html")
+            .unwrap()
+            .html;
+
+        assert!(
+            photo.contains(concat!(
+                r#"<section class="held" data-held-by="Harris NAS" data-count="2">"#,
+                r#"<p class="held-note">2 files, kept by Harris NAS.</p>"#,
+                r#"<ul class="held-sample"><li data-sha256="0b" data-path="2020/b.jpg"></li>"#,
+                r#"<li data-sha256="0a" data-path="2020/a.jpg"></li></ul>"#,
+                r#"<p><a class="held-rows" href="../archive/photo.rows.json">Every file, listed</a></p>"#,
+                "</section>",
+            )),
+            "got {photo}"
+        );
+        assert!(!photo.contains("manifest-gallery"), "got {photo}");
     }
 
     /// An `::album` directive draws the album where it stands: its gallery,

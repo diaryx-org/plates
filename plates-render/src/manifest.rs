@@ -125,6 +125,130 @@ pub fn render(rows: &[Row], prefix: &str) -> (String, String) {
     (html, markdown)
 }
 
+/// A *held* manifest node, as its page shows it: its files are kept on another
+/// machine, and none is shipped.
+///
+/// `plates::collect` writes its collected copy without a `files` list, and
+/// with what the page needs instead:
+///
+/// ```yaml
+/// manifest:
+///   root: /photo/
+///   held: {by: Harris NAS}
+///   count: 80857
+///   rows: /photo.rows.json
+///   sample:
+///     - {path: 2026-10-27/IMG_0412.HEIC, sha256: 9f86…}
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Held {
+    /// Who keeps the files, named for a person: `Harris NAS`.
+    pub by: String,
+    /// How many files the rows list.
+    pub count: u64,
+    /// Where the rows were shipped, below the site root, `/`-separated; `None`
+    /// when the copy names none or the site does not ship it.
+    pub rows: Option<String>,
+    /// The rows the page shows, last by path first: each its path below the
+    /// manifest's root and its SHA-256 as hex.
+    pub sample: Vec<(String, String)>,
+}
+
+/// The held manifest a node's page shows, or `None` when `frontmatter` is not
+/// a held manifest node's collected copy. `page` and `published` are as for
+/// [`rows_of`].
+pub fn held_of(
+    frontmatter: &Mapping,
+    page: &Path,
+    published: Option<&HashSet<String>>,
+) -> Option<Held> {
+    let manifest = frontmatter.get("manifest")?.as_mapping()?;
+    let by = manifest.get("held")?.get("by")?.as_str()?.to_string();
+    let count = match manifest.get("count") {
+        Some(prov::Value::Int(n)) => u64::try_from(*n).unwrap_or(0),
+        _ => 0,
+    };
+    let rows = manifest
+        .get("rows")
+        .and_then(|r| r.as_str())
+        .map(|rows| {
+            prov::link::resolve(page, rows)
+                .to_string_lossy()
+                .replace('\\', "/")
+        })
+        .filter(|rows| published.is_none_or(|files| files.contains(rows)));
+    let sample = manifest
+        .get("sample")
+        .and_then(|s| s.as_sequence())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|row| {
+            let path = row.get("path")?.as_str()?;
+            let sha256 = row.get("sha256")?.as_str()?;
+            Some((path.to_string(), sha256.to_string()))
+        })
+        .collect();
+    Some(Held {
+        by,
+        count,
+        rows,
+        sample,
+    })
+}
+
+/// The page body for a held manifest node, on a page whose
+/// [root prefix](crate::root_prefix) is `prefix`, and its Markdown.
+///
+/// Nothing to show but what it is and where its rows are: a reader with a
+/// way to ask the keeper (a space's reader shell, by the hashes) draws the
+/// sample from the `data-` attributes and the rest from the rows.
+pub fn render_held(held: &Held, prefix: &str) -> (String, String) {
+    let by = html_escape(&held.by);
+    let files = if held.count == 1 { "file" } else { "files" };
+    let note = format!("{} {files}, kept by {}.", thousands(held.count), held.by);
+    let mut html = format!(
+        r#"<section class="held" data-held-by="{by}" data-count="{}">"#,
+        held.count
+    );
+    html.push_str(&format!(
+        r#"<p class="held-note">{}</p>"#,
+        html_escape(&note)
+    ));
+    html.push_str(r#"<ul class="held-sample">"#);
+    for (path, sha256) in &held.sample {
+        html.push_str(&format!(
+            r#"<li data-sha256="{}" data-path="{}"></li>"#,
+            html_escape(sha256),
+            html_escape(path)
+        ));
+    }
+    html.push_str("</ul>");
+    let mut markdown = format!("{note}\n");
+    if let Some(rows) = &held.rows {
+        let href = format!("{prefix}{rows}");
+        html.push_str(&format!(
+            r#"<p><a class="held-rows" href="{}">Every file, listed</a></p>"#,
+            html_escape(&href)
+        ));
+        markdown.push_str(&format!("\n[Every file, listed]({href})\n"));
+    }
+    html.push_str("</section>\n");
+    (html, markdown)
+}
+
+/// `80857` as `80,857`.
+fn thousands(n: u64) -> String {
+    let digits = n.to_string();
+    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
+    for (i, d) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i).is_multiple_of(3) {
+            out.push(',');
+        }
+        out.push(d);
+    }
+    out
+}
+
 fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -228,5 +352,78 @@ mod tests {
             "![A & B](../photos/a.png)\n- [b.heic](../photos/b.heic)\n- [c.pdf](../photos/c.pdf)\n"
         );
         assert_eq!(render(&[], ""), (String::new(), String::new()));
+    }
+
+    fn held_node(count: i64, sample: &[(&str, &str)]) -> Mapping {
+        let mut held = Mapping::new();
+        held.insert("by".into(), Value::String("Harris & Co NAS".into()));
+        let sample = sample
+            .iter()
+            .map(|(path, sha256)| {
+                let mut row = Mapping::new();
+                row.insert("path".into(), Value::String(path.to_string()));
+                row.insert("sha256".into(), Value::String(sha256.to_string()));
+                Value::Mapping(row)
+            })
+            .collect();
+        let mut manifest = Mapping::new();
+        manifest.insert("root".into(), Value::String("/photo/".into()));
+        manifest.insert("held".into(), Value::Mapping(held));
+        manifest.insert("count".into(), Value::Int(count));
+        manifest.insert("rows".into(), Value::String("/photo.rows.json".into()));
+        manifest.insert("sample".into(), Value::Sequence(sample));
+        let mut fm = Mapping::new();
+        fm.insert("manifest".into(), Value::Mapping(manifest));
+        fm
+    }
+
+    #[test]
+    fn a_held_manifest_says_who_keeps_it_and_where_its_rows_are() {
+        let fm = held_node(
+            80857,
+            &[("2026-10-27/b\"c.HEIC", "9f"), ("2026-10-26/a.jpg", "0a")],
+        );
+        // An unheld node is not one.
+        assert_eq!(
+            held_of(&node("/photos/", &[]), Path::new("photos.yaml"), None),
+            None
+        );
+        let held = held_of(&fm, Path::new("photo.yaml"), None).unwrap();
+        assert_eq!(held.rows.as_deref(), Some("photo.rows.json"));
+        let (html, markdown) = render_held(&held, "");
+        assert_eq!(
+            html,
+            concat!(
+                r#"<section class="held" data-held-by="Harris &amp; Co NAS" data-count="80857">"#,
+                r#"<p class="held-note">80,857 files, kept by Harris &amp; Co NAS.</p>"#,
+                r#"<ul class="held-sample">"#,
+                r#"<li data-sha256="9f" data-path="2026-10-27/b&quot;c.HEIC"></li>"#,
+                r#"<li data-sha256="0a" data-path="2026-10-26/a.jpg"></li></ul>"#,
+                r#"<p><a class="held-rows" href="photo.rows.json">Every file, listed</a></p>"#,
+                "</section>\n",
+            )
+        );
+        assert_eq!(
+            markdown,
+            "80,857 files, kept by Harris & Co NAS.\n\n[Every file, listed](photo.rows.json)\n"
+        );
+        // From a page further down, the link climbs to the rows.
+        let (html, _) = render_held(&held, "../");
+        assert!(html.contains(r#"href="../photo.rows.json""#), "{html}");
+    }
+
+    #[test]
+    fn one_held_file_is_one_and_unshipped_rows_are_not_linked() {
+        let fm = held_node(1, &[]);
+        let published = HashSet::from(["photo/a.jpg".to_string()]);
+        let held = held_of(&fm, Path::new("photo.yaml"), Some(&published)).unwrap();
+        assert_eq!(held.rows, None);
+        let (html, _) = render_held(&held, "");
+        assert!(html.contains(">1 file, kept by"), "{html}");
+        assert!(!html.contains("held-rows"), "{html}");
+        assert_eq!(thousands(0), "0");
+        assert_eq!(thousands(999), "999");
+        assert_eq!(thousands(1000), "1,000");
+        assert_eq!(thousands(1234567), "1,234,567");
     }
 }

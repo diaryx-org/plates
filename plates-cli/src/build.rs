@@ -604,7 +604,17 @@ fn assemble(
             files.remove(&a.dest_rel);
             page_keys.remove(&a.dest_rel);
         }
-        attachments.insert(a.dest_rel.clone(), root.join(&a.source_path));
+        // Collection read every file it was asked to weigh as recognized
+        // (`UnreadAttachments`), so bytes it carries are bytes it made — a
+        // held manifest's rows — with no file on disk to copy them from.
+        match &a.bytes {
+            Some(bytes) => {
+                files.insert(a.dest_rel.clone(), bytes.clone());
+            }
+            None => {
+                attachments.insert(a.dest_rel.clone(), root.join(&a.source_path));
+            }
+        }
     }
     let pages = page_keys.len();
 

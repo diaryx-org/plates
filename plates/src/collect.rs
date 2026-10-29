@@ -466,14 +466,7 @@ fn inline_manifest(
     anchor: &Path,
     mount: &str,
 ) -> prov::meta::Value {
-    let root = rebase(&manifest.covered_root(manifest_doc), anchor)
-        .to_string_lossy()
-        .replace('\\', "/");
-    manifest.root = if root.is_empty() {
-        format!("/{mount}")
-    } else {
-        format!("/{mount}{root}/")
-    };
+    manifest.root = collected_root(manifest_doc, &manifest, anchor, mount);
     for row in &mut manifest.files {
         row.hash = None;
     }
@@ -481,6 +474,221 @@ fn inline_manifest(
     let mut mapping = manifest.to_mapping("");
     mapping.shift_remove("title");
     prov::meta::Value::Mapping(mapping)
+}
+
+/// A manifest's covered root as its collected copy writes it: from the site's
+/// root, mount included (`/photos/`).
+fn collected_root(manifest_doc: &Path, manifest: &Manifest, anchor: &Path, mount: &str) -> String {
+    let root = rebase(&manifest.covered_root(manifest_doc), anchor)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if root.is_empty() {
+        format!("/{mount}")
+    } else {
+        format!("/{mount}{root}/")
+    }
+}
+
+/// The extension a held manifest's rows ship under, in place of its page's
+/// `.html`: `photo.html` → `photo.rows.json`.
+const ROWS_EXTENSION: &str = "rows.json";
+
+/// How many of a held manifest's rows its page shows: the last by path, which
+/// in a folder-per-day archive are the newest.
+const HELD_SAMPLE: usize = 8;
+
+/// Where a held manifest's rows ship, given where its page does: beside it,
+/// under the page's own stem.
+fn rows_dest(page_dest: &str) -> String {
+    Path::new(page_dest)
+        .with_extension(ROWS_EXTENSION)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+/// A *held* manifest node's `manifest:` as its collected copy carries it, and
+/// the bytes of the rows attachment published at `rows_dest`.
+///
+/// The keeper's address (`held.at`) stays home: no reader of a published site
+/// can use it, and it names the keeper's network. What is left says who keeps
+/// the files, how many there are, where the rows are, and a sample to show:
+///
+/// ```yaml
+/// manifest:
+///   root: /photo/
+///   held: {by: Harris NAS}
+///   count: 80857
+///   rows: /photo.rows.json
+///   sample:
+///     - {path: 2026-10-27/IMG_0412.HEIC, sha256: 9f86…}
+/// ```
+///
+/// `rows` is written from the site's root, as `root` is. The rows themselves
+/// are [`held_rows`].
+fn inline_held(
+    manifest_doc: &Path,
+    manifest: &Manifest,
+    anchor: &Path,
+    mount: &str,
+    rows_dest: &str,
+) -> (prov::meta::Value, Vec<u8>) {
+    use prov::meta::{Mapping, Value};
+
+    let by = manifest.held.as_ref().map_or("", |held| held.by.as_str());
+    let (bytes, count) = held_rows(by, &manifest.files);
+
+    let mut held = Mapping::new();
+    held.insert("by".into(), Value::String(by.to_string()));
+    let sample = held_sample(&manifest.files)
+        .into_iter()
+        .map(|(row, hex)| {
+            let mut entry = Mapping::new();
+            entry.insert(
+                "path".into(),
+                Value::String(prov::prov_graph::manifest::slash_path(&row.path)),
+            );
+            entry.insert("sha256".into(), Value::String(hex.to_ascii_lowercase()));
+            Value::Mapping(entry)
+        })
+        .collect();
+
+    let mut mapping = Mapping::new();
+    mapping.insert(
+        "root".into(),
+        Value::String(collected_root(manifest_doc, manifest, anchor, mount)),
+    );
+    mapping.insert("held".into(), Value::Mapping(held));
+    mapping.insert("count".into(), Value::Int(count as i64));
+    mapping.insert("rows".into(), Value::String(format!("/{rows_dest}")));
+    mapping.insert("sample".into(), Value::Sequence(sample));
+    (Value::Mapping(mapping), bytes)
+}
+
+/// A row's SHA-256 as bare hex, or `None` for a row with no hash or another
+/// kind of one, which the rows leave out: a reader names a file to its keeper
+/// by this, and could not by anything else.
+fn row_sha256(row: &prov::prov_graph::manifest::ManifestEntry) -> Option<&str> {
+    let hex = row.hash.as_deref()?.strip_prefix("sha256:")?;
+    (!hex.is_empty() && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
+}
+
+/// A held manifest's rows as the attachment carries them, and how many:
+///
+/// ```json
+/// {"v":1,"by":"Harris NAS","count":2,"files":[["2019/a.jpg","9f86…"],["2019/b.jpg","e3b0…"]]}
+/// ```
+///
+/// In the manifest's order, each its path below the manifest's root and its
+/// SHA-256 as lowercase hex. A row without one is left out, and `count` counts
+/// what is written.
+///
+/// Written straight into one string sized up front, because the manifest this
+/// is for has eighty thousand rows and is read on a NAS with 2 GB: one pass to
+/// count, one to write, and nothing allocated per row.
+fn held_rows(by: &str, rows: &[prov::prov_graph::manifest::ManifestEntry]) -> (Vec<u8>, usize) {
+    let count = rows.iter().filter(|row| row_sha256(row).is_some()).count();
+    // A path and a digest, quoted, with their punctuation: generous for a
+    // photo archive's `2019-07-04/IMG_1234.HEIC`.
+    let mut json = String::with_capacity(64 + by.len() + count * 112);
+    json.push_str(r#"{"v":1,"by":"#);
+    push_json_str(&mut json, by);
+    json.push_str(r#","count":"#);
+    json.push_str(&count.to_string());
+    json.push_str(r#","files":["#);
+    let mut first = true;
+    for row in rows {
+        let Some(hex) = row_sha256(row) else {
+            continue;
+        };
+        if !first {
+            json.push(',');
+        }
+        first = false;
+        json.push('[');
+        push_json_path(&mut json, &row.path);
+        json.push_str(",\"");
+        json.extend(hex.chars().map(|c| c.to_ascii_lowercase()));
+        json.push_str("\"]");
+    }
+    json.push_str("]}");
+    (json.into_bytes(), count)
+}
+
+/// The [`HELD_SAMPLE`] rows with a SHA-256 that sort last by path, last first,
+/// each with its hex: what a held manifest's page shows of it. Kept as a short
+/// sorted list while the rows go by, rather than by sorting all of them.
+fn held_sample(
+    rows: &[prov::prov_graph::manifest::ManifestEntry],
+) -> Vec<(&prov::prov_graph::manifest::ManifestEntry, &str)> {
+    let mut sample: Vec<(&prov::prov_graph::manifest::ManifestEntry, &str)> =
+        Vec::with_capacity(HELD_SAMPLE + 1);
+    for row in rows {
+        let Some(hex) = row_sha256(row) else {
+            continue;
+        };
+        if sample.len() == HELD_SAMPLE
+            && slash_bytes(&row.path).cmp(slash_bytes(&sample[HELD_SAMPLE - 1].0.path))
+                != std::cmp::Ordering::Greater
+        {
+            continue;
+        }
+        let at = sample
+            .iter()
+            .position(|(kept, _)| slash_bytes(&row.path).gt(slash_bytes(&kept.path)))
+            .unwrap_or(sample.len());
+        sample.insert(at, (row, hex));
+        sample.truncate(HELD_SAMPLE);
+    }
+    sample
+}
+
+/// A row's path `/`-joined, as [`slash_path`](prov::prov_graph::manifest::slash_path)
+/// writes it, without building the string: the bytes for comparing, and the
+/// characters for writing.
+fn slash_bytes(path: &Path) -> impl Iterator<Item = u8> + '_ {
+    path.components().enumerate().flat_map(|(i, c)| {
+        (i > 0)
+            .then_some(b'/')
+            .into_iter()
+            .chain(c.as_os_str().as_encoded_bytes().iter().copied())
+    })
+}
+
+/// Write `path`, `/`-joined, into `out` as a JSON string.
+fn push_json_path(out: &mut String, path: &Path) {
+    out.push('"');
+    for (i, part) in path.components().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        push_json_escaped(out, &part.as_os_str().to_string_lossy());
+    }
+    out.push('"');
+}
+
+/// Write `text` into `out` as a JSON string.
+fn push_json_str(out: &mut String, text: &str) {
+    out.push('"');
+    push_json_escaped(out, text);
+    out.push('"');
+}
+
+/// `text`, escaped for the inside of a JSON string.
+fn push_json_escaped(out: &mut String, text: &str) {
+    use std::fmt::Write as _;
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
 }
 
 /// Collect an explicit list of documents: read each one, filter its body for
@@ -589,6 +797,27 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             }
         }
 
+        let rebased = rebase(path, anchor);
+        // The same destination rule `plates_render` renders by — the same
+        // *function*, so the two cannot drift — applied here because a caller
+        // needs the address before there is a render to read it off. That rule
+        // is the extension swap, plus a folder note (`page/page.md`) landing on
+        // its directory's `index.html`; `plates_render::output_filename` holds
+        // both and says why. A `serve_at:` claim is **not** rebased onto the
+        // site's anchor: it is written from the site's root already, which is
+        // the coordinate rebasing produces.
+        let dest_path = if is_root {
+            format!("{}index.html", opts.mount)
+        } else {
+            declared_dest(&parsed.meta).unwrap_or_else(|| {
+                format!(
+                    "{}{}",
+                    opts.mount,
+                    plates_render::output_filename(&rebased.to_string_lossy())
+                )
+            })
+        };
+
         // A manifest node is the bulk form of a sidecar, and publishes on the
         // same terms: a page the renderer fills with a listing of the covered
         // files (`plates_render::manifest`), and every file the manifest names
@@ -607,11 +836,29 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
         let inlined = match inlined {
             // A held manifest's files are kept on another machine (prov's
             // `held`): an archive too big to carry, which a reader asks its
-            // keeper for. None ships, and the copy carries no rows, so the
-            // listing is empty rather than eighty thousand links to nothing.
-            Some((manifest_doc, mut manifest)) if manifest.held.is_some() => {
-                manifest.files.clear();
-                Some(inline_manifest(&manifest_doc, manifest, anchor, opts.mount))
+            // keeper for. None ships, and the copy lists none, so the page is
+            // not eighty thousand links to nothing.
+            //
+            // Its rows do travel, as one generated attachment beside the page
+            // (`<stem>.rows.json`), which a publisher seals with the rest of
+            // the site: a member's browser names a photograph to the keeper by
+            // them. See [`held_rows`].
+            Some((manifest_doc, manifest)) if manifest.held.is_some() => {
+                let rows_dest = rows_dest(&dest_path);
+                let (inlined, bytes) =
+                    inline_held(&manifest_doc, &manifest, anchor, opts.mount, &rows_dest);
+                let source = path.with_extension(ROWS_EXTENSION);
+                if seen_attachments.insert(source.to_string_lossy().into_owned()) {
+                    attachments.push(Attachment {
+                        dest_rel: rows_dest,
+                        source_path: source,
+                        hash: (opts.digest)(&bytes),
+                        len: bytes.len() as u64,
+                        bytes: Some(bytes),
+                        mime_type: "application/json".into(),
+                    });
+                }
+                Some(inlined)
             }
             Some((manifest_doc, manifest)) => {
                 for row in &manifest.files {
@@ -729,27 +976,7 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
                 format!("---\n{yaml}---\n{filtered_body}")
             };
 
-        let rebased = rebase(path, anchor);
         let source_rel_path = format!("{}{}", opts.mount, collected_source_path(path, anchor));
-        // The same destination rule `plates_render` renders by — the same
-        // *function*, so the two cannot drift — applied here because a caller
-        // needs the address before there is a render to read it off. That rule
-        // is the extension swap, plus a folder note (`page/page.md`) landing on
-        // its directory's `index.html`; `plates_render::output_filename` holds
-        // both and says why. A `serve_at:` claim is **not** rebased onto the
-        // site's anchor: it is written from the site's root already, which is
-        // the coordinate rebasing produces.
-        let dest_path = if is_root {
-            format!("{}index.html", opts.mount)
-        } else {
-            declared_dest(&parsed.meta).unwrap_or_else(|| {
-                format!(
-                    "{}{}",
-                    opts.mount,
-                    plates_render::output_filename(&rebased.to_string_lossy())
-                )
-            })
-        };
         claim_dest(&mut claimed, &dest_path, path)?;
 
         // Resolve attachment references: local file refs in the (filtered)
@@ -2400,11 +2627,23 @@ mod tests {
     }
 
     /// A held manifest's files are kept on another machine, and none of them
-    /// ships, though every one is here: the page says who keeps them, and
-    /// lists no row.
+    /// ships, though every one is here. Its rows do, as one attachment beside
+    /// its page; the page says who keeps them and shows the newest, and the
+    /// keeper's address goes nowhere.
     #[test]
     fn a_held_manifest_node_ships_none_of_its_files() {
         let fs = prov::InMemoryFs::default();
+        // Out of order, so the sample is seen to sort; one row unhashed and
+        // one hashed otherwise, which the rows leave out; one in capitals.
+        let mut manifest = String::from(
+            "title: Photo — manifest\nroot: photo/\nheld:\n  by: Harris NAS\n  at: http://nas.example:8765/\nfiles:\n- path: 2019/lake.jpg\n  hash: sha256:AB\n",
+        );
+        for day in 1..=9 {
+            manifest.push_str(&format!(
+                "- path: 2020/{day:02}.jpg\n  hash: sha256:0{day}\n"
+            ));
+        }
+        manifest.push_str("- path: 2021/unhashed.jpg\n- path: 2021/md5.jpg\n  hash: md5:ff\n");
         for (path, text) in [
             (
                 "index.md",
@@ -2414,10 +2653,7 @@ mod tests {
                 "photo.yaml",
                 "title: Photo\nmanifest: photo.manifest.yaml\naudience: [family]\npart_of: /index.md\n",
             ),
-            (
-                "photo.manifest.yaml",
-                "title: Photo — manifest\nroot: photo/\nheld:\n  by: Harris NAS\n  at: http://nas.example:8765/\nfiles:\n- path: 2019/lake.jpg\n  hash: sha256:00\n",
-            ),
+            ("photo.manifest.yaml", manifest.as_str()),
         ] {
             prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
                 .unwrap();
@@ -2427,15 +2663,102 @@ mod tests {
 
         let site = try_collect(&ws, &["index.md", "photo.yaml"]).unwrap();
 
-        assert!(site.attachments.is_empty(), "{:?}", site.attachments);
+        let [rows] = site.attachments.as_slice() else {
+            panic!("only the rows ship: {:?}", site.attachments);
+        };
+        assert_eq!(rows.dest_rel, "photo.rows.json");
+        assert_eq!(rows.mime_type, "application/json");
+        let json = String::from_utf8(rows.bytes.clone().expect("generated, so carried")).unwrap();
+        assert_eq!(
+            json,
+            concat!(
+                r#"{"v":1,"by":"Harris NAS","count":10,"files":[["2019/lake.jpg","ab"],"#,
+                r#"["2020/01.jpg","01"],["2020/02.jpg","02"],["2020/03.jpg","03"],"#,
+                r#"["2020/04.jpg","04"],["2020/05.jpg","05"],["2020/06.jpg","06"],"#,
+                r#"["2020/07.jpg","07"],["2020/08.jpg","08"],["2020/09.jpg","09"]]}"#,
+            )
+        );
+        assert_eq!(rows.len, json.len() as u64);
+
         let page = site
             .sources
             .iter()
             .find(|s| s.dest_path == "photo.html")
             .expect("the node is a page of the site");
         let fm = &page.source_markdown;
-        assert!(fm.contains("by: Harris NAS"), "{fm}");
-        assert!(!fm.contains("lake.jpg"), "{fm}");
+        let meta = plates_render::frontmatter::parse_or_empty(fm)
+            .unwrap()
+            .frontmatter;
+        let inlined = meta.get("manifest").unwrap();
+        assert_eq!(
+            inlined.get("held").unwrap().get("by").unwrap().as_str(),
+            Some("Harris NAS")
+        );
+        assert_eq!(inlined.get("held").unwrap().get("at"), None, "{fm}");
+        assert_eq!(inlined.get("count"), Some(&prov::Value::Int(10)), "{fm}");
+        assert_eq!(
+            inlined.get("rows").unwrap().as_str(),
+            Some("/photo.rows.json")
+        );
+        assert_eq!(inlined.get("files"), None, "{fm}");
+        let sample: Vec<(&str, &str)> = inlined
+            .get("sample")
+            .unwrap()
+            .as_sequence()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    row.get("path").unwrap().as_str().unwrap(),
+                    row.get("sha256").unwrap().as_str().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            sample,
+            (2..=9)
+                .rev()
+                .map(|day| (format!("2020/{day:02}.jpg"), format!("0{day}")))
+                .collect::<Vec<_>>()
+                .iter()
+                .map(|(p, h)| (p.as_str(), h.as_str()))
+                .collect::<Vec<_>>()
+        );
+        for text in [fm.as_str(), json.as_str()] {
+            assert!(!text.contains("nas.example"), "{text}");
+            assert!(
+                !text.contains("unhashed") && !text.contains("md5"),
+                "{text}"
+            );
+        }
+    }
+
+    /// The rows are JSON however their paths are spelled, and a manifest
+    /// with fewer rows than the sample shows all of them.
+    #[test]
+    fn held_rows_escape_their_strings() {
+        use prov::prov_graph::manifest::ManifestEntry;
+        let rows = vec![
+            ManifestEntry {
+                path: PathBuf::from("a\"b\\c/d\te.jpg"),
+                hash: Some("sha256:Ff".into()),
+                ..Default::default()
+            },
+            ManifestEntry {
+                path: PathBuf::from("bad.jpg"),
+                hash: Some("sha256:xyz".into()),
+                ..Default::default()
+            },
+        ];
+        let (bytes, count) = held_rows("Ann \"A\"", &rows);
+        assert_eq!(count, 1);
+        assert_eq!(
+            String::from_utf8(bytes).unwrap(),
+            r#"{"v":1,"by":"Ann \"A\"","count":1,"files":[["a\"b\\c/d\te.jpg","ff"]]}"#
+        );
+        assert_eq!(held_sample(&rows).len(), 1);
+        assert_eq!(rows_dest("a/photo.html"), "a/photo.rows.json");
+        assert_eq!(rows_dest("a/index.html"), "a/index.rows.json");
     }
 
     /// The other route to the same bytes — a page that embeds the payload —
