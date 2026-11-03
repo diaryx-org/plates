@@ -3,13 +3,22 @@ title: cargo doc writes the CLI's pages over the library's
 description: The `plates` binary in plates-cli and the `plates` library both document to `target/doc/plates/`, so the Docs job's `cargo doc --workspace` leaves the library's index replaced by the CLI's, and passes
 part_of: '[Tasks](/docs/tasks/tasks.md)'
 created: 2026-10-27
-status: open
-updated: 2026-10-27
+status: done
+updated: 2026-11-02
 audience: public
 author: adammharris
 ---
 
 # cargo doc writes the CLI's pages over the library's
+
+**Status.** Done, by `fix(cli): keep the binary's pages out of the library's
+directory`, which takes the first candidate and the third. The `plates`
+`[[bin]]` in `plates-cli/Cargo.toml` says `doc = false`, so `cargo doc`
+documents the library alone into `target/doc/plates/`, and the Docs job in
+`.config/ship.figl` reads Cargo's output and fails on any `output filename
+collision`, which `-D warnings` does not reach. Before the manifest change the
+job fails on the repro; after it, it passes from an empty `target/doc`, which
+holds the library's modules and no `fn.main.html`.
 
 ## Repro
 

@@ -44,9 +44,18 @@ job
 > *
 > > # A broken intra-doc link is a broken promise on docs.rs, so it fails here
 > > # rather than being discovered after a publish.
+> > #
+> > # `-D warnings` reaches rustdoc's warnings and not Cargo's, and Cargo's
+> > # `output filename collision` is the one that matters here: two targets of
+> > # one name document into one directory, and whichever rustdoc finishes last
+> > # decides whose pages are left. So the job reads Cargo's output and fails on
+> > # it, rather than passing over a `target/doc/plates/` that holds no library.
 > > id = docs
 > > name = Docs
-> > run = RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps
+> > run = '''
+RUSTDOCFLAGS='-D warnings' cargo doc --workspace --all-features --no-deps 2>&1 |
+  awk '{ print } /output filename collision/ { collided = 1 } END { exit collided }'
+'''
 > *
 > > # `plates-render` promises to run in an edge worker. Nothing but a compiler
 > > # keeps that promise true, so this is the one job whose failure means an API

@@ -13,9 +13,16 @@ keywords = ["static-site-gen", "prov", "cli", "publishing", "website"]
 categories = ["command-line-utilities", "web-programming"]
 
 # The crate is `plates-cli`; the installed command is `plates`.
+#
+# `doc = false` because the name is shared. rustdoc writes a crate's pages to
+# `target/doc/<crate name>/`, so a documented binary called `plates` writes
+# over the library's, and `cargo doc --workspace` leaves whichever finished
+# last (rust-lang/cargo#6313). The binary's modules are private to it and were
+# never published; the library's pages are the ones a reader came for.
 [[bin]]
 name = "plates"
 path = "src/main.rs"
+doc = false
 
 # The application layer, and the only one in this workspace that is allowed to
 # have opinions a library must not: where a build lands, what a site declaration
