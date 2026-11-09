@@ -36,6 +36,8 @@ use syntect::html::{ClassStyle, ClassedHTMLGenerator};
 use syntect::parsing::{SyntaxDefinition, SyntaxSet};
 use syntect::util::LinesWithEndings;
 
+use crate::html::unescape;
+
 /// The prefix on every class this module emits.
 ///
 /// syntect names a class per atom of the scope it matched, so
@@ -223,48 +225,6 @@ fn highlight_one(class_value: &str, inner: &str, syntaxes: &Syntaxes) -> Option<
         hl.parse_html_for_line_which_includes_newline(line).ok()?;
     }
     Some(hl.finalize())
-}
-
-/// Undo the escaping twig applied to a code block's text, so the grammar sees
-/// source rather than entities.
-///
-/// The five twig can emit, and no more: this reads what one known encoder
-/// wrote, not arbitrary HTML, so a general entity table would be answering a
-/// question nobody asked. `&amp;` is decoded like any other — the scan is
-/// single-pass and left to right, so a literal `&amp;lt;` in the source, which
-/// twig wrote as `&amp;amp;lt;`, comes back as `&amp;lt;` and not as `<`.
-fn unescape(s: &str) -> String {
-    if !s.contains('&') {
-        return s.to_string();
-    }
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(at) = rest.find('&') {
-        out.push_str(&rest[..at]);
-        let tail = &rest[at..];
-        let decoded = [
-            ("&lt;", '<'),
-            ("&gt;", '>'),
-            ("&quot;", '"'),
-            ("&#39;", '\''),
-            ("&apos;", '\''),
-            ("&amp;", '&'),
-        ]
-        .into_iter()
-        .find(|(entity, _)| tail.starts_with(entity));
-        match decoded {
-            Some((entity, ch)) => {
-                out.push(ch);
-                rest = &tail[entity.len()..];
-            }
-            None => {
-                out.push('&');
-                rest = &tail[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
 }
 
 #[cfg(test)]
