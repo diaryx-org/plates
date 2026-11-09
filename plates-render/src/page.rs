@@ -6,6 +6,7 @@
 //! publish plugin and will move here in a later slice.
 
 use crate::dates::{EPOCH_RFC3339, to_rfc822, to_rfc3339};
+use crate::html::unescape;
 use crate::links::{absolutize_html, root_prefix};
 use crate::types::{NavLink, PublishedPage, SiteNavNode, SiteNavigation};
 
@@ -792,7 +793,10 @@ pub fn generate_rss_feed(
     xml
 }
 
-/// Strip HTML tags and truncate to `max_len` characters.
+/// Strip HTML tags, decode the entities in the text that is left, and truncate
+/// to `max_len` characters.
+///
+/// The result is plain text, ready to be escaped once for wherever it goes.
 fn strip_html_truncate(html: &str, max_len: usize) -> String {
     let mut text = String::new();
     let mut in_tag = false;
@@ -808,12 +812,10 @@ fn strip_html_truncate(html: &str, max_len: usize) -> String {
         }
         if !in_tag {
             text.push(ch);
-            if text.len() >= max_len {
-                break;
-            }
         }
     }
 
+    let text: String = unescape(&text).chars().take(max_len).collect();
     text.trim().to_string()
 }
 
@@ -1430,5 +1432,35 @@ mod tests {
         let html = "<p>Hello <strong>world</strong>, this is a test.</p>";
         let result = strip_html_truncate(html, 11);
         assert_eq!(result, "Hello world");
+    }
+
+    /// The rendered body is HTML, so its text already holds an entity for every
+    /// `&` and `<` the author wrote. The summary decodes those once before the
+    /// feed escapes them once, or a reader shows `&amp;` where the page says `&`.
+    #[test]
+    fn an_atom_summary_is_escaped_once() {
+        let mut page = make_page("post.html", "Post", false);
+        page.rendered_body = "<p>Tom &amp; Jerry &lt;3</p>".into();
+
+        let atom = generate_atom_feed(&[page], "Site", "https://ex.com", "", "");
+        assert!(
+            atom.contains("<summary>Tom &amp; Jerry &lt;3</summary>"),
+            "{atom}"
+        );
+    }
+
+    /// The limit counts characters, as the doc comment says, not bytes: a
+    /// summary outside ASCII is cut at the same length as one inside it.
+    #[test]
+    fn strip_html_truncate_counts_characters() {
+        assert_eq!(strip_html_truncate("<p>héllo wörld</p>", 5), "héllo");
+        assert_eq!(strip_html_truncate("<p>日本語の文章</p>", 3), "日本語");
+    }
+
+    /// An entity counts as the one character it stands for, so a cut never
+    /// lands inside one.
+    #[test]
+    fn strip_html_truncate_cuts_between_entities_not_inside_them() {
+        assert_eq!(strip_html_truncate("<p>a &amp; b</p>", 5), "a & b");
     }
 }

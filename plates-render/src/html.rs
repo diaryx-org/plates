@@ -807,6 +807,49 @@ pub fn base_css() -> &'static str {
     get_base_css()
 }
 
+/// Undo the escaping twig applied to a run of text: a code block's, so a
+/// grammar sees source rather than entities, or a body's, so a feed summary is
+/// text to be escaped once rather than HTML to be escaped again.
+///
+/// The five twig can emit, and no more: this reads what one known encoder
+/// wrote, not arbitrary HTML, so a general entity table would be answering a
+/// question nobody asked. `&amp;` is decoded like any other — the scan is
+/// single-pass and left to right, so a literal `&amp;lt;` in the source, which
+/// twig wrote as `&amp;amp;lt;`, comes back as `&amp;lt;` and not as `<`.
+pub(crate) fn unescape(s: &str) -> String {
+    if !s.contains('&') {
+        return s.to_string();
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(at) = rest.find('&') {
+        out.push_str(&rest[..at]);
+        let tail = &rest[at..];
+        let decoded = [
+            ("&lt;", '<'),
+            ("&gt;", '>'),
+            ("&quot;", '"'),
+            ("&#39;", '\''),
+            ("&apos;", '\''),
+            ("&amp;", '&'),
+        ]
+        .into_iter()
+        .find(|(entity, _)| tail.starts_with(entity));
+        match decoded {
+            Some((entity, ch)) => {
+                out.push(ch);
+                rest = &tail[entity.len()..];
+            }
+            None => {
+                out.push('&');
+                rest = &tail[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

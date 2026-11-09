@@ -2,14 +2,23 @@
 title: An Atom summary is escaped twice
 part_of: '[Tasks](/docs/tasks/tasks.md)'
 created: 2026-11-08
-status: open
+status: done
 author: adammharris
 audience: public
-updated: 2026-11-08T07:45:09.510170Z
+updated: 2026-11-09T22:43:42.419555Z
 description: The Atom feed builds an entry’s <summary> by stripping tags from the rendered HTML, which keeps its entities, and then escapes the text again, so “Tom & Jerry” reaches a feed reader as “Tom &amp; Jerry”
 ---
 
 # An Atom summary is escaped twice
+
+**Status.** Done, by `fix(feed): escape an Atom summary once`.
+`strip_html_truncate` now decodes the body's entities after dropping its tags
+and before cutting, with the single-pass decoder the syntax highlighter already
+used for code blocks (moved from `syntax.rs` to `html.rs` so the feed reaches
+it without the `syntax-highlighting` feature), and counts the 280 in
+characters. `an_atom_summary_is_escaped_once` in `page.rs` holds the repro, and
+two tests beside it hold the character count and a cut that falls on an
+entity.
 
 ## The bug
 
