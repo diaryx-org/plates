@@ -532,6 +532,19 @@ fn inline_held(
     mount: &str,
     rows_dest: &str,
 ) -> (prov::meta::Value, Vec<u8>) {
+    let sample = held_sample(&manifest.files);
+    inline_held_showing(manifest_doc, manifest, anchor, mount, rows_dest, sample)
+}
+
+/// [`inline_held`], showing `sample` rather than the rows last by path.
+fn inline_held_showing(
+    manifest_doc: &Path,
+    manifest: &Manifest,
+    anchor: &Path,
+    mount: &str,
+    rows_dest: &str,
+    sample: Vec<(&prov::prov_graph::manifest::ManifestEntry, &str)>,
+) -> (prov::meta::Value, Vec<u8>) {
     use prov::meta::{Mapping, Value};
 
     let by = manifest.held.as_ref().map_or("", |held| held.by.as_str());
@@ -539,7 +552,7 @@ fn inline_held(
 
     let mut held = Mapping::new();
     held.insert("by".into(), Value::String(by.to_string()));
-    let sample = held_sample(&manifest.files)
+    let sample = sample
         .into_iter()
         .map(|(row, hex)| {
             let mut entry = Mapping::new();
@@ -562,6 +575,79 @@ fn inline_held(
     mapping.insert("rows".into(), Value::String(format!("/{rows_dest}")));
     mapping.insert("sample".into(), Value::Sequence(sample));
     (Value::Mapping(mapping), bytes)
+}
+
+/// An album's collected `manifest:`, and what it ships.
+///
+/// The album stands for the rows it picks, in its own order, as though they
+/// were a manifest of their own:
+///
+/// - **From a held archive**, it is a held collection of its picks: the rows
+///   attachment beside its page lists only them, and its sample is its first
+///   picks, which are the ones its author put first. A reader asks the
+///   archive's keeper for each, by the hash it already uses; a keeper
+///   serving a circle answers only what an album given to that circle picks.
+/// - **From an archive that is here**, the picked files ship at their own
+///   paths, as a manifest's do, and the page lists them.
+///
+/// Neither names the archive: its node is not on the site, and its rows that
+/// were not picked never leave.
+#[allow(clippy::too_many_arguments)]
+async fn inline_album<FS: Storage + Clone, Id, Ix: IdIndex>(
+    ws: &Workspace<FS, Id, Ix>,
+    opts: &CollectOptions<'_>,
+    path: &Path,
+    dest_path: &str,
+    view: prov::album::AlbumView,
+    anchor: &Path,
+    seen_attachments: &mut HashSet<String>,
+    attachments: &mut Vec<Attachment>,
+) -> prov::meta::Value {
+    let prov::album::AlbumView { source, picked, .. } = view;
+    let mut manifest = source.manifest;
+    manifest.files = picked.into_iter().map(|(_, row)| row).collect();
+    if manifest.held.is_some() {
+        let rows_dest = rows_dest(dest_path);
+        let sample = manifest
+            .files
+            .iter()
+            .filter_map(|row| Some((row, row_sha256(row)?)))
+            .take(HELD_SAMPLE)
+            .collect();
+        let (inlined, bytes) = inline_held_showing(
+            &source.manifest_doc,
+            &manifest,
+            anchor,
+            opts.mount,
+            &rows_dest,
+            sample,
+        );
+        let rows_source = path.with_extension(ROWS_EXTENSION);
+        if seen_attachments.insert(rows_source.to_string_lossy().into_owned()) {
+            attachments.push(Attachment {
+                dest_rel: rows_dest,
+                source_path: rows_source,
+                hash: (opts.digest)(&bytes),
+                len: bytes.len() as u64,
+                bytes: Some(bytes),
+                mime_type: "application/json".into(),
+            });
+        }
+        return inlined;
+    }
+    for row in &manifest.files {
+        let canonical = manifest
+            .file_path(&source.manifest_doc, row)
+            .to_string_lossy()
+            .into_owned();
+        if !seen_attachments.insert(canonical.clone()) {
+            continue;
+        }
+        if let Some(attachment) = weigh_attachment(ws, opts, &canonical, anchor).await {
+            attachments.push(attachment);
+        }
+    }
+    inline_manifest(&source.manifest_doc, manifest, anchor, opts.mount)
 }
 
 /// A row's SHA-256 as bare hex, or `None` for a row with no hash or another
@@ -880,6 +966,34 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             }
             None => None,
         };
+        // An album picks rows from a manifest by hash (prov's `picks_from`) and
+        // publishes as one: a held collection of its picks alone, or the
+        // picked files where they are here. Its source is not on the site,
+        // and needs not be: who reads an album is the album's audience, not
+        // its archive's, which is what an album is for. See [`inline_album`].
+        let album = match inlined {
+            Some(_) => None,
+            None => ws.album(path).await.map_err(|e| Error::Document {
+                path: path.clone(),
+                reason: e.to_string(),
+            })?,
+        };
+        let inlined = match album {
+            Some(view) => Some(
+                inline_album(
+                    ws,
+                    opts,
+                    path,
+                    &dest_path,
+                    view,
+                    anchor,
+                    &mut seen_attachments,
+                    &mut attachments,
+                )
+                .await,
+            ),
+            None => inlined,
+        };
 
         // Which *parts* of this document leave. The plan already decided that
         // the document does; this reads the same audience, and what it reads,
@@ -945,6 +1059,16 @@ async fn collect_documents_owning<FS: Storage + Clone, Id, Ix: IdIndex>(
             }
         }
         // In place, so a caller that stripped `manifest` keeps it stripped.
+        // An album has no `manifest` of its own, and takes one: its link to
+        // the archive, and the archive's digests, stay home.
+        let is_album = source_fm.contains_key(prov::prov_graph::album::PICKS_FROM_KEY);
+        if is_album {
+            source_fm.shift_remove(prov::prov_graph::album::PICKS_FROM_KEY);
+            source_fm.shift_remove(prov::prov_graph::album::PICKS_KEY);
+            if !opts.strip_keys.contains(&MANIFEST_KEY) {
+                source_fm.insert(MANIFEST_KEY.into(), prov::meta::Value::Null);
+            }
+        }
         if let Some(inlined) = inlined
             && let Some(slot) = source_fm.get_mut(MANIFEST_KEY)
         {
@@ -2731,6 +2855,133 @@ mod tests {
                 "{text}"
             );
         }
+    }
+
+    /// An album's source library: a manifest of three photographs that is on
+    /// no site, and an album page picking two of them, the later one first.
+    fn album_vault(held: bool) -> Workspace<prov::InMemoryFs> {
+        let fs = prov::InMemoryFs::default();
+        let hex = |c: char| c.to_string().repeat(64);
+        let held = if held {
+            "held:\n  by: Harris NAS\n  at: http://nas.example:8765/\n"
+        } else {
+            ""
+        };
+        let manifest = format!(
+            "root: photo/\n{held}files:\n- path: 2019/lake.jpg\n  hash: sha256:{}\n- path: 2020/snow.jpg\n  hash: sha256:{}\n- path: 2021/private.jpg\n  hash: sha256:{}\n",
+            hex('a'),
+            hex('b'),
+            hex('c')
+        );
+        let album = format!(
+            "---\ntitle: Reunion\naudience: [public]\npart_of: /index.md\npicks_from: '[Photo](/photo.yaml)'\npicks:\n- sha256:{}\n- hash: sha256:{}\n  caption: Grandpa\n---\nThe 2019 reunion.\n",
+            hex('b'),
+            hex('a')
+        );
+        for (path, text) in [
+            (
+                "index.md",
+                "---\ntitle: Home\naudience: [public]\ncontents:\n- photo.yaml\n- reunion.md\n---\nHome.\n",
+            ),
+            (
+                "photo.yaml",
+                "title: Photo\nmanifest: photo.manifest.yaml\npart_of: /index.md\n",
+            ),
+            ("photo.manifest.yaml", manifest.as_str()),
+            ("reunion.md", album.as_str()),
+        ] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault").join(path), text.as_bytes()))
+                .unwrap();
+        }
+        for file in ["2019/lake.jpg", "2020/snow.jpg", "2021/private.jpg"] {
+            prov::block_on(fs.write_atomic(&Path::new("/vault/photo").join(file), b"JPG")).unwrap();
+        }
+        Workspace::builder(fs).root("/vault").build()
+    }
+
+    fn collected_frontmatter(site: &CollectedSite, dest: &str) -> (String, prov::meta::Mapping) {
+        let page = site
+            .sources
+            .iter()
+            .find(|s| s.dest_path == dest)
+            .expect("the album is a page of the site");
+        let fm = page.source_markdown.clone();
+        let meta = plates_render::frontmatter::parse_or_empty(&fm)
+            .unwrap()
+            .frontmatter;
+        (fm, meta)
+    }
+
+    /// **An album of a held archive publishes its picks, and only them.**
+    /// Its rows list the two photographs it picks, in its order; the third,
+    /// and the archive's node, never leave.
+    #[test]
+    fn an_album_of_a_held_archive_ships_its_picks_rows_alone() {
+        let ws = album_vault(true);
+        let site = try_collect(&ws, &["index.md", "reunion.md"]).unwrap();
+
+        let [rows] = site.attachments.as_slice() else {
+            panic!("only the album's rows ship: {:?}", site.attachments);
+        };
+        assert_eq!(rows.dest_rel, "reunion.rows.json");
+        let json = String::from_utf8(rows.bytes.clone().unwrap()).unwrap();
+        assert_eq!(
+            json,
+            format!(
+                r#"{{"v":1,"by":"Harris NAS","count":2,"files":[["2020/snow.jpg","{}"],["2019/lake.jpg","{}"]]}}"#,
+                "b".repeat(64),
+                "a".repeat(64)
+            )
+        );
+
+        let (fm, meta) = collected_frontmatter(&site, "reunion.html");
+        let inlined = meta
+            .get("manifest")
+            .expect("the album stands as a manifest");
+        assert_eq!(inlined.get("count"), Some(&prov::Value::Int(2)), "{fm}");
+        assert_eq!(
+            inlined.get("rows").unwrap().as_str(),
+            Some("/reunion.rows.json")
+        );
+        let first = &inlined.get("sample").unwrap().as_sequence().unwrap()[0];
+        assert_eq!(
+            first.get("path").unwrap().as_str(),
+            Some("2020/snow.jpg"),
+            "the album's own first pick leads: {fm}"
+        );
+        assert!(fm.contains("The 2019 reunion."), "{fm}");
+        for gone in [
+            "picks",
+            "photo.yaml",
+            "private",
+            &"c".repeat(64),
+            "nas.example",
+        ] {
+            assert!(!fm.contains(gone) && !json.contains(gone), "{gone}: {fm}");
+        }
+    }
+
+    /// **An album of an archive that is here ships the picked files**, at
+    /// their own paths, as a manifest's do, and no other.
+    #[test]
+    fn an_album_of_a_present_archive_ships_its_picked_files() {
+        let ws = album_vault(false);
+        let site = try_collect(&ws, &["index.md", "reunion.md"]).unwrap();
+        let mut shipped: Vec<&str> = site
+            .attachments
+            .iter()
+            .map(|a| a.dest_rel.as_str())
+            .collect();
+        shipped.sort();
+        assert_eq!(shipped, ["photo/2019/lake.jpg", "photo/2020/snow.jpg"]);
+        let (fm, meta) = collected_frontmatter(&site, "reunion.html");
+        let files = meta
+            .get("manifest")
+            .and_then(|m| m.get("files"))
+            .and_then(|f| f.as_sequence())
+            .expect("the picks are listed");
+        assert_eq!(files.len(), 2, "{fm}");
+        assert!(!fm.contains("private") && !fm.contains("picks"), "{fm}");
     }
 
     /// The rows are JSON however their paths are spelled, and a manifest

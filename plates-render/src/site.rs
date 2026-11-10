@@ -1590,18 +1590,29 @@ fn render_body(
     }
 
     // A held manifest's files are kept elsewhere: its body says so, and
-    // where its rows are.
-    if let Some(held) = crate::manifest::held_of(fm, current_path, opts.published_files.as_ref()) {
-        let prefix = crate::links::root_prefix(&page.dest_filename);
-        let (html, markdown) = crate::manifest::render_held(&held, &prefix);
-        page.rendered_body = html;
-        page.markdown_body = markdown;
-        values.insert("headings".into(), JsonValue::Array(Vec::new()));
-        return values;
-    }
+    // where its rows are. A page that also has words of its own (an album
+    // written as a page) shows them first, and the collection after them.
+    let held =
+        crate::manifest::held_of(fm, current_path, opts.published_files.as_ref()).map(|held| {
+            let prefix = crate::links::root_prefix(&page.dest_filename);
+            crate::manifest::render_held(&held, &prefix)
+        });
+    let held = match held {
+        Some((html, markdown)) if parsed.body.trim().is_empty() => {
+            page.rendered_body = html;
+            page.markdown_body = markdown;
+            values.insert("headings".into(), JsonValue::Array(Vec::new()));
+            return values;
+        }
+        held => held,
+    };
 
-    // A manifest node's body is the files it covers, on the same terms.
-    if let Some(rows) = crate::manifest::rows_of(fm, current_path, opts.published_files.as_ref()) {
+    // A manifest node's body is the files it covers, on the same terms. (A
+    // held one lists none, and was drawn above.)
+    if held.is_none()
+        && let Some(rows) =
+            crate::manifest::rows_of(fm, current_path, opts.published_files.as_ref())
+    {
         let prefix = crate::links::root_prefix(&page.dest_filename);
         let (html, markdown) = crate::manifest::render(&rows, &prefix);
         page.rendered_body = html;
@@ -1664,6 +1675,11 @@ fn render_body(
     }
     page.markdown_body = expanded;
     page.headings = headings;
+    if let Some((html, markdown)) = held {
+        page.rendered_body.push_str(&html);
+        page.markdown_body.push('\n');
+        page.markdown_body.push_str(&markdown);
+    }
     values
 }
 
@@ -4660,6 +4676,41 @@ mod tests {
             "got {photo}"
         );
         assert!(!photo.contains("manifest-gallery"), "got {photo}");
+    }
+
+    /// An album written as a page keeps its words: they come first, and the
+    /// held collection of its picks after them.
+    #[test]
+    fn a_held_page_with_words_shows_them_before_the_collection() {
+        let sources = vec![
+            src(
+                "index.md",
+                "---\ntitle: Home\ncontents:\n  - \"[Reunion](/reunion.md)\"\n---\nH.\n",
+                true,
+            ),
+            src(
+                "reunion.md",
+                "---\ntitle: Reunion\npart_of: \"/index.md\"\nmanifest:\n  root: /photo/\n  held:\n    by: Harris NAS\n  count: 1\n  rows: /reunion.rows.json\n  sample:\n  - path: 2020/b.jpg\n    sha256: 0b\n---\nThe *2019* reunion.\n",
+                false,
+            ),
+        ];
+        let opts = SiteOptions {
+            published_files: Some(["reunion.rows.json"].map(String::from).into()),
+            ..SiteOptions::default()
+        };
+        let out = render_site(&sources, &opts);
+        let page = &out
+            .pages
+            .iter()
+            .find(|p| p.dest_filename == "reunion.html")
+            .unwrap()
+            .html;
+        let words = page.find("<em>2019</em>").expect("the words are drawn");
+        let held = page
+            .find(r#"<section class="held" data-held-by="Harris NAS" data-count="1">"#)
+            .expect("the collection is drawn");
+        assert!(words < held, "got {page}");
+        assert!(page.contains(r#"href="reunion.rows.json""#), "got {page}");
     }
 
     /// An `::album` directive draws the album where it stands: its gallery,
