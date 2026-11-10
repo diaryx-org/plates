@@ -468,10 +468,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 
 [[package]]
-name = "fs-transaction"
-version = "0.4.1"
+name = "foldhash"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1e968c94d635cfa7ac0c3157f6504f0ab3bb4135f5915ee45f43db6733578336"
+checksum = "77ce24cb58228fbb8aa041425bb1050850ac19177686ea6e0f41a70416f56fdb"
+
+[[package]]
+name = "fs-transaction"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "25bf6a8f0db5e9868c7c1581bd52d9bb880f4ec128ecc8631270aaf515652733"
 
 [[package]]
 name = "futures-core"
@@ -783,7 +789,7 @@ dependencies = [
 [[package]]
 name = "prov"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "edtf-normalize",
  "fig",
@@ -804,7 +810,7 @@ dependencies = [
 [[package]]
 name = "prov-config"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "fig",
  "fig-schema",
@@ -819,7 +825,7 @@ dependencies = [
 [[package]]
 name = "prov-exports"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "prov-graph",
  "prov-views",
@@ -828,7 +834,7 @@ dependencies = [
 [[package]]
 name = "prov-filing"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "prov-grain",
  "prov-graph",
@@ -837,7 +843,7 @@ dependencies = [
 [[package]]
 name = "prov-grain"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "edtf-core",
  "prov-graph",
@@ -846,13 +852,14 @@ dependencies = [
 [[package]]
 name = "prov-graph"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "fig",
  "fig-figl",
  "fig-json",
  "fig-toml",
  "fig-yaml",
+ "foldhash",
  "fs-transaction",
  "indexmap",
  "moid",
@@ -867,7 +874,7 @@ dependencies = [
 [[package]]
 name = "prov-store"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "fig",
  "fs-transaction",
@@ -877,7 +884,7 @@ dependencies = [
 [[package]]
 name = "prov-views"
 version = "0.18.0"
-source = "git+https://github.com/diaryx-org/prov?branch=main#99155ab60713fa02dc9452a3e4be00c4a969aeac"
+source = "git+https://github.com/diaryx-org/prov?branch=main#28aed4ce879c57db0ab5095c182c3848c9af82cf"
 dependencies = [
  "cel",
  "prov-grain",
@@ -1161,9 +1168,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "twig-djot"
-version = "7.0.0"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9df7623ba396e17d9890d2432249002f76780b1b44b6a8f8791cd2e8806ec899"
+checksum = "09e36d2e526c1a1271ba0c28dcbccca3fe9823340551b1a8cf0aeba2c54be604"
 dependencies = [
  "twig-doc",
  "twig-kit",
@@ -1171,9 +1178,9 @@ dependencies = [
 
 [[package]]
 name = "twig-doc"
-version = "7.0.0"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "43059a77c9c1b7e56f38a74917a4e446da813388ab9a6227520081abf4fb5ebc"
+checksum = "7af891a5126a77f2498a56b7207129a5f5622f07c8158c4651b4cba4cb4ca670"
 dependencies = [
  "fig",
  "fig-figl",
@@ -1185,9 +1192,9 @@ dependencies = [
 
 [[package]]
 name = "twig-html"
-version = "7.0.0"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d0f5733e9d1cf54d306105e89d9a4388a36e1a77110065214dacc681adfcacc"
+checksum = "6926e16122e07870ab80acb498d65db8c8dff30d04b1d11502e79e2720709f21"
 dependencies = [
  "twig-doc",
  "twig-kit",
@@ -1195,15 +1202,15 @@ dependencies = [
 
 [[package]]
 name = "twig-kit"
-version = "7.0.0"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "547e69372eacfac62d3bc3c0433683894d9b0743aa413311c50a0732ae890397"
+checksum = "12f37d71b106d4cafc2db29f6adaa7bbc530da7cb707a2b6db4a5ffcc42bd857"
 
 [[package]]
 name = "twig-markdown"
-version = "7.0.0"
+version = "7.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3e82b47b5b941022c8ce086f8c32c36e563482c1a2a74805abd2398eadbacd1"
+checksum = "f26867c35dfcc2bca2815faa4dc52f55f3fa609dec6576981b3c31bf3afabf9c"
 dependencies = [
  "twig-doc",
  "twig-html",
